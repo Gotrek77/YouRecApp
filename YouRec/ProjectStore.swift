@@ -61,8 +61,13 @@ final class ProjectStore: ObservableObject {
         let isolated=false
         let editorFixture = false
         #endif
-        selectionKey=recorderFixture ? "selectedRecorderUIProject" : retentionFixture ? "selectedRetentionUIProject" : isolated ? "selectedDepthUIProject" : editorFixture ? "selectedEditorUIProject" : "selectedProject"
-        var storeBase = documents
+        #if DEBUG && targetEnvironment(simulator)
+        let showcase = recorderFixture && CommandLine.arguments.contains("--liquid-glass-showcase")
+        #else
+        let showcase = false
+        #endif
+        selectionKey=showcase ? "selectedRecorderShowcaseProject" : recorderFixture ? "selectedRecorderUIProject" : retentionFixture ? "selectedRetentionUIProject" : isolated ? "selectedDepthUIProject" : editorFixture ? "selectedEditorUIProject" : "selectedProject"
+        var storeBase = showcase ? documents.appendingPathComponent("RecorderShowcase") : documents
         #if targetEnvironment(macCatalyst)
         if !editorFixture && !retentionFixture && !isolated && !recorderFixture, let projectDirectory {
             storeBase = projectDirectory
