@@ -10,12 +10,12 @@ struct TitleInspector: View {
     @ObservedObject private var importedFonts = EditorFonts.shared
     @State private var fontLibrary = false
     let frame: () async throws -> CGImage
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var replay: ((Bool) -> Void)?
     var changeSection: () -> Void = {}
     let pauseForFonts: () -> Void
+    var prominentBorder = false
+    var showsMotion = true
     @State private var tab = Tab.looks
-    @State private var exitSelected = false
     @State private var systemFonts = false
     @State private var savePrompt = false
     @State private var name = ""
@@ -54,8 +54,14 @@ struct TitleInspector: View {
     private var demo: String { sample.isEmpty ? "Your title" : String(sample.prefix(48)) }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if prominentBorder {
+                Toggle(isOn: $design.outlined) {
+                    Label("Text border", systemImage: "character.textbox")
+                }.frame(minHeight: 44).accessibilityIdentifier(prefix + ".outline")
+                if design.outlined { borderControls }
+            }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 82), spacing: 6)], spacing: 6) {
-                ForEach(Tab.allCases, id: \.self) { value in
+                ForEach(Tab.allCases.filter { ($0 != .motion || showsMotion) && ($0 != .border || !prominentBorder) }, id: \.self) { value in
                     Button {
                         changeSection()
                         tab = value
@@ -80,8 +86,7 @@ struct TitleInspector: View {
             case .border:
                 Toggle("Letter outline", isOn: $design.outlined).accessibilityIdentifier(prefix + ".outline")
                 if design.outlined {
-                    color("Outline color", $design.border)
-                    slider("Width", $design.borderWidth, 0.01...0.20, step: 0.005)
+                    borderControls
                 }
             case .shadow:
                 Toggle("Drop shadow", isOn: $design.shadow)
@@ -101,7 +106,7 @@ struct TitleInspector: View {
                     slider("Padding", $design.padding, 0...0.8)
                     slider("Corner radius", $design.radius, 0...0.8)
                 }
-            case .motion: motionControls
+            case .motion: TitleMotionControls(motion: $motion, prefix: prefix, replay: replay)
             }
         }
         .task(id: tab) { if tab == .font { try? await importedFonts.refresh() } }
@@ -143,6 +148,18 @@ struct TitleInspector: View {
                 deleting = nil
             }
         }
+    }
+    @ViewBuilder private var borderControls: some View {
+        Picker("Border thickness", selection: $design.borderWidth) {
+            Text("Thin").tag(0.025)
+            Text("Medium").tag(0.045)
+            Text("Bold").tag(0.09)
+            if ![0.025, 0.045, 0.09].contains(design.borderWidth) {
+                Text("Custom").tag(design.borderWidth)
+            }
+        }.pickerStyle(.segmented).accessibilityIdentifier(prefix + ".border.thickness")
+        slider("Border width", $design.borderWidth, 0.01...0.20, step: 0.005)
+        color("Border color", $design.border)
     }
     private func color(_ name: String, _ value: Binding<TitleInk>) -> some View {
         TitleColorControl(title: name, ink: value, frame: frame)
@@ -340,7 +357,15 @@ struct TitleInspector: View {
             color("Text color", $design.fill)
         }
     }
-    @ViewBuilder private var motionControls: some View {
+}
+
+struct TitleMotionControls: View {
+    @Binding var motion: TitleMotion
+    let prefix: String
+    let replay: ((Bool) -> Void)?
+    @State private var exitSelected = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
         Picker("Animation end", selection: $exitSelected) {
             Text("Entrance").tag(false)
             Text("Exit").tag(true)
@@ -447,10 +472,11 @@ extension TitleInspector {
     }
 }
 
-private struct TitleColorControl: View {
+struct TitleColorControl: View {
     let title: String
     @Binding var ink: TitleInk
     let frame: () async throws -> CGImage
+    var editsOpacity = true
     @AppStorage("title.recentColors.v1") private var recentData = Data()
     @State private var hex = ""
     @State private var sampleFrame = false
@@ -460,8 +486,8 @@ private struct TitleColorControl: View {
         if let data = try? JSONEncoder().encode(Array(([c] + recents.filter { $0 != c }).prefix(8))) { recentData = data }
     }
     private func select(_ c: TitleInk) {
-        ink = c
-        remember(c)
+        ink = editsOpacity ? c : TitleInk(c.rgb, alpha: UInt8(ink.rgba & 255))
+        remember(ink)
     }
     private var encoded: String { String(format: "%06X", ink.rgb) }
     var body: some View {
@@ -482,9 +508,10 @@ private struct TitleColorControl: View {
                                 UIColor(cgColor: rgb).getRed(&r, green: &g, blue: &b, alpha: &a)
                             {
                                 func byte(_ x: CGFloat) -> UInt32 { UInt32((min(1, max(0, x)) * 255).rounded()) }
-                                ink = TitleInk(byte(r) << 16 | byte(g) << 8 | byte(b), alpha: UInt8(byte(a)))
+                                let alpha = editsOpacity ? UInt8(byte(a)) : UInt8(ink.rgba & 255)
+                                ink = TitleInk(byte(r) << 16 | byte(g) << 8 | byte(b), alpha: alpha)
                             }
-                        }), supportsOpacity: true)
+                        }), supportsOpacity: editsOpacity)
                 HStack {
                     Text("Hex")
                     TextField("RRGGBB", text: $hex).textInputAutocapitalization(.characters).autocorrectionDisabled()
@@ -496,14 +523,14 @@ private struct TitleColorControl: View {
                         !hex.trimmingCharacters(in: CharacterSet(charactersIn: "# ")).allSatisfy(\.isHexDigit)
                             || hex.trimmingCharacters(in: CharacterSet(charactersIn: "# ")).count != 6)
                 }
-                HStack {
-                    Text("Opacity")
-                    Slider(
-                        value: Binding(
-                            get: { ink.alpha }, set: { ink = TitleInk(ink.rgb, alpha: UInt8(($0 * 255).rounded())) }),
-                        in: 0...1, step: 0.01
-                    ).accessibilityLabel(title + " opacity")
-                    Text(ink.alpha.formatted(.percent)).monospacedDigit()
+                if editsOpacity {
+                    HStack {
+                        Text("Opacity")
+                        Slider(value: Binding(get: { ink.alpha }, set: {
+                            ink = TitleInk(ink.rgb, alpha: UInt8(($0 * 255).rounded()))
+                        }), in: 0...1, step: 0.01).accessibilityLabel(title + " opacity")
+                        Text(ink.alpha.formatted(.percent)).monospacedDigit()
+                    }
                 }
                 let palette = TextColor.allCases.map(TitleInk.init)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 38), spacing: 2)], spacing: 1) {

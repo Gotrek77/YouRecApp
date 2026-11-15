@@ -227,7 +227,15 @@ struct TextOverlay: Codable, Equatable, Identifiable, Sendable {
     var style: TextStyle = .bold
     var color: TextColor = .white
     var appearance: TitleDesign?
+    var labelHeadline: LabelHeadline?
     var motion: TitleMotion?
+    var displayText: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? labelHeadline?.label ?? "" : text
+    }
+    var hasText: Bool { !displayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var fontFaces: [String] {
+        [appearance?.face, labelHeadline?.labelStyle.face, labelHeadline?.headlineStyle.face].compactMap { $0 }
+    }
     var design: TitleDesign { appearance ?? .legacy(style, color: color) }
 }
 struct DetectedPause: Codable, Equatable, Sendable {
@@ -592,7 +600,7 @@ extension EditState {
             for text in clip.texts ?? [] where text.start < clip.end && text.end > clip.start {
                 let a = cursor + clip.timelineTime(forSource: max(clip.start, text.start))
                 let b = cursor + clip.timelineTime(forSource: min(clip.end, text.end))
-                if b > a { result.append(ToolRegion(tool: .text, effectID: text.id, clipID: clip.id, range: a...b, label: text.text)) }
+                if b > a { result.append(ToolRegion(tool: .text, effectID: text.id, clipID: clip.id, range: a...b, label: text.displayText)) }
             }
         }
         for audio in timeline.audio {

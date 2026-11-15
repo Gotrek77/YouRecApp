@@ -227,7 +227,7 @@ struct DeferredProjectHistory {
 }
 
 struct Project: Codable, Identifiable {
-    static let latestReadableSchema = 12
+    static let latestReadableSchema = 14
     private enum CodingKeys: String, CodingKey {
         case automaticCanvasVersion, exportSettings, schemaVersion, id, title, createdAt, updatedAt, sources, history, historyCursor, recordingHistoryVersion, recordingInsertion, recordingInsertionStep, recordingSite, snapshots, snapshotFiles, captureLedger
     }
@@ -294,7 +294,7 @@ struct Project: Codable, Identifiable {
         for snapshot in snapshots { files.formUnion(snapshot.state.importedFontFiles) }
         for capture in captureLedger {
             for text in capture.clip.texts ?? [] {
-                if let face = text.appearance?.face, let ref = ImportedFontFace.Reference(face) { files.insert(ref.filename) }
+                files.formUnion(text.fontFaces.compactMap { ImportedFontFace.Reference($0)?.filename })
             }
         }
         return files.sorted()
@@ -323,6 +323,9 @@ struct Project: Codable, Identifiable {
                 || (clip.videoEffects ?? []).contains { $0.motion != nil }
         }) || state.timeline.placements.contains(where:{ $0.videos.values.contains { $0.motion != nil } }) { schemaVersion = max(schemaVersion,12) }
         if state.timeline.subtitles != nil { schemaVersion = max(schemaVersion, 8) }
+        if state.timeline.video.contains(where: { $0.content.texts?.contains(where: { $0.labelHeadline != nil }) == true }) {
+            schemaVersion = max(schemaVersion, 14)
+        }
         // An older reader would pick the first timeline picture and silently reframe the movie.
         if state.canvasReference != nil { schemaVersion = max(schemaVersion, 10) }
         if state.timeline.audio.contains(where: { $0.fadeIn != nil || $0.fadeOut != nil }) { schemaVersion = max(schemaVersion, 11) }
@@ -507,7 +510,7 @@ struct Project: Codable, Identifiable {
                 }
                 for text in clip.texts ?? [] {
                     guard text.start.isFinite, text.end.isFinite, text.start >= 0, text.end > text.start, text.end <= source.duration + 0.001,
-                          text.appearance?.valid != false, text.motion?.valid != false, text.text.count <= 500, text.x.isFinite, text.y.isFinite, (0...1).contains(text.x), (0...1).contains(text.y),
+                          text.appearance?.valid != false, text.labelHeadline?.valid != false, text.motion?.valid != false, text.text.count <= 500, text.x.isFinite, text.y.isFinite, (0...1).contains(text.x), (0...1).contains(text.y),
                           text.size.isFinite, (0.02...0.3).contains(text.size) else { throw ProjectError.invalidDocument }
                 }
                 if let stabilization = clip.stabilization {

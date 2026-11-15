@@ -99,7 +99,7 @@ struct TimelineNavigation {
             if let value = clip.stabilization, value.level != .off { whole("stabilize", value, omit: ["referenceStart", "referenceEnd"]) }
             if let value = clip.pauses { whole("pauses", value, omit: ["cuts", "candidates", "analyzed"]) }
             if clip.frozenFrame != nil { whole("freeze", true) }
-            for value in clip.texts ?? [] where !value.text.isEmpty { sourceEffect("text", value, start: value.start, end: value.end, on: item) }
+            for value in clip.texts ?? [] where value.hasText { sourceEffect("text", value, start: value.start, end: value.end, on: item) }
             for value in clip.images ?? [] where value.opacity > 0 { sourceEffect("image", value, start: value.start, end: value.end, on: item) }
             for value in clip.videoEffects ?? [] where value.enabled {
                 if value.kind.descriptor.supportsIntensity, value.number("intensity") == 0,

@@ -142,6 +142,50 @@ struct TitleDesign: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+/// Both lines share the overlay's anchor, size, timing and animation.
+struct LabelHeadline: Codable, Equatable, Sendable {
+    enum Part: String, CaseIterable { case label = "Label", headline = "Headline", card = "Card" }
+
+    static let defaultHeadline = "Second text"
+    var label = "First text"
+    var labelStyle = TitleDesign(face: "system", weight: 700, alignment: .left, tracking: 0.09,
+                                 fill: .black, shadow: false, plate: .block, backing: .white, padding: 0.32, radius: 0.27)
+    var headlineStyle = TitleDesign(face: "archivoblack", weight: 400, alignment: .left, tracking: -0.045, shadow: false)
+    var labelScale = 0.36
+    var headlineScale = 1.0
+    var card = TitleCard()
+
+    var valid: Bool {
+        label.count <= 500 && labelStyle.valid && headlineStyle.valid && card.valid
+            && (0.2...1).contains(labelScale) && (0.5...1.8).contains(headlineScale)
+    }
+}
+
+struct TitleCard: Codable, Equatable, Sendable {
+    struct Offset: Codable, Equatable, Sendable {
+        // Each axis is a fraction of the travel from the preset position to that edge.
+        var x = 0.0, y = 0.0
+
+        var valid: Bool { (-1...1).contains(x) && (-1...1).contains(y) }
+    }
+
+    var fill = TitleInk(0x08090B, alpha: 139)
+    var border = TitleInk(0xFFFFFF, alpha: 72)
+    // Dimensions are relative to the base headline size, so the whole design scales together.
+    var borderWidth = 0.017
+    var padding = 0.42
+    var radius = 0.29
+    var spacing = 0.08
+    var labelOffset: Offset?
+    var headlineOffset: Offset?
+
+    var valid: Bool {
+        (0...0.1).contains(borderWidth) && (0...1).contains(padding)
+            && (0...1).contains(radius) && (0...1).contains(spacing)
+            && labelOffset?.valid != false && headlineOffset?.valid != false
+    }
+}
+
 struct TitleTypeface {
     let id: String, name: String, upright: String
     var slanted: String? = nil

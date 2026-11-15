@@ -42,7 +42,8 @@ final class EditorUITests: XCTestCase {
         for _ in 0..<16 {
             let viewport = scroll.frame.insetBy(dx: 0, dy: 25)
             if element.exists && element.isHittable && viewport.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) { return }
-            let downward = element.exists && element.frame.midY < viewport.midY
+            let elementFrame = element.exists ? element.frame : .null
+            let downward = !elementFrame.isEmpty && elementFrame.midY < viewport.midY
             let a = scroll.coordinate(withNormalizedOffset: CGVector(dx: swipeX, dy: downward ? 0.4 : 0.65))
             let b = scroll.coordinate(withNormalizedOffset: CGVector(dx: swipeX, dy: downward ? 0.65 : 0.4))
             a.press(forDuration: 0.05, thenDragTo: b, withVelocity: .slow, thenHoldForDuration: 0.1)
@@ -7188,6 +7189,71 @@ final class EditorUITests: XCTestCase {
         XCTAssertTrue(selectedFace("subtitles").isSelected)
     }
 
+    func testLabelHeadlineIsOneMovableEditableTitle() throws {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication(), run = UUID().uuidString
+        app.launchEnvironment["YOUREC_RECOVERY_TEST_RUN"] = run
+        app.launchEnvironment["YOUREC_LIBRARY_TEST_RUN"] = run
+        app.launchArguments = ["--editor-preview", "--reset-ui-fixture"]
+        app.launch()
+        openTool("text", in: app)
+        let controls = app.scrollViews["tool.settings"]
+        let layout = app.segmentedControls["title.layout"], parts = app.segmentedControls["title.part"]
+        func reveal(_ el: XCUIElement) { revealInViewport(el, scroll: controls, swipeX: 0.035) }
+        let group = layout.buttons["Label + headline"]
+        reveal(group); group.tap()
+        let headline = app.descendants(matching: .any)["tool.text.input"].firstMatch
+        XCTAssertEqual(headline.value as? String, "Second text")
+        let overlay = app.descendants(matching: .any)["tool.text.overlay"].firstMatch
+        XCTAssertTrue(overlay.waitForExistence(timeout: 10))
+        let specimen = XCTAttachment(screenshot: app.screenshot())
+        specimen.name = "Label and headline preset"; specimen.lifetime = .keepAlways; add(specimen)
+        overlay.coordinate(withNormalizedOffset: CGVector(dx: 0.18, dy: 0.27)).tap()
+        XCTAssertTrue(parts.buttons["Label"].isSelected)
+        let label = app.descendants(matching: .any)["tool.text.label"].firstMatch
+        XCTAssertEqual(label.value as? String, "First text")
+        label.tap(); label.typeText(" II")
+        app.buttons["Done"].firstMatch.tap()
+        overlay.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.35)).tap()
+        XCTAssertTrue(parts.buttons["Card"].isSelected)
+        let opacity = app.sliders["Card opacity"]
+        reveal(opacity); opacity.adjust(toNormalizedSliderPosition: 0.8)
+        let opacityValue = opacity.value as? String
+        let initial = overlay.frame
+        let point = overlay.coordinate(withNormalizedOffset: CGVector(dx: 0.52, dy: 0.58))
+        point.press(forDuration: 0.08, thenDragTo: point.withOffset(CGVector(dx: 0, dy: -36)))
+        XCTAssertLessThan(overlay.frame.midY, initial.midY - 18)
+        overlay.coordinate(withNormalizedOffset: CGVector(dx: 0.46, dy: 0.68)).tap()
+        XCTAssertTrue(parts.buttons["Headline"].isSelected)
+        reveal(headline); headline.tap(); headline.typeText("!")
+        app.buttons["Done"].firstMatch.tap()
+        app.buttons["tool.apply"].tap()
+        let badge = app.buttons.matching(identifier: "effect.text")
+        XCTAssertTrue(badge.firstMatch.waitForExistence(timeout: 15)); XCTAssertEqual(badge.count, 1)
+        badge.firstMatch.tap(); waitForTool(app)
+        XCTAssertTrue(group.isSelected)
+        XCTAssertTrue((headline.value as? String)?.contains("!") == true)
+        parts.buttons["Label"].tap(); XCTAssertTrue((label.value as? String)?.contains(" II") == true)
+        parts.buttons["Card"].tap(); reveal(opacity); XCTAssertEqual(opacity.value as? String, opacityValue)
+        let axes = ["Label X offset", "Label Y offset", "Headline X offset", "Headline Y offset"]
+        var savedValues = [String]()
+        for (axis, fraction) in zip(axes, [0.8, 0.6, 0.22, 0.35]) {
+            let slider = app.sliders[axis]
+            reveal(slider); slider.adjust(toNormalizedSliderPosition: fraction)
+            savedValues.append(try XCTUnwrap(slider.value as? String))
+        }
+        app.buttons["tool.apply"].tap()
+        XCTAssertTrue(badge.firstMatch.waitForExistence(timeout: 15)); badge.firstMatch.tap()
+        reveal(parts.buttons["Card"]); parts.buttons["Card"].tap()
+        for (axis, value) in zip(axes, savedValues) {
+            let slider = app.sliders[axis]; reveal(slider); XCTAssertEqual(slider.value as? String, value)
+        }
+        let reset = app.buttons["Reset label position"]; reveal(reset); reset.tap()
+        XCTAssertFalse(reset.isEnabled)
+        let other = app.buttons["Reset headline position"]; reveal(other); XCTAssertTrue(other.isEnabled)
+    }
+
     func testTitleOutlineGradientMotionAndExport() throws {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
@@ -7202,23 +7268,17 @@ final class EditorUITests: XCTestCase {
         let controls = app.scrollViews["tool.settings"]
         func button(_ name: String) {
             let item = app.buttons[name]
-            revealInViewport(item, scroll: controls); item.tap()
+            revealInViewport(item, scroll: controls, swipeX: 0.035); item.tap()
         }
         func tab(_ name: String) {
-            // The categories are at the top of the inspector.
-            for _ in 0..<10 {
-                let item = app.buttons["title.tab." + name]
-                if item.exists && item.isHittable && controls.frame.contains(CGPoint(x:item.frame.midX,y:item.frame.midY)) { item.tap(); return }
-                controls.swipeDown()
-            }
-            XCTFail("Could not open " + name)
+            button("title.tab." + name)
         }
-        tab("Outline")
         let outline = app.switches["title.outline"]
-        revealInViewport(outline,scroll:controls); outline.tap()
+        revealInViewport(outline,scroll:controls,swipeX:0.035); outline.tap()
+        let bold = app.segmentedControls["title.border.thickness"].buttons["Bold"]
+        revealInViewport(bold, scroll: controls, swipeX: 0.035); bold.tap()
         tab("Looks"); button("title.look.Headline")
-        tab("Outline")
-        revealInViewport(outline,scroll:controls); XCTAssertEqual(outline.value as? String,"1")
+        revealInViewport(outline,scroll:controls,swipeX:0.035); XCTAssertEqual(outline.value as? String,"1")
         tab("Fill")
         let gradient = app.segmentedControls["title.fillMode"].buttons["Gradient"]
         revealInViewport(gradient,scroll:controls); gradient.tap()
@@ -7232,10 +7292,14 @@ final class EditorUITests: XCTestCase {
         app.buttons["tool.apply"].tap()
         XCTAssertTrue(app.buttons["Tools"].waitForExistence(timeout:20))
         app.buttons["effect.text"].firstMatch.tap()
-        tab("Fill"); XCTAssertTrue(app.buttons["title.gradient.Lagoon"].exists)
-        XCTAssertTrue(app.buttons["title.gradient.Lagoon"].isSelected)
+        tab("Fill")
+        let savedGradient = app.buttons["title.gradient.Lagoon"]
+        revealInViewport(savedGradient, scroll: controls, swipeX: 0.035)
+        XCTAssertTrue(savedGradient.isSelected)
         tab("Motion")
-        XCTAssertTrue(app.buttons["title.motion.drift"].isSelected)
+        let savedMotion = app.buttons["title.motion.drift"]
+        revealInViewport(savedMotion, scroll: controls, swipeX: 0.035)
+        XCTAssertTrue(savedMotion.isSelected)
         app.buttons["tool.cancel"].tap()
         app.buttons["Export"].tap(); app.buttons["Export video"].tap()
         XCTAssertTrue(app.buttons["Save to Photos"].waitForExistence(timeout:120))

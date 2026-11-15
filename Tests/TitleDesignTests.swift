@@ -4,7 +4,7 @@ import CoreImage
 import ImageIO
 import UniformTypeIdentifiers
 
-private func compareDraftTitleColors(movie: String, hdr: Bool, captions: Bool, root: URL) async throws {
+private func compareDraftTitleColors(movie: String, hdr: Bool, captions: Bool, grouped: Bool = false, root: URL) async throws {
     var project = Project(title: "Title color comparison")
     project.append(SourceMedia(filename: movie, duration: 3))
     let size = CGSize(width: 640, height: 360)
@@ -15,6 +15,15 @@ private func compareDraftTitleColors(movie: String, hdr: Bool, captions: Bool, r
     design.fill = TitleInk(0x4383ca)
     design.shadow = false
     text.appearance = design
+    if grouped {
+        var group = LabelHeadline()
+        group.card.fill = TitleInk(0x916235, alpha: 218)
+        group.headlineStyle.fill = design.fill
+        group.card.labelOffset = .init(x: 0.6, y: 0.15)
+        group.card.headlineOffset = .init(x: -0.4, y: -0.2)
+        text.labelHeadline = group
+        text.size = 0.15
+    }
     guard let bitmap = TextRasterizer.image(text, canvas: size) else { throw ProjectError.invalidMedia }
     var edit = project.edit, base = project
     if captions {
@@ -42,6 +51,12 @@ private func compareDraftTitleColors(movie: String, hdr: Bool, captions: Bool, r
     let inspector = AVAssetImageGenerator(asset: draft.composition)
     inspector.videoComposition = draft.playbackVideoComposition
     project.commit(edit)
+    if grouped {
+        project = try JSONDecoder().decode(Project.self, from: JSONEncoder().encode(project))
+        try project.validate()
+        try require(project.schemaVersion >= 14 && project.edit.clips[0].texts == [text], "Reopen one grouped title with both faces and one shared range")
+        try require(project.edit.toolRegions.filter { $0.tool == .text }.count == 1, "The whole card has one edit handle")
+    }
     let url = root.appendingPathComponent(UUID().uuidString + ".mp4")
     defer { try? FileManager.default.removeItem(at: url) }
     _ = try await MediaRenderer.render(project: project, folder: root, destination: url) { _ in }
@@ -81,7 +96,7 @@ private func compareDraftTitleColors(movie: String, hdr: Bool, captions: Bool, r
         try require(samples.count > 1000 && samples.sorted()[samples.count/2] <= 3,
                     "The encoded title has a visibly different fill or backing color in " + movie)
     }
-    print("PASS: " + (captions ? "subtitle" : "title") + " draft and applied frames match exactly, encoded colors agree in " + movie)
+    print("PASS: " + (captions ? "subtitle" : grouped ? "label + headline" : "title") + " draft and applied frames match exactly, encoded colors agree in " + movie)
 }
 
 func titleDesignTests(root: URL) async throws {
@@ -89,6 +104,7 @@ func titleDesignTests(root: URL) async throws {
     try await importedFontTests(root: root)
     for (movie, hdr) in [("title-black.mp4", false), ("title-hlg.mp4", true)] {
         for captions in [false, true] { try await compareDraftTitleColors(movie: movie, hdr: hdr, captions: captions, root: root) }
+        try await compareDraftTitleColors(movie: movie, hdr: hdr, captions: false, grouped: true, root: root)
     }
     var design = TitleDesign()
     for family in TitleTypeface.families.dropFirst() {
@@ -131,6 +147,52 @@ func titleDesignTests(root: URL) async throws {
         }
         return data
     }
+    var chapter = LabelHeadline()
+    let cardCanvas = CGSize(width: 1280, height: 720)
+    let cardLayout = LabelHeadlineLayout(chapter, headline: LabelHeadline.defaultHeadline, fontSize: 88, width: cardCanvas.width * 0.94, folder: root)
+    guard let label = cardLayout.label, let heading = cardLayout.headline, let cardImage = cardLayout.image(fitting: cardCanvas) else {
+        throw ProjectError.invalidMedia
+    }
+    try require(label.rect.maxY < heading.rect.minY && label.rect.minX == heading.rect.minX, "The badge sits above the left-aligned headline")
+    for (frame, part) in [(label.rect, LabelHeadline.Part.label), (heading.rect, .headline)] {
+        let middle = CGPoint(x: frame.midX / cardLayout.size.width, y: frame.midY / cardLayout.size.height)
+        try require(cardLayout.part(at: middle) == part, "Preview hit testing agrees with the renderer")
+    }
+    let savedCard = try JSONEncoder().encode(chapter)
+    let oldCard = try JSONDecoder().decode(LabelHeadline.self, from: savedCard)
+    try require(oldCard.card.labelOffset == nil && oldCard.card.headlineOffset == nil, "Existing cards open at their original positions")
+    var shifted = oldCard
+    shifted.card.labelOffset = .init(x: 1, y: 1)
+    func arranged(_ group: LabelHeadline) -> LabelHeadlineLayout {
+        LabelHeadlineLayout(group, headline: LabelHeadline.defaultHeadline, fontSize: 88, width: cardCanvas.width * 0.94, folder: root)
+    }
+    let labelMoved = arranged(shifted)
+    try require(labelMoved.size == cardLayout.size && labelMoved.headline?.rect == heading.rect &&
+                labelMoved.label!.rect.maxX == cardLayout.size.width && labelMoved.label!.rect.maxY == cardLayout.size.height,
+                "Only the label moves to the bottom right edge of the card")
+    shifted.card.headlineOffset = .init(x: -1, y: -1)
+    let bothMoved = arranged(shifted)
+    try require(bothMoved.size == cardLayout.size && bothMoved.label?.rect == labelMoved.label?.rect &&
+                bothMoved.headline?.rect.origin == CGPoint.zero, "Headline offsets are independent on both axes")
+    let newHead = CGPoint(x: heading.rect.width / 2 / cardLayout.size.width, y: heading.rect.height / 2 / cardLayout.size.height)
+    try require(bothMoved.part(at: newHead) == .headline, "Direct selection follows moved lettering")
+    let movedImage = bothMoved.image(fitting: cardCanvas)!
+    try require(pixels(movedImage) != pixels(cardImage), "Offsets change the actual title bitmap")
+    shifted.card.labelOffset = nil; shifted.card.headlineOffset = nil
+    try require(pixels(arranged(shifted).image(fitting: cardCanvas)!) == pixels(cardImage), "Reset restores the original pixels")
+    let cardPixels = pixels(cardImage)
+    let marginPixel = 4 * (cardImage.width * (cardImage.height / 2) + 4)
+    try require(cardPixels[3] == 0 && abs(Int(cardPixels[marginPixel+3]) - 139) < 2, "Rounded transparent corners and translucent card fill")
+    let name = "A headline long enough to wrap onto several lines"
+    let narrow = LabelHeadlineLayout(chapter, headline: name, fontSize: 56, width: 260, folder: root)
+    try require(narrow.headline!.rect.height > heading.rect.height && CTFrameGetVisibleStringRange(narrow.headline!.text.frame).length == name.utf16.count,
+                "The card grows around the complete headline in portrait")
+    chapter.card.fill = TitleInk(0, alpha: 0); chapter.card.borderWidth = 0
+    let bare = LabelHeadlineLayout(chapter, headline: LabelHeadline.defaultHeadline, fontSize: 88, width: cardCanvas.width * 0.94, folder: root)
+    let barePixels = pixels(bare.image(fitting: cardCanvas)!)
+    try require(barePixels[marginPixel+3] == 0 && barePixels.contains(255), "Removing the card's fill and border keeps the two text styles")
+    var labelOnly = TextOverlay(text: ""); labelOnly.labelHeadline = chapter
+    try require(labelOnly.hasText && labelOnly.displayText == chapter.label && TextRasterizer.image(labelOnly, canvas: cardCanvas) != nil, "A label-only card remains editable")
     func colors(_ image: CGImage) -> (red: Int, green: Int, blue: Int) {
         let bytes = pixels(image)
         var n = (0, 0, 0)
@@ -349,6 +411,12 @@ private func importedFontTests(root: URL) async throws {
     var title = TextOverlay(text: "ABC", start: 0, end: 3, x: 0.5, y: 0.22, size: 0.16)
     var design = TitleDesign(); design.face = ttf.file.faces[0].id; design.shadow = false
     title.appearance = design; edit.timeline.video[0].content.texts = [title]
+    var grouped = title
+    var pair = LabelHeadline()
+    pair.labelStyle.face = otc.file.faces[1].id; pair.headlineStyle.face = ttf.file.faces[0].id
+    grouped.appearance = nil; grouped.labelHeadline = pair
+    var groupedEdit = edit; groupedEdit.timeline.video[0].content.texts = [grouped]
+    try require(groupedEdit.importedFontFiles.count == 2, "Group owns the fonts from both visible text components")
     edit.timeline.installSubtitles(SubtitleTiming.estimate("ABC", speech: [0...3]), range: 0...3, language: "English")
     var captionDesign = design; captionDesign.face = otc.file.faces[1].id
     edit.timeline.subtitles?.appearance = captionDesign

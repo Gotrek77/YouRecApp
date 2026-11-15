@@ -247,7 +247,7 @@ final class ToolWorkspace: ObservableObject {
     var playbackOrigin: Double { isOverlay ? start : request.tool == .color ? gradeRange.lowerBound : 0 }
     private var titleAuditionEnd: Double?
     func replayTitle(exit: Bool) {
-        guard let motion = text.motion, !busy, !text.text.isEmpty else { return }
+        guard let motion = text.motion, !busy, text.hasText else { return }
         let clock = titleMotionRange
         let window = motion.previewWindow(exit: exit, duration: clock.upperBound - clock.lowerBound)
         let from = max(0, min(duration, clock.lowerBound + window.lowerBound - start))
@@ -406,7 +406,7 @@ final class ToolWorkspace: ObservableObject {
     private let effectID: UUID
     private let awakeReason = "tool-" + UUID().uuidString
     var scope: ClosedRange<Double> { timing.range }
-    var canApply: Bool { (!busy || request.tool == .stabilize) && !loadingImage && (request.tool != .image || imageBitmap != nil) && !analyzingPauses && error == nil && (request.tool != .pauses || (detected && (!choices.isEmpty || request.effectID != nil))) && (request.tool != .text || !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+    var canApply: Bool { (!busy || request.tool == .stabilize) && !loadingImage && (request.tool != .image || imageBitmap != nil) && !analyzingPauses && error == nil && (request.tool != .pauses || (detected && (!choices.isEmpty || request.effectID != nil))) && (request.tool != .text || text.hasText) }
     var cutSeconds: Double {
         state().clips.filter { scopedIDs.contains($0.id) }.reduce(0) { sum,clip in var complete=clip;complete.pauses=nil;return sum+complete.duration-clip.duration }
     }
@@ -1061,6 +1061,11 @@ struct ToolEditor: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var pickedImage: PhotosPickerItem?
     @FocusState private var textFocused: Bool
+    @State private var titlePart = LabelHeadline.Part.headline
+    @State private var previousGroup: LabelHeadline?
+    @State private var previousGroupSize: Double?
+    @State private var previousTextSize: Double?
+    @State private var usingExampleHeadline = false
     @State private var dragOrigin: CGPoint?
     @State private var pinchSize: Double?
     init(project: Project, folder: URL, request: ToolRequest, editor: EditorController, cancel: @escaping () -> Void, apply: @escaping (EditState) -> Void) {
@@ -1182,19 +1187,33 @@ struct ToolEditor: View {
                     let dimensions = CGSize(width:bitmap.width,height:bitmap.height)
                     let origin = TextRasterizer.origin(model.text,imageSize:dimensions,canvas:model.canvas)
                     let scale = width/model.canvas.width
-                    Color.clear.frame(width:max(44,dimensions.width*scale+16),height:max(44,dimensions.height*scale+16))
+                    let rect = CGRect(x: origin.x * scale, y: height - (origin.y + dimensions.height) * scale,
+                                      width: dimensions.width * scale, height: dimensions.height * scale)
+                    let clock = model.titleMotionRange
+                    let pose = model.text.motion?.pose(at: model.start + model.position - clock.lowerBound,
+                                                       duration: clock.upperBound - clock.lowerBound) ?? TitleMotion.Pose()
+                    let visible = pose.rect(rect)
+                    let target = CGSize(width: max(44, visible.width + 16), height: max(44, visible.height + 16))
+                    Color.clear.frame(width: target.width, height: target.height)
                         .contentShape(Rectangle())
-                        .position(x:(origin.x+dimensions.width/2)*scale,y:height-(origin.y+dimensions.height/2)*scale)
-                        .gesture(DragGesture(minimumDistance: 2).onChanged { value in
+                        .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .global).onChanged { value in
                             if dragOrigin == nil { dragOrigin = CGPoint(x: model.text.x, y: model.text.y) }
                             let x = min(1, max(0, dragOrigin!.x + value.translation.width / max(1, size.width)))
                             let y = min(1, max(0, dragOrigin!.y + value.translation.height / max(1, size.height)))
                             model.text.x = abs(x - 0.5) < 0.015 ? 0.5 : x
                             model.text.y = abs(y - 0.5) < 0.015 ? 0.5 : y
                         }.onEnded { _ in dragOrigin = nil })
-                        .onTapGesture { textFocused = true }
+                        .onTapGesture { point in
+                            if let layout = TextRasterizer.labelHeadlineLayout(model.text, canvas: model.canvas, folder: model.folder) {
+                                let fx = (pose.left + pose.right) / 2 + (point.x - target.width / 2) / max(1, rect.width * pose.scale)
+                                let fy = (pose.top + pose.bottom) / 2 + (point.y - target.height / 2) / max(1, rect.height * pose.scale)
+                                textFocused = false
+                                titlePart = layout.part(at: CGPoint(x: fx, y: fy))
+                            } else { textFocused = true }
+                        }
                         .accessibilityElement(children:.ignore).accessibilityLabel("Text position").accessibilityIdentifier("tool.text.overlay")
                         .accessibilityHint("Drag to move, pinch to resize. Position and size controls are also below.")
+                        .position(x: visible.midX, y: visible.midY)
                 }
             }.frame(width: width, height: height).clipped().contentShape(Rectangle())
                 .simultaneousGesture(MagnificationGesture().onChanged { value in
@@ -1333,20 +1352,130 @@ struct ToolEditor: View {
     }
     private func textSettings(width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            TextField("Write something", text: $model.text.text, axis: .vertical).lineLimit(1...4)
-                .textFieldStyle(.roundedBorder).focused($textFocused).accessibilityIdentifier("tool.text.input")
-                .onChange(of: model.text.text) { _, value in if value.count > 500 { model.text.text = String(value.prefix(500)) } }
+            Picker("Title layout", selection: Binding(get: { model.text.labelHeadline != nil }, set: changeTitleLayout)) {
+                Text("Single text").tag(false)
+                Text("Label + headline").tag(true)
+            }.pickerStyle(.segmented).accessibilityIdentifier("title.layout")
+            if model.text.labelHeadline != nil {
+                Picker("Edit title part", selection: $titlePart) {
+                    ForEach(LabelHeadline.Part.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }.pickerStyle(.segmented).accessibilityIdentifier("title.part")
+                .onChange(of: titlePart) { _, _ in textFocused = false }
+            }
+            if model.text.labelHeadline == nil || titlePart != .card {
+                let isLabel = model.text.labelHeadline != nil && titlePart == .label
+                let prompt = model.text.labelHeadline == nil ? "Write something" : isLabel ? "Label" : "Headline"
+                TextField(prompt, text: Binding(get: { isLabel ? model.text.labelHeadline?.label ?? "" : model.text.text }, set: { value in
+                    let limited = String(value.prefix(500))
+                    if isLabel { model.text.labelHeadline?.label = limited }
+                    else { model.text.text = limited; usingExampleHeadline = false }
+                }), axis: .vertical).lineLimit(1...4)
+                    .textFieldStyle(.roundedBorder).focused($textFocused).accessibilityLabel(prompt)
+                    .accessibilityIdentifier(isLabel ? "tool.text.label" : "tool.text.input")
+                if model.text.labelHeadline != nil {
+                    let size = isLabel ? groupBinding(\.labelScale) : groupBinding(\.headlineScale)
+                    titleSlider(isLabel ? "Label size" : "Headline size", size, isLabel ? 0.2...1 : 0.5...1.8)
+                }
+            } else {
+                titleCardControls
+            }
             overlayTiming(width: width)
-            TitleInspector(design:Binding(get:{model.text.design},set:model.setTitleDesign),
-                           motion:Binding(get:{model.text.motion ?? TitleMotion()},set:{model.text.motion=$0}),
-                           sample:model.text.text,prefix:"title",folder:model.folder,frame:{try await TitleInspector.picture(player:model.player,at:model.start+model.position)},
-                           replay:model.replayTitle, changeSection:{textFocused=false}, pauseForFonts:{ if model.playing { model.togglePlay() } })
+            if model.text.labelHeadline == nil || titlePart != .card {
+                let isLabel = model.text.labelHeadline != nil && titlePart == .label
+                let style = model.text.labelHeadline == nil ? Binding(get: { model.text.design }, set: model.setTitleDesign)
+                    : isLabel ? groupBinding(\.labelStyle) : groupBinding(\.headlineStyle)
+                TitleInspector(design: style, motion: titleMotion, sample: isLabel ? model.text.labelHeadline?.label ?? "" : model.text.text,
+                               prefix: "title", folder: model.folder, frame: titleVideoFrame, replay: model.replayTitle,
+                               changeSection: { textFocused = false }, pauseForFonts: { if model.playing { model.togglePlay() } },
+                               prominentBorder: true, showsMotion: model.text.labelHeadline == nil)
+            }
+            if model.text.labelHeadline != nil {
+                DisclosureGroup("Title motion") {
+                    TitleMotionControls(motion: titleMotion, prefix: "title", replay: model.replayTitle)
+                }.accessibilityIdentifier("title.groupMotion")
+            }
             Text("Drag to move · pinch to resize").font(.caption).foregroundStyle(.secondary)
-            HStack { Text("Size"); Slider(value: $model.text.size, in: 0.02...0.3).accessibilityLabel("Text size") }
+            HStack { Text(model.text.labelHeadline == nil ? "Size" : "Whole title size"); Slider(value: $model.text.size, in: 0.02...0.3).accessibilityLabel("Text size") }
             DisclosureGroup("Position") {
                 HStack { Text("Across"); Slider(value: $model.text.x, in: 0...1).accessibilityLabel("Text horizontal position") }
                 HStack { Text("Down"); Slider(value: $model.text.y, in: 0...1).accessibilityLabel("Text vertical position") }
                 Button("Centre text") { model.text.x = 0.5; model.text.y = 0.5 }.frame(minHeight: 44)
+            }
+        }
+    }
+    private var titleMotion: Binding<TitleMotion> {
+        Binding(get: { model.text.motion ?? TitleMotion() }, set: { model.text.motion = $0 })
+    }
+    private func titleVideoFrame() async throws -> CGImage {
+        try await TitleInspector.picture(player: model.player, at: model.start + model.position)
+    }
+    private func changeTitleLayout(_ grouped: Bool) {
+        textFocused = false
+        if grouped, model.text.labelHeadline == nil {
+            previousTextSize = model.text.size
+            model.text.labelHeadline = previousGroup ?? LabelHeadline()
+            if model.text.text.isEmpty && (previousGroup == nil || usingExampleHeadline) {
+                model.text.text = LabelHeadline.defaultHeadline
+                usingExampleHeadline = true
+            }
+            let shortSide = max(1, min(model.canvas.width, model.canvas.height))
+            model.text.size = previousGroupSize ?? min(0.20, 0.14 * max(1, model.canvas.width / shortSide))
+            titlePart = .headline
+        } else if !grouped, let group = model.text.labelHeadline {
+            previousGroup = group
+            previousGroupSize = model.text.size
+            model.text.labelHeadline = nil
+            if usingExampleHeadline { model.text.text = "" }
+            model.text.size = previousTextSize ?? model.text.size
+        }
+    }
+    private func groupBinding<Value>(_ key: WritableKeyPath<LabelHeadline, Value>) -> Binding<Value> {
+        Binding(get: { (model.text.labelHeadline ?? LabelHeadline())[keyPath: key] },
+                set: { model.text.labelHeadline?[keyPath: key] = $0 })
+    }
+    private func titleSlider(_ label: String, _ value: Binding<Double>, _ range: ClosedRange<Double>, step: Double = 0.01, accessibilityName: String? = nil) -> some View {
+        VStack {
+            HStack { Text(label); Spacer(); Text(value.wrappedValue.formatted(.percent.precision(.fractionLength(0...1)))).monospacedDigit() }
+            Slider(value: value, in: range, step: step).accessibilityLabel(accessibilityName ?? label)
+                .accessibilityValue(value.wrappedValue.formatted(.percent.precision(.fractionLength(0...1))))
+        }.font(.subheadline)
+    }
+    private func cardPosition(_ name: String, _ position: Binding<TitleCard.Offset?>) -> some View {
+        func axis(_ key: WritableKeyPath<TitleCard.Offset, Double>) -> Binding<Double> {
+            Binding(get: { position.wrappedValue?[keyPath: key] ?? 0 }, set: { value in
+                var offset = position.wrappedValue ?? TitleCard.Offset()
+                offset[keyPath: key] = value
+                position.wrappedValue = offset == TitleCard.Offset() ? nil : offset
+            })
+        }
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(name + " position").font(.subheadline.weight(.semibold))
+                Spacer()
+                Button("Reset") { position.wrappedValue = nil }
+                    .accessibilityLabel("Reset " + name.lowercased() + " position")
+                    .disabled(position.wrappedValue == nil)
+            }
+            titleSlider("X offset", axis(\.x), -1...1, accessibilityName: name + " X offset")
+            titleSlider("Y offset", axis(\.y), -1...1, accessibilityName: name + " Y offset")
+        }
+    }
+    private var titleCardControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TitleColorControl(title: "Card color", ink: groupBinding(\.card.fill), frame: titleVideoFrame, editsOpacity: false)
+            titleSlider("Card opacity", Binding(get: { model.text.labelHeadline?.card.fill.alpha ?? 0 }, set: { opacity in
+                if let ink = model.text.labelHeadline?.card.fill {
+                    model.text.labelHeadline?.card.fill = TitleInk(ink.rgb, alpha: UInt8((opacity * 255).rounded()))
+                }
+            }), 0...1)
+            cardPosition("Label", groupBinding(\.card.labelOffset))
+            cardPosition("Headline", groupBinding(\.card.headlineOffset))
+            titleSlider("Padding", groupBinding(\.card.padding), 0...1)
+            titleSlider("Corner radius", groupBinding(\.card.radius), 0...1)
+            titleSlider("Space between lines", groupBinding(\.card.spacing), 0...1)
+            titleSlider("Card border width", groupBinding(\.card.borderWidth), 0...0.1, step: 0.001)
+            if (model.text.labelHeadline?.card.borderWidth ?? 0) > 0 {
+                TitleColorControl(title: "Card border color", ink: groupBinding(\.card.border), frame: titleVideoFrame)
             }
         }
     }

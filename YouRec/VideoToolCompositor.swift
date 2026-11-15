@@ -530,8 +530,14 @@ enum ColorLUT {
 }
 
 enum TextRasterizer {
+    static func labelHeadlineLayout(_ text: TextOverlay, canvas: CGSize, folder: URL?) -> LabelHeadlineLayout? {
+        guard let group = text.labelHeadline else { return nil }
+        return LabelHeadlineLayout(group, headline: text.text, fontSize: max(8, min(canvas.width, canvas.height) * text.size),
+                                   width: canvas.width * 0.94, folder: folder)
+    }
     static func image(_ text: TextOverlay, canvas: CGSize, folder: URL? = nil) -> CGImage? {
-        guard !text.text.isEmpty, canvas.width > 0, canvas.height > 0 else { return nil }
+        guard text.hasText, canvas.width > 0, canvas.height > 0 else { return nil }
+        if let layout = labelHeadlineLayout(text, canvas: canvas, folder: folder) { return layout.image(fitting: canvas) }
         let fontSize = max(8, min(canvas.width, canvas.height) * text.size)
         if let design = text.appearance {
             let layout = StyledTextLayout(text: text.text, design: design, fontSize: fontSize, maxWidth: canvas.width * 0.94, folder: folder)
