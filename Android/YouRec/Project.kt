@@ -227,7 +227,7 @@ data class ExportSettings(val codec: Codec = Codec.H264, val resolution: Resolut
 
 data class ExportReceipt(val id: UUID = UUID.randomUUID(), val createdAt: Moment = Moment.now(), val filename: String, val projectID: UUID,
                          val projectTitle: String, val revision: String, val sourceChecksums: Map<String, String>, val width: Int, val height: Int,
-                         val framesPerSecond: Int, val codec: ExportSettings.Codec, val audioPeak: Double? = null) {
+                         val framesPerSecond: Int, val codec: ExportSettings.Codec, val resolution: ExportSettings.Resolution, val audioPeak: Double? = null) {
     // Measured from this export's final mix. Older exports make no claim about headroom.
     val audioWarning: String? get() {
         val peak = audioPeak ?: return null

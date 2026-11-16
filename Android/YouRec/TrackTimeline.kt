@@ -563,6 +563,13 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
         }
         bookmarks = bookmarks + TimelineBookmark(label = label, anchor = anchor)
     }
+    /// Audio overlays do not ripple the picture or any existing sound.
+    fun insertAudio(source: SourceMedia, position: EditTime): UUID {
+        val item = AudioTimelineItem(occurrenceID = UUID.randomUUID(), sourceID = source.id, start = maxOf(EditTime.zero, position),
+            mapping = SourcePlaybackMap(listOf(PlaybackRun(EditTime.seconds(source.duration), 0.0, source.duration))))
+        audio = audio + item
+        return item.id
+    }
     fun includeCaptureBookmarks(source: SourceMedia) {
         val item = video.firstOrNull { it.content.sourceID == source.id } ?: return
         for (event in source.events ?: emptyList()) {

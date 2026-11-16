@@ -11,6 +11,12 @@ interface Navigation {
     fun showEditor(project: UUID)
     /// Ask for camera and microphone access; true once both are granted.
     fun requestCapturePermissions(completion: (Boolean) -> Unit)
+    /// Let the user choose one document of a MIME type, e.g. "video/*". Null if they cancel.
+    fun pickMedia(type: String, completion: (android.net.Uri?) -> Unit)
+    /// Offer a finished movie to other apps.
+    fun share(movie: java.io.File)
+    /// Copy a finished movie into the device gallery. The message is for the user.
+    fun saveToGallery(movie: java.io.File, completion: (String) -> Unit)
 }
 
 interface Screen {

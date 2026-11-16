@@ -155,8 +155,9 @@ internal object ProjectCoding {
     fun receipt(value: Fields) = ExportReceipt(value.uuid("id"), Moment(value.double("createdAt")), value.string("filename"), value.uuid("projectID"),
         value.string("projectTitle"), value.string("revision"),
         value.fields("sourceChecksums").let { sums -> sums.keys.associateWith { sums.string(it) } }, value.int("width"), value.int("height"), value.int("framesPerSecond"),
-        ExportSettings.Codec.values().firstOrNull { it.title == value.string("codec") } ?: throw ProjectError.InvalidDocument(), value.doubleOrNull("audioPeak"))
+        ExportSettings.Codec.values().firstOrNull { it.title == value.string("codec") } ?: throw ProjectError.InvalidDocument(),
+        ExportSettings.Resolution.values().firstOrNull { it.title == value.string("resolution") } ?: throw ProjectError.InvalidDocument(), value.doubleOrNull("audioPeak"))
     fun encode(receipt: ExportReceipt) = jsonObject("schemaVersion" to 1, "id" to receipt.id.text, "createdAt" to receipt.createdAt.reference, "filename" to receipt.filename,
         "projectID" to receipt.projectID.text, "projectTitle" to receipt.projectTitle, "revision" to receipt.revision, "sourceChecksums" to receipt.sourceChecksums,
-        "width" to receipt.width, "height" to receipt.height, "framesPerSecond" to receipt.framesPerSecond, "codec" to receipt.codec.title, "audioPeak" to receipt.audioPeak)
+        "width" to receipt.width, "height" to receipt.height, "framesPerSecond" to receipt.framesPerSecond, "codec" to receipt.codec.title, "resolution" to receipt.resolution.title, "audioPeak" to receipt.audioPeak)
 }
