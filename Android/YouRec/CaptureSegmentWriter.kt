@@ -46,6 +46,7 @@ class CaptureSegmentWriter(val file: File, val width: Int, val height: Int, bitr
     private val freeInputs = ArrayDeque<Int>()
     private var audioAnchor = -1L                  // microseconds; audio time is counted in samples from here
     private var audioFrames = 0L
+    private var videoWritten = 0
     private var lastVideo = -1L
     private var lastAudio = -1L
     private var finishing = false
@@ -212,7 +213,7 @@ class CaptureSegmentWriter(val file: File, val width: Int, val height: Int, bitr
         // The muxer rejects time running backwards within a track.
         if (isVideo) {
             if (info.presentationTimeUs <= lastVideo) return
-            muxer.writeSampleData(videoTrack, data, info); lastVideo = info.presentationTimeUs
+            muxer.writeSampleData(videoTrack, data, info); lastVideo = info.presentationTimeUs; videoWritten++
         } else if (audioTrack >= 0) {
             if (info.presentationTimeUs <= lastAudio) return
             muxer.writeSampleData(audioTrack, data, info); lastAudio = info.presentationTimeUs
@@ -268,6 +269,8 @@ class CaptureSegmentWriter(val file: File, val width: Int, val height: Int, bitr
         if (!muxing && error == null && waiting.any { it.video }) { begin(withoutAudio = true); if (closed) return }
         closed = true
         handler.removeCallbacksAndMessages(null)
+        // One line per segment: enough to tell an encoder that fell behind from a clock fault.
+        android.util.Log.w("YouRec", "segment ${file.name}: $videoWritten frames to ${lastVideo / 1000} ms (ended $videoEnded), sound to ${lastAudio / 1000} ms (ended $audioEnded)" + (error?.let { ", $it" } ?: ""))
         var failure = error
         if (muxing && lastVideo >= 0) {
             try { muxer.stop(); playable = true }

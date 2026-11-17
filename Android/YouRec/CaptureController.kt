@@ -783,6 +783,8 @@ class CaptureController(private val context: Context) {
     private var hasFrame = false
     private val matrix = FloatArray(16)
     private var clockOffset = Long.MIN_VALUE   // sensor clock to System.nanoTime, per camera
+    private var submitted = 0                  // frames handed to the encoder in this segment
+    private var slowest = 0L                   // the longest the encoder made one frame wait
     private var lag = 0L                       // how late frames arrive, to time held frames alike
     private var lastTime = 0L                  // last time given to the encoder
     private var lastArrival = 0L
@@ -821,7 +823,7 @@ class CaptureController(private val context: Context) {
     private fun attachEncoder(target: CaptureSegmentWriter, quarter: Int) {
         val core = egl ?: return
         encoder = try { core.windowSurface(target.surface) } catch (e: Exception) { null }
-        encoding = target; encodingTurn = quarter; lastTime = 0
+        encoding = target; encodingTurn = quarter; lastTime = 0; submitted = 0; slowest = 0
         // Start with the picture already on screen instead of waiting a frame.
         lastArrival = System.nanoTime(); lastSubmit = 0
         if (hasFrame) draw(lastArrival - lag)
@@ -829,6 +831,7 @@ class CaptureController(private val context: Context) {
     }
     private fun detachEncoder(target: CaptureSegmentWriter) {
         if (encoding !== target) return
+        android.util.Log.w("YouRec", "encoder detached: $submitted frames submitted, slowest ${slowest / 1_000_000} ms, camera lag ${lag / 1_000_000} ms")
         encoding = null
         encoder?.let { egl?.release(it) }; encoder = null
         renderHandler?.removeCallbacks(holdStep)
@@ -886,12 +889,14 @@ class CaptureController(private val context: Context) {
             val target = encoding; val surface = encoder
             if (target != null && surface != null && current != null && hasFrame && time > lastTime + 2_000_000L) {
                 val place = Placement.movie(current.natural, current.camera.front && !saveMirrored, encodingTurn, target.width, target.height)
+                val began = System.nanoTime()
                 core.makeCurrent(surface)
                 FrameProgram.clear(target.width, target.height)
                 quad.draw(textureID, matrix, place.scaleX, place.scaleY, place.rotation, place.mirror)
                 core.setPresentationTime(surface, target.videoTime(time))
                 core.swap(surface)
-                lastTime = time; lastSubmit = System.nanoTime()
+                lastTime = time; lastSubmit = System.nanoTime(); submitted++
+                slowest = maxOf(slowest, lastSubmit - began)
             }
             val display = screen ?: return
             if (windowWidth <= 0 || windowHeight <= 0) return

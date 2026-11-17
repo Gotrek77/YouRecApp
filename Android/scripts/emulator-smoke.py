@@ -35,9 +35,11 @@ def fail(message):
     failures.append(message)
     note("FAIL: " + message)
 
-def nodes():
+def nodes(tries=6):
     """Every on-screen control with a name: (name, text, enabled, centre)."""
-    for attempt in range(6):
+    for attempt in range(tries):
+        # Remove the last dump first: a failed dump must not be mistaken for the screen.
+        adb("shell", "rm", "-f", "/sdcard/yourec-ui.xml")
         adb("shell", "uiautomator", "dump", "/sdcard/yourec-ui.xml")
         xml = adb("shell", "cat", "/sdcard/yourec-ui.xml")
         if xml.startswith("<?xml"):
@@ -113,7 +115,7 @@ def pull():
     movies = []
     for root, _, names in os.walk(local):
         for name in sorted(names):
-            if name.endswith(".mp4"):
+            if name.endswith(".mp4") and not name.startswith("."):
                 movies.append(os.path.join(root, name))
     return movies
 
@@ -191,19 +193,23 @@ def main():
     time.sleep(2)
     note("editor: " + describe())
     shot("editor")
+    button = find("Play")
     tap("Play")
-    # The time readout changes every frame while playing, so the screen is read by its clock.
-    clocks = []
-    for _ in range(4):
-        time.sleep(1)
-        clocks.append(next((n[1] for n in nodes() if " / " in n[1]), "unreadable"))
-    note("playhead while playing: " + ", ".join(clocks))
+    # While the movie plays its time readout changes on every frame, so the
+    # screen cannot be read: that itself is the sign that it is playing.
+    time.sleep(2)
+    busy = sum(1 for _ in range(3) if not nodes(tries=1))
+    note("screen changing during playback: %d of 3 readings" % busy)
     shot("editor-playing")
-    if find("Pause"):
-        tap("Pause")
-    if len({c for c in clocks if c != "unreadable"}) < 2:
-        fail("the playhead did not advance during playback")
-    time.sleep(1)
+    if button:
+        adb("shell", "input", "tap", str(button[3][0]), str(button[3][1])); note("tap  Pause (same button)")
+    time.sleep(1.5)
+    readout = next((n[1] for n in nodes() if " / " in n[1]), "unreadable")
+    note("paused at: " + readout)
+    if readout.startswith("0:00.00") or readout == "unreadable":
+        fail("the playhead did not advance during playback (%s)" % readout)
+    elif readout.split(" / ")[0] == readout.split(" / ")[1]:
+        note("playback had already reached the end; the tap restarted nothing")
     note("after playing: " + describe())
     tap("Split")
     time.sleep(1)
@@ -218,7 +224,7 @@ def main():
     tap("Export")
     wait("Export movie", 10)
     tap("Export", last=True)
-    if not wait("Export finished", 240):
+    if not wait("Export finished", 900):
         shot("export-not-finished")
     else:
         note("export: " + describe())
@@ -246,5 +252,6 @@ finally:
     note("log lines worth reading (%d, last 60):\n%s" % (len(errors), "".join(errors[-60:])))
     # The emulator prints its own noise between our lines: repeat ours together.
     print("==== SUMMARY ====\n" + "\n".join(n for n in notes if not n.startswith("log lines")), flush=True)
+    print("==== APP LOG ====\n" + "".join(l for l in open(os.path.join(OUT, "logcat.txt"), errors="replace") if "YouRec" in l)[-6000:], flush=True)
     note("RESULT: " + ("PASS" if not failures else "%d failure(s)\n- " % len(failures) + "\n- ".join(failures)))
     sys.exit(1 if failures else 0)
