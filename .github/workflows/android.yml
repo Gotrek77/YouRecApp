@@ -1,0 +1,28 @@
+name: Android
+
+# Builds the Android port only. Nothing here touches the iPhone app.
+on:
+  push:
+    paths: ['Android/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Core checks
+        run: ./scripts/test-core.sh
+      - name: Build debug APK
+        run: ./gradlew --no-daemon assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YouRec-debug-apk
+          path: Android/build/outputs/apk/debug/*.apk
