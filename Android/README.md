@@ -66,7 +66,14 @@ layouts, live effects, face follow, front light, horizon level, focus peaking ·
 Record-here insertion · Recovery of a segment interrupted while being written ·
 Landscape editor layout.
 
-Two of these deserve a note. **Interrupted takes:** Android's `MediaMuxer`
+Smaller gaps inside what *is* ported, all in the recorder: lenses hidden behind
+a logical multi-camera are reached through zoom rather than listed separately;
+the ultra-wide's **1× Main** preset does not switch lens; there is no
+reorderable microphone preference list (Automatic is Android's own choice);
+Bluetooth microphones are listed but no SCO link is opened for them; if every
+microphone disappears the take continues with picture only and a warning.
+
+Two of the larger items deserve a note. **Interrupted takes:** Android's `MediaMuxer`
 writes the MP4 index when a segment is finalized, so a crash or battery loss
 during a take loses the segment in progress (everything up to the last Pause is
 safe). Bounding that loss needs a different container strategy and is the first
@@ -128,6 +135,10 @@ project, with the same layout as on iPhone.
 ```sh
 ./scripts/test-core.sh
 ```
+
+The repository's `Android` workflow on GitHub Actions runs these checks and
+`./gradlew assembleDebug` on every push that touches `Android/`, and attaches
+the debug APK to the run.
 
 Requires only a JDK and `kotlinc`. It compiles the core with its checks into one
 program, as the iPhone `scripts/test-core.sh` does with `swiftc`. The checks are

@@ -39,6 +39,36 @@ readable text. Compare the on-screen preview with the saved movie each time.
 | Long take | 60 minutes at 1080p: file plays to the end, device temperature and dropped frames noted |
 | Low storage | Recording stops cleanly with a message and a playable file |
 
+### Assumptions the recorder was written on
+
+Each was reasoned from documentation, none was seen. A failure in section 1
+most likely traces to one of these; check them first.
+
+1. `SurfaceTexture.getTransformMatrix` delivers the camera picture upright for
+   the phone's natural orientation and mirrored for the front camera. Movie
+   rotation = device turn; un-mirroring = a flip after rotation.
+2. The `OrientationEventListener` mapping from angle to turn (which landscape is
+   which) was derived on paper.
+3. Preview and movie use the same placement code; Fit shows the saved frame and
+   Fill crops the sides on tall screens. Cameras without a 16:9 stream size are
+   the risky case.
+4. One Surface is reused across cameras. Holding the last frame relies on no
+   buffer from the old camera arriving after it closes; a one-frame geometry
+   glitch at a switch would point here.
+5. Video frames are timed from the sensor timestamp when its source is
+   REALTIME, otherwise from arrival; sound is anchored with
+   `AudioRecord.getTimestamp` and counted in samples. Sync needs the clap test.
+6. Encoder settings (portrait sizes, High profile, BT.709 keys, 16 and 48
+   Mbit/s) and end-of-stream with a forced close after 2.5 s are untested.
+7. A 1080p-only camera selected during a 4K take is upscaled into the canvas.
+8. Camera labels come from 35 mm-equivalent focal lengths in vendor metadata.
+9. Focus "lock" on a camera without manual control is autofocus that is never
+   re-triggered; whether the lens truly holds varies by device. Tap-to-focus
+   maps view → upright picture → sensor and may be off on the front camera.
+10. Stopping blocks the interface for up to about five seconds while the open
+    segment is finalized. Leaving and returning quickly relies on one retry if
+    the camera is still closing.
+
 ## 2. Projects and durability
 
 | Check | Pass when |
