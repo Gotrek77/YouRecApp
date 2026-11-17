@@ -129,6 +129,7 @@ class MovieExport(project: Project, private val folder: File, private val export
                 if (cancelled) throw Cancelled()
                 // Frame n shows the edit at n / fps, whatever the sources' own cadence.
                 val time = EditTime.seconds(n.toDouble() / fps)
+                val t0 = System.nanoTime()
                 FrameProgram.clear(width, height)
                 val picture = plan.picture(time)
                 val reader = picture?.let { sources.frames(it.source) }
@@ -138,9 +139,11 @@ class MovieExport(project: Project, private val folder: File, private val export
                     val fit = RenderPlan.fit(reader.video.displayWidth, reader.video.displayHeight, width, height)
                     program.draw(reader.texture, reader.matrix, fit.scaleX, fit.scaleY)
                 }
+                val t1 = System.nanoTime()
                 egl.setPresentationTime(window, n * 1_000_000_000L / fps)
                 egl.swap(window)
                 writer.drain(videoEncoder, video = true, end = false)
+                val t2 = System.nanoTime()
                 // Keep sound just ahead of picture so the muxer can interleave them.
                 val audioTarget = minOf(totalAudio, (n + 1) * AudioMix.sampleRate.toLong() / fps + blockFrames)
                 while (audioFed < audioTarget) {
@@ -149,6 +152,9 @@ class MovieExport(project: Project, private val folder: File, private val export
                     feed(audioEncoder, writer, block, count, audioFed, end = false)
                     audioFed += count
                 }
+                // A frame that takes a second names the stage that held it up.
+                val t3 = System.nanoTime()
+                if (t3 - t0 > 1_000_000_000L) android.util.Log.w("YouRec", "export frame $n of $totalFrames: picture ${(t1 - t0) / 1_000_000} ms, encode ${(t2 - t1) / 1_000_000} ms, sound ${(t3 - t2) / 1_000_000} ms")
                 report.report((n + 1).toDouble() / totalFrames * 0.99)
             }
             while (audioFed < totalAudio) {

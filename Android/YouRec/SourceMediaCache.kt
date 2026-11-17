@@ -165,6 +165,7 @@ class DecodedAudio(file: File) : PCMSource {
     private var runInput = 0L            // source frames decoded since then
     private var positioned = false
     private var sought = Long.MIN_VALUE  // where the last seek was asked to land
+    private var endAt = Long.MAX_VALUE   // first position after the file's last sample, once known
     private var fed = false
     private var inputDone = false
     private var ended = false
@@ -198,6 +199,9 @@ class DecodedAudio(file: File) : PCMSource {
                 val n = minOf((frames - done).toLong(), chunkStart - p).toInt()
                 java.util.Arrays.fill(into, offset + done * 2, offset + (done + n) * 2, 0f); done += n; continue
             }
+            // Past the last sample the file holds there is only silence. Asking the
+            // decoder again would cost a seek and a wait on every block.
+            if (p >= endAt) break
             // Before the decoded window, or more than half a second ahead of it.
             if (!positioned || p < chunkStart || p > chunkStart + chunkFrames + AudioMix.sampleRate / 2) seek(p)
             if (ended || !decode()) break
@@ -240,11 +244,13 @@ class DecodedAudio(file: File) : PCMSource {
             val got = info.size > 0
             if (got) convert(codec, index)
             codec.releaseOutputBuffer(index, false)
-            if (last) ended = true
+            if (last) { ended = true; endAt = minOf(endAt, if (positioned) chunkStart + chunkFrames else sought) }
             if (got) return true
             if (last) return false
         }
+        // A decoder that stays silent with all input given has ended, announced or not.
         ended = true
+        if (inputDone) endAt = minOf(endAt, if (positioned) chunkStart + chunkFrames else sought)
         return false
     }
     /// Deinterleave, bring to stereo and to the mix rate. Positions come from a

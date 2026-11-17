@@ -27,6 +27,7 @@ def adb(*args, check=False, timeout=120):
     return result.stdout.decode(errors="replace")
 
 notes = []
+applog = None
 def note(message):
     notes.append(message)
     print(message, flush=True)
@@ -137,6 +138,9 @@ def main():
     for permission in ("CAMERA", "RECORD_AUDIO"):
         adb("shell", "pm", "grant", PACKAGE, "android.permission." + permission)
     adb("logcat", "-c")
+    # The app's own lines, kept from the start: the device log forgets them within minutes.
+    global applog
+    applog = subprocess.Popen(("adb", "logcat", "-s", "YouRec:V"), stdout=open(os.path.join(OUT, "app.log"), "w"), stderr=subprocess.DEVNULL)
     adb("shell", "am", "start", "-W", "-n", PACKAGE + "/yourec.YouRecActivity")
     time.sleep(4)
 
@@ -255,6 +259,9 @@ finally:
         f.write(log)
     # The emulator prints its own noise between our lines: repeat ours together, last.
     print("==== SUMMARY ====\n" + "\n".join(notes), flush=True)
-    print("==== APP LOG ====\n" + "\n".join(l for l in log.splitlines() if " YouRec" in l)[-5000:], flush=True)
+    if applog:
+        applog.terminate()
+    own = open(os.path.join(OUT, "app.log"), errors="replace").read() if os.path.exists(os.path.join(OUT, "app.log")) else ""
+    print("==== APP LOG ====\n" + own[:2500] + ("\n...\n" + own[-2500:] if len(own) > 5000 else own[2500:]), flush=True)
     print("RESULT: " + ("PASS" if not failures else "%d failure(s)\n- " % len(failures) + "\n- ".join(f[:600] for f in failures)), flush=True)
     sys.exit(1 if failures else 0)
