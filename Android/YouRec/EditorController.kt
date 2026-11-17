@@ -43,7 +43,7 @@ class EditorController {
         override fun doFrame(nanos: Long) {
             val player = audio ?: return
             val time = player.time()
-            if (player.finished || time >= duration) { playhead = duration; pause(); return }
+            if (player.ended || time >= duration) { playhead = duration; pause(); return }
             playhead = time
             requestDraw()
             onChange?.invoke()
@@ -180,6 +180,8 @@ class EditorController {
         private val stamp = AudioTimestamp()   // guarded by this
         @Volatile private var running = true
         @Volatile var finished = false; private set
+        /// All sound was written and heard. On the system clock, only the time decides.
+        val ended: Boolean get() = finished && !silent
         private val thread = Thread({ pump() }, "yourec-playback")
 
         init {
@@ -189,10 +191,10 @@ class EditorController {
                 format, maxOf(minimum, AudioMix.sampleRate / 5 * AudioMix.channels * 4), AudioTrack.MODE_STREAM, AudioManager.AUDIO_SESSION_ID_GENERATE)
         }
         private var began = 0L
-        @Volatile private var silent = false   // no output device is taking sound
+        @Volatile private var silent = false   // the device is not playing: time comes from the system clock
         fun start() {
             began = System.nanoTime()
-            try { track.play() } catch (e: IllegalStateException) { silent = true }
+            try { track.play() } catch (e: IllegalStateException) { android.util.Log.w("YouRec", "playback: no audio output", e) }
             thread.start()
         }
         private fun pump() {
@@ -207,7 +209,7 @@ class EditorController {
                         val n = track.write(block, written, count * AudioMix.channels - written, AudioTrack.WRITE_BLOCKING)
                         // Nothing accepts the sound: keep the mix moving at its own pace so
                         // the picture still plays, timed by the clock instead.
-                        if (n <= 0) { silent = true; Thread.sleep(2048L * 1000 / AudioMix.sampleRate); break }
+                        if (n <= 0) { Thread.sleep(2048L * 1000 / AudioMix.sampleRate); break }
                         written += n
                     }
                     position += count
@@ -222,6 +224,7 @@ class EditorController {
                 }
             } catch (e: Exception) {
                 // A decoder that failed mid-playback ends playback; it must not end the app.
+                android.util.Log.w("YouRec", "playback ended early", e)
             }
             finished = true
         }
@@ -234,13 +237,24 @@ class EditorController {
             }
             return track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
         }
+        private var lastHeard = -1L
+        private var lastProgress = 0L
+        private var silentBase = 0L
+        private var silentSince = 0L
+        /// Main thread. Sound is the clock while the device is playing it. If its
+        /// position stops moving (no output device, a route that died) the
+        /// playhead continues on the system clock from where it was, so the
+        /// picture never freezes on a silent phone.
         fun time(): Double {
-            val wall = (System.nanoTime() - began) * AudioMix.sampleRate / 1_000_000_000L
+            val now = System.nanoTime()
             var frames = heard()
-            // A device that reports no progress half a second in is not playing:
-            // without this the playhead would stay where Play was pressed.
-            if (frames == 0L && wall > AudioMix.sampleRate / 2) silent = true
-            if (silent) frames = wall
+            if (lastHeard < 0) lastProgress = began
+            if (frames != lastHeard) { lastHeard = frames; lastProgress = now }
+            else if (!silent && now - lastProgress > 500_000_000L) {
+                silent = true; silentBase = frames; silentSince = lastProgress
+                android.util.Log.w("YouRec", "playback: the audio position stopped at $frames frames; continuing on the system clock")
+            }
+            if (silent) frames = silentBase + (now - silentSince) * AudioMix.sampleRate / 1_000_000_000L
             return (first + minOf(frames, total - first)).toDouble() / AudioMix.sampleRate
         }
         fun stop() {
