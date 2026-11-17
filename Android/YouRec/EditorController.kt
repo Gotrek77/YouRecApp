@@ -188,7 +188,13 @@ class EditorController {
             track = AudioTrack(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build(),
                 format, maxOf(minimum, AudioMix.sampleRate / 5 * AudioMix.channels * 4), AudioTrack.MODE_STREAM, AudioManager.AUDIO_SESSION_ID_GENERATE)
         }
-        fun start() { track.play(); thread.start() }
+        private var began = 0L
+        @Volatile private var silent = false   // no output device is taking sound
+        fun start() {
+            began = System.nanoTime()
+            try { track.play() } catch (e: IllegalStateException) { silent = true }
+            thread.start()
+        }
         private fun pump() {
             try {
                 val block = FloatArray(2048 * AudioMix.channels)
@@ -199,7 +205,9 @@ class EditorController {
                     var written = 0
                     while (running && written < count * AudioMix.channels) {
                         val n = track.write(block, written, count * AudioMix.channels - written, AudioTrack.WRITE_BLOCKING)
-                        if (n <= 0) break
+                        // Nothing accepts the sound: keep the mix moving at its own pace so
+                        // the picture still plays, timed by the clock instead.
+                        if (n <= 0) { silent = true; Thread.sleep(2048L * 1000 / AudioMix.sampleRate); break }
                         written += n
                     }
                     position += count
@@ -210,7 +218,7 @@ class EditorController {
                     java.util.Arrays.fill(block, 0f)
                     track.write(block, 0, block.size, AudioTrack.WRITE_BLOCKING)
                     val limit = System.nanoTime() + 1_500_000_000L
-                    while (running && heard() < total - first - 480 && System.nanoTime() < limit) Thread.sleep(10)
+                    while (running && !silent && heard() < total - first - 480 && System.nanoTime() < limit) Thread.sleep(10)
                 }
             } catch (e: Exception) {
                 // A decoder that failed mid-playback ends playback; it must not end the app.
@@ -226,7 +234,15 @@ class EditorController {
             }
             return track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
         }
-        fun time(): Double = (first + minOf(heard(), total - first)).toDouble() / AudioMix.sampleRate
+        fun time(): Double {
+            val wall = (System.nanoTime() - began) * AudioMix.sampleRate / 1_000_000_000L
+            var frames = heard()
+            // A device that reports no progress half a second in is not playing:
+            // without this the playhead would stay where Play was pressed.
+            if (frames == 0L && wall > AudioMix.sampleRate / 2) silent = true
+            if (silent) frames = wall
+            return (first + minOf(frames, total - first)).toDouble() / AudioMix.sampleRate
+        }
         fun stop() {
             running = false
             try { track.pause(); track.flush() } catch (e: IllegalStateException) { }

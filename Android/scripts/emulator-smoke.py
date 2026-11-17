@@ -100,7 +100,7 @@ def brightness(path, at=None):
     return "luma mean %.0f spread %.0f" % (mean, spread)
 
 def probe(path):
-    out = subprocess.run(("ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name,width,height,r_frame_rate,nb_frames,duration,sample_rate,channels:stream_side_data=rotation:format=duration",
+    out = subprocess.run(("ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name,width,height,r_frame_rate,nb_frames,start_time,duration,sample_rate,channels:stream_side_data=rotation:format=duration",
                           "-of", "compact=p=1:nk=0", path), capture_output=True, timeout=120).stdout.decode()
     note("     " + os.path.basename(path) + "\n       " + out.strip().replace("\n", "\n       "))
     duration = re.search(r"format\|duration=([\d.]+)", out)
@@ -192,12 +192,17 @@ def main():
     note("editor: " + describe())
     shot("editor")
     tap("Play")
-    time.sleep(3)
+    # The time readout changes every frame while playing, so the screen is read by its clock.
+    clocks = []
+    for _ in range(4):
+        time.sleep(1)
+        clocks.append(next((n[1] for n in nodes() if " / " in n[1]), "unreadable"))
+    note("playhead while playing: " + ", ".join(clocks))
     shot("editor-playing")
     if find("Pause"):
         tap("Pause")
-    else:
-        fail("playback was not running three seconds after Play")
+    if len({c for c in clocks if c != "unreadable"}) < 2:
+        fail("the playhead did not advance during playback")
     time.sleep(1)
     note("after playing: " + describe())
     tap("Split")
