@@ -35,6 +35,7 @@ class FrameReader(file: File) {
     private var shown = Long.MIN_VALUE
     private var inputDone = false
     private var outputDone = false
+    private var fed = false
 
     init {
         var codec: MediaCodec? = null
@@ -99,7 +100,10 @@ class FrameReader(file: File) {
     private fun seek(target: Long) {
         extractor.seekTo(target, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
         if (pending >= 0) { decoder.releaseOutputBuffer(pending, false); pending = -1 }
-        decoder.flush()
+        // A flush before anything was decoded would discard the parameter sets
+        // given at configuration, and the decoder would then reject every frame.
+        if (fed) decoder.flush()
+        fed = false
         inputDone = false; outputDone = false; shown = Long.MIN_VALUE
     }
     /// Advance until one decoded frame is pending. False once the stream has ended.
@@ -115,6 +119,8 @@ class FrameReader(file: File) {
                 }
             }
             val index = decoder.dequeueOutputBuffer(info, 5000)
+            // Output of any kind means the configuration data has been consumed.
+            if (index >= 0 || index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) fed = true
             if (index < 0) { idle++; continue }
             if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputDone = true
             if (info.size == 0) { decoder.releaseOutputBuffer(index, false); continue }
@@ -152,6 +158,7 @@ class DecodedAudio(file: File) : PCMSource {
     private var runInput = 0L            // source frames decoded since then
     private var positioned = false
     private var sought = Long.MIN_VALUE  // where the last seek was asked to land
+    private var fed = false
     private var inputDone = false
     private var ended = false
 
@@ -196,7 +203,9 @@ class DecodedAudio(file: File) : PCMSource {
         // Start a little early: a decoder needs a frame or two after a flush
         // before its output is exact again. Those frames are decoded and passed over.
         extractor.seekTo(maxOf(0L, position * 1_000_000 / AudioMix.sampleRate - 100_000), MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-        codec.flush()
+        // As for pictures: never flush away the configuration data before first use.
+        if (fed) codec.flush()
+        fed = false
         inputDone = false; ended = false; positioned = false; chunkFrames = 0; chunkStart = position; sought = position
     }
     private fun decode(): Boolean {
@@ -212,6 +221,7 @@ class DecodedAudio(file: File) : PCMSource {
                 }
             }
             val index = codec.dequeueOutputBuffer(info, 5000)
+            if (index >= 0 || index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) fed = true
             if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                 val format = codec.outputFormat
                 sourceRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE); sourceChannels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)

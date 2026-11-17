@@ -26,7 +26,9 @@ def adb(*args, check=False, timeout=120):
         raise RuntimeError("adb " + " ".join(args) + ": " + result.stderr.decode(errors="replace"))
     return result.stdout.decode(errors="replace")
 
+notes = []
 def note(message):
+    notes.append(message)
     print(message, flush=True)
 
 def fail(message):
@@ -237,5 +239,7 @@ finally:
         f.write(adb("logcat", "-d", timeout=300))
     errors = [l for l in open(os.path.join(OUT, "logcat.txt"), errors="replace") if (" E " in l or " W " in l) and ("yourec" in l.lower() or "MediaCodec" in l or "Camera" in l or "EGL" in l or "AndroidRuntime" in l)]
     note("log lines worth reading (%d, last 60):\n%s" % (len(errors), "".join(errors[-60:])))
+    # The emulator prints its own noise between our lines: repeat ours together.
+    print("==== SUMMARY ====\n" + "\n".join(n for n in notes if not n.startswith("log lines")), flush=True)
     note("RESULT: " + ("PASS" if not failures else "%d failure(s)\n- " % len(failures) + "\n- ".join(failures)))
     sys.exit(1 if failures else 0)
