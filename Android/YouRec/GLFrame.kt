@@ -29,7 +29,8 @@ class EGLCore {
         val version = IntArray(2)
         check(EGL14.eglInitialize(display, version, 0, version, 1)) { "EGL is unavailable" }
         val attributes = intArrayOf(EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8, EGL14.EGL_ALPHA_SIZE, 8,
-            EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT, EGLExt.EGL_RECORDABLE_ANDROID, 1, EGL14.EGL_NONE)
+            EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT, EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT or EGL14.EGL_PBUFFER_BIT,
+            EGLExt.EGL_RECORDABLE_ANDROID, 1, EGL14.EGL_NONE)
         val configs = arrayOfNulls<EGLConfig>(1); val count = IntArray(1)
         check(EGL14.eglChooseConfig(display, attributes, 0, configs, 0, 1, count, 0) && count[0] > 0) { "No recordable EGL configuration" }
         config = configs[0]!!
@@ -37,6 +38,7 @@ class EGLCore {
         check(context != EGL14.EGL_NO_CONTEXT) { "Could not create the EGL context" }
         // A tiny off-screen surface keeps the context usable while no window exists.
         scratch = EGL14.eglCreatePbufferSurface(display, config, intArrayOf(EGL14.EGL_WIDTH, 2, EGL14.EGL_HEIGHT, 2, EGL14.EGL_NONE), 0)
+        check(scratch != EGL14.EGL_NO_SURFACE) { "Could not create the off-screen surface" }
         makeCurrent(null)
     }
 
@@ -89,12 +91,12 @@ class FrameProgram {
             attribute vec4 position; attribute vec4 coordinate; uniform mat4 transform; varying vec2 uv;
             void main() { gl_Position = position; uv = (transform * coordinate).xy; }""",
             """#extension GL_OES_EGL_image_external : require
-            precision mediump float; uniform samplerExternalOES texture; varying vec2 uv;
-            void main() { gl_FragColor = texture2D(texture, uv); }""")
+            precision mediump float; uniform samplerExternalOES frame; varying vec2 uv;
+            void main() { gl_FragColor = texture2D(frame, uv); }""")
         position = GLES20.glGetAttribLocation(program, "position")
         coordinate = GLES20.glGetAttribLocation(program, "coordinate")
         transform = GLES20.glGetUniformLocation(program, "transform")
-        texture = GLES20.glGetUniformLocation(program, "texture")
+        texture = GLES20.glGetUniformLocation(program, "frame")
     }
 
     /// `matrix` is SurfaceTexture's transform. The picture covers scaleX by scaleY

@@ -88,10 +88,11 @@ class EditorController {
     /// The surface is going away; nothing may be drawn to it after this returns.
     fun detach() {
         val done = Object(); var finished = false
-        render.post {
+        // After release() the thread is gone and took its surfaces with it.
+        if (!render.post {
             egl?.release(window); window = EGL14.EGL_NO_SURFACE
             synchronized(done) { finished = true; done.notifyAll() }
-        }
+        }) return
         synchronized(done) { val limit = System.currentTimeMillis() + 1000; while (!finished && System.currentTimeMillis() < limit) done.wait(100) }
     }
 
@@ -120,6 +121,9 @@ class EditorController {
         requestDraw()
         onChange?.invoke()
     }
+    /// Another screen, another app or an export needs the hardware decoders.
+    /// They reopen on the next frame drawn.
+    fun suspend() { pause(); render.post { sources?.releaseFrames() } }
     /// Leave the editor: stop playback and close every decoder.
     fun release() {
         pause()
@@ -151,13 +155,18 @@ class EditorController {
             val moment = EditTime.seconds(if (time >= duration && duration > 0) duration - 1.0 / 60 else time)
             val picture = plan?.picture(moment)
             val reader = picture?.let { sources?.frames(it.source) }
-            if (picture != null && reader != null && reader.show(picture.sourceTime)) {
-                val fit = RenderPlan.fit(reader.video.displayWidth, reader.video.displayHeight, width, height)
-                shader.draw(reader.texture, reader.matrix, fit.scaleX, fit.scaleY)
+            try {
+                if (picture != null && reader != null && reader.show(picture.sourceTime)) {
+                    val fit = RenderPlan.fit(reader.video.displayWidth, reader.video.displayHeight, width, height)
+                    shader.draw(reader.texture, reader.matrix, fit.scaleX, fit.scaleY)
+                }
+            } catch (e: Exception) {
+                // The system can reclaim a decoder at any time. Close this one; the next frame opens a new one.
+                picture?.let { sources?.drop(it.source) }
             }
             core.swap(window)
         } catch (e: Exception) {
-            // A surface destroyed mid-frame, or a decoder that failed: skip this frame.
+            // A surface destroyed mid-frame: skip this frame.
         }
     }
 
@@ -168,7 +177,7 @@ class EditorController {
         private val total = AudioMix.frame(plan.duration)
         private val mix = AudioMix(plan.timeline) { sources.sound(it) }
         private val track: AudioTrack
-        private val stamp = AudioTimestamp()
+        private val stamp = AudioTimestamp()   // guarded by this
         @Volatile private var running = true
         @Volatile var finished = false; private set
         private val thread = Thread({ pump() }, "yourec-playback")
@@ -181,25 +190,36 @@ class EditorController {
         }
         fun start() { track.play(); thread.start() }
         private fun pump() {
-            val block = FloatArray(2048 * AudioMix.channels)
-            var position = first
-            while (running && position < total) {
-                val count = minOf(2048L, total - position).toInt()
-                mix.render(position, block, count)
-                var written = 0
-                while (running && written < count * AudioMix.channels) {
-                    val n = track.write(block, written, count * AudioMix.channels - written, AudioTrack.WRITE_BLOCKING)
-                    if (n <= 0) break
-                    written += n
+            try {
+                val block = FloatArray(2048 * AudioMix.channels)
+                var position = first
+                while (running && position < total) {
+                    val count = minOf(2048L, total - position).toInt()
+                    mix.render(position, block, count)
+                    var written = 0
+                    while (running && written < count * AudioMix.channels) {
+                        val n = track.write(block, written, count * AudioMix.channels - written, AudioTrack.WRITE_BLOCKING)
+                        if (n <= 0) break
+                        written += n
+                    }
+                    position += count
                 }
-                position += count
+                if (running) {
+                    // Let what was written be heard before reporting the end. The track
+                    // keeps playing: stopping it would reset the position being watched.
+                    java.util.Arrays.fill(block, 0f)
+                    track.write(block, 0, block.size, AudioTrack.WRITE_BLOCKING)
+                    val limit = System.nanoTime() + 1_500_000_000L
+                    while (running && heard() < total - first - 480 && System.nanoTime() < limit) Thread.sleep(10)
+                }
+            } catch (e: Exception) {
+                // A decoder that failed mid-playback ends playback; it must not end the app.
             }
-            // Let what was written be heard before reporting the end.
-            if (running) { track.stop(); while (running && heard() < total - first - 480) Thread.sleep(10); finished = true }
+            finished = true
         }
         /// Frames the device has played. A timestamp accounts for output latency;
         /// the head position is the fallback before the first one is available.
-        private fun heard(): Long {
+        @Synchronized private fun heard(): Long {
             if (track.getTimestamp(stamp) && stamp.framePosition > 0) {
                 val since = (System.nanoTime() - stamp.nanoTime) * AudioMix.sampleRate / 1_000_000_000L
                 return stamp.framePosition + (if (track.playState == AudioTrack.PLAYSTATE_PLAYING) maxOf(0L, since) else 0L)

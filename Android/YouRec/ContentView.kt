@@ -26,6 +26,7 @@ class ProjectsView(context: Context, private val store: ProjectStore, private va
     private val notice = Design.label(context, "", 14f, Design.warning)
     private val panel = FrameLayout(context)
     private var visible = false
+    private var offered = false
 
     init {
         orientation = VERTICAL
@@ -137,7 +138,9 @@ class ProjectsView(context: Context, private val store: ProjectStore, private va
     /// Permanent removal after thirty days is offered, never done silently.
     private fun offerExpiredDeletions() {
         val expired = store.expiredDeletions()
-        if (expired.isEmpty()) return
+        // Asked once per launch, not again on every return to this screen.
+        if (expired.isEmpty() || offered) return
+        offered = true
         confirm("Erase old deleted projects?", "${expired.size} project${if (expired.size == 1) " was" else "s were"} deleted more than 30 days ago. Erasing frees their storage and cannot be undone.", "Erase") { store.eraseExpiredDeletions(expired) }
     }
 }

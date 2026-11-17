@@ -188,6 +188,7 @@ class EditorTimeline(context: Context) : View(context) {
     private var drag = Drag.None
     private var downX = 0f; private var downY = 0f; private var downPlayhead = 0.0; private var downScale = 60.0; private var downOffset = 0f
     private var trimTarget: Pair<UUID, Boolean>? = null
+    private var multi = false
     private val slop = dp(8f)
 
     private fun hit(x: Float, y: Float): TimelineLane? = lanes.lastOrNull { rect(it).contains(x, y) }
@@ -232,7 +233,11 @@ class EditorTimeline(context: Context) : View(context) {
     override fun onTouchEvent(event: MotionEvent): Boolean {
         pinch.onTouchEvent(event)
         taps.onTouchEvent(event)
-        if (pinch.isInProgress || event.pointerCount > 1) { if (drag == Drag.Scrub) onScrub?.invoke(playhead, false); drag = Drag.None; return true }
+        // Once a second finger has touched, the rest of this gesture is a zoom:
+        // the finger that stays down must not scrub by the distance it pinched.
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) multi = false
+        if (pinch.isInProgress || event.pointerCount > 1) multi = true
+        if (multi) { if (drag == Drag.Scrub) onScrub?.invoke(playhead, false); drag = Drag.None; trimPreview = null; return true }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = event.x; downY = event.y; downPlayhead = playhead; downOffset = verticalOffset

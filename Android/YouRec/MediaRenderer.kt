@@ -17,25 +17,34 @@ import java.util.UUID
 
 /// Sources shared by one preview or one export: at most a few open decoders,
 /// reused across cuts, closed together.
-class RenderSources(private val project: Project, private val folder: File) {
+class RenderSources(private val project: Project, private val folder: File, private val strict: Boolean = false) {
+    private val failed = HashSet<UUID>()
     private val frames = LinkedHashMap<UUID, FrameReader>(4, 0.75f, true)
     private val sound = HashMap<UUID, DecodedAudio>()
     /// Two edits of the same originals can share open decoders.
     val key: Any = folder.path to project.sources.map { it.id to it.filename }
     fun file(source: UUID): File? = project.sources.firstOrNull { it.id == source }?.let { File(folder, it.filename) }
-    /// GL thread. A source that cannot be decoded shows black instead of stopping the render.
+    /// GL thread. In the preview a source that cannot be decoded shows black; an
+    /// export (strict) fails instead of publishing a movie with missing pictures.
     fun frames(source: UUID): FrameReader? {
         frames[source]?.let { return it }
+        if (source in failed) return null
         val file = file(source) ?: return null
-        val reader = try { FrameReader(file) } catch (e: Exception) { return null }
         // Hardware decoders are a scarce system resource: keep three at most.
         while (frames.size >= 3) { val oldest = frames.keys.first(); frames.remove(oldest)?.release() }
+        val reader = try { FrameReader(file) } catch (e: Exception) {
+            if (strict) throw ProjectError.InvalidMedia()
+            // Remember the failure: retrying on every frame would stall the preview.
+            failed.add(source); return null
+        }
         frames[source] = reader
         return reader
     }
+    /// Close one reader whose decoder failed or was reclaimed; the next frame reopens it.
+    fun drop(source: UUID) { try { frames.remove(source)?.release() } catch (e: Exception) { } }
     /// Audio thread.
     fun sound(source: UUID): PCMSource? = sound.getOrPut(source) { DecodedAudio(file(source) ?: return null) }
-    fun releaseFrames() { for (reader in frames.values) reader.release(); frames.clear() }
+    fun releaseFrames() { for (reader in frames.values) try { reader.release() } catch (e: Exception) { }; frames.clear(); failed.clear() }
     fun releaseSound() { for (reader in sound.values) reader.release(); sound.clear() }
 
     /// The project picture size: a fixed shape if one was chosen, otherwise
@@ -80,7 +89,7 @@ class MovieExport(project: Project, private val folder: File, private val export
         val plan = RenderPlan(edit)
         if (plan.duration <= EditTime.zero) throw ProjectError.EmptyTimeline()
         if (project.sources.any { it.id in plan.sourcesInUse && !File(folder, it.filename).exists() }) throw ProjectError.MissingMedia()
-        val sources = RenderSources(project, folder)
+        val sources = RenderSources(project, folder, strict = true)
         val settings = project.exportSettings
         val size = settings.resolution.size(sources.canvas(edit))
         val width = RenderPlan.even(size.width); val height = RenderPlan.even(size.height)
@@ -90,6 +99,7 @@ class MovieExport(project: Project, private val folder: File, private val export
 
         var egl: EGLCore? = null; var window = EGL14.EGL_NO_SURFACE; var program: FrameProgram? = null
         var videoEncoder: MediaCodec? = null; var audioEncoder: MediaCodec? = null; var muxer: MediaMuxer? = null
+        var input: android.view.Surface? = null
         try {
             val videoFormat = MediaFormat.createVideoFormat(settings.codec.mime, width, height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
@@ -99,7 +109,7 @@ class MovieExport(project: Project, private val folder: File, private val export
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }
             videoEncoder = MediaCodec.createEncoderByType(settings.codec.mime).apply { configure(videoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE) }
-            val input = videoEncoder.createInputSurface()
+            input = videoEncoder.createInputSurface()
             videoEncoder.start()
             val audioFormat = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, AudioMix.sampleRate, AudioMix.channels).apply {
                 setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
@@ -122,7 +132,9 @@ class MovieExport(project: Project, private val folder: File, private val export
                 FrameProgram.clear(width, height)
                 val picture = plan.picture(time)
                 val reader = picture?.let { sources.frames(it.source) }
-                if (picture != null && reader != null && reader.show(picture.sourceTime)) {
+                if (picture != null && reader != null) {
+                    // A take that yields no picture must not become a black movie.
+                    if (!reader.show(picture.sourceTime)) throw ProjectError.InvalidMedia()
                     val fit = RenderPlan.fit(reader.video.displayWidth, reader.video.displayHeight, width, height)
                     program.draw(reader.texture, reader.matrix, fit.scaleX, fit.scaleY)
                 }
@@ -170,6 +182,7 @@ class MovieExport(project: Project, private val folder: File, private val export
             sources.releaseFrames(); sources.releaseSound()
             program?.release()
             egl?.let { it.release(window); it.release() }
+            input?.release()
         }
     }
 
@@ -196,9 +209,13 @@ class MovieExport(project: Project, private val folder: File, private val export
         private val early = ArrayList<Triple<Int, ByteBuffer, MediaCodec.BufferInfo>>()
         private var started = false
         private val last = longArrayOf(-1, -1)
+        private val ended = booleanArrayOf(false, false)
 
         fun drain(encoder: MediaCodec, video: Boolean, end: Boolean) {
             val slot = if (video) 0 else 1
+            // The end-of-stream buffer can arrive during an ordinary drain. An
+            // encoder says nothing more after it, so never wait for it twice.
+            if (ended[slot]) return
             var idle = 0
             while (true) {
                 if (cancelled) throw Cancelled()
@@ -229,7 +246,7 @@ class MovieExport(project: Project, private val folder: File, private val export
                 }
                 val done = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
                 encoder.releaseOutputBuffer(index, false)
-                if (done) return
+                if (done) { ended[slot] = true; return }
             }
         }
         private fun flush() { for ((slot, data, details) in early) muxer.writeSampleData(tracks[slot], data, details); early.clear() }

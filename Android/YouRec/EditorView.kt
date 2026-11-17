@@ -98,7 +98,8 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
     override fun disappear() {
         visible = false
         store.stopObserving(this)
-        editor.pause()
+        // The recorder, another app or an export may need the decoders this screen holds.
+        editor.suspend()
         cancelMove()
         closePanel()
     }
@@ -388,7 +389,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
 
     private fun openExport() {
         val project = project ?: return
-        editor.pause()
+        editor.suspend()
         if (project.edit.duration <= 0) return say("Add a recording before previewing or exporting.")
         showPanel(MovieExportPanel(context, store, navigation, project.id) { closePanel() })
     }

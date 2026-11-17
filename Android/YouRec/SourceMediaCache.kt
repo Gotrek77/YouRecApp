@@ -28,7 +28,6 @@ class FrameReader(file: File) {
     private val extractor = MediaExtractor()
     private val decoder: MediaCodec
     private val info = MediaCodec.BufferInfo()
-    private val frameDuration: Long
     private val lock = Object()
     private var available = false
     private var pending = -1
@@ -38,54 +37,70 @@ class FrameReader(file: File) {
     private var outputDone = false
 
     init {
-        extractor.setDataSource(file.path)
-        val track = MediaFiles.track(extractor, "video/")
-        extractor.selectTrack(track)
-        val format = extractor.getTrackFormat(track)
-        frameDuration = 1_000_000L / maxOf(1, video.frameRate)
-        // The listener must not run on this thread: show() waits here for it.
-        surfaceTexture.setOnFrameAvailableListener({ synchronized(lock) { available = true; lock.notifyAll() } }, Handler(arrivals.looper))
-        decoder = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
-        // With a Surface the decoder applies the recorded rotation itself: the
-        // texture matrix then yields an upright picture of the display size.
-        decoder.configure(format, surface, null, 0)
-        decoder.start()
+        var codec: MediaCodec? = null
+        try {
+            extractor.setDataSource(file.path)
+            val track = MediaFiles.track(extractor, "video/")
+            extractor.selectTrack(track)
+            val format = extractor.getTrackFormat(track)
+            // The listener must not run on this thread: show() waits here for it.
+            surfaceTexture.setOnFrameAvailableListener({ synchronized(lock) { available = true; lock.notifyAll() } }, Handler(arrivals.looper))
+            codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
+            // With a Surface the decoder applies the recorded rotation itself: the
+            // texture matrix then yields an upright picture of the display size.
+            codec.configure(format, surface, null, 0)
+            codec.start()
+        } catch (e: Exception) {
+            // An unsupported codec, or none free: give back everything already taken.
+            try { codec?.release() } catch (ignored: Exception) { }
+            extractor.release(); surface.release(); surfaceTexture.release(); FrameProgram.deleteTexture(texture)
+            throw e
+        }
+        decoder = codec
     }
 
-    /// Put the frame covering `time` (source seconds) in the texture. False
-    /// only when the file yields no picture at all; at the end the last frame stays.
+    /// Put the frame covering `time` (source seconds) in the texture: the last
+    /// frame at or before it. Frame times come from the file, not from a nominal
+    /// rate, so variable-rate footage and dropped frames show the right picture.
+    /// False only when the file yields no picture at all; at the end the last frame stays.
     fun show(time: Double): Boolean {
         val target = maxOf(0L, (time * 1_000_000).toLong())
-        if (shown != Long.MIN_VALUE && target >= shown && target < shown + frameDuration) return true
+        var have = shown != Long.MIN_VALUE
+        // The frame after the one on screen is kept decoded; until the target reaches it, nothing changes.
+        if (have && target >= shown && (if (pending >= 0) target < pendingTime else outputDone)) return true
         // Decoding forward through a second of footage is cheaper than a seek
         // to the previous key frame; anything else, or going back, needs one.
-        if (shown == Long.MIN_VALUE || target < shown || target > shown + 1_000_000) seek(target)
+        if (!have || target < shown || (target > shown + 1_000_000 && !(pending >= 0 && target < pendingTime))) { seek(target); have = false }
+        var best = -1; var bestTime = 0L
         val deadline = System.nanoTime() + 3_000_000_000L
         while (System.nanoTime() < deadline) {
             if (pending < 0 && !next()) break
             if (pending < 0) continue
-            // Frames that end before the target are skipped without drawing.
-            if (pendingTime + frameDuration <= target && !outputDone) { decoder.releaseOutputBuffer(pending, false); pending = -1; continue }
-            synchronized(lock) { available = false }
-            decoder.releaseOutputBuffer(pending, true); pending = -1
-            val arrived = synchronized(lock) {
-                val limit = System.currentTimeMillis() + 1000
-                while (!available && System.currentTimeMillis() < limit) lock.wait(maxOf(1, limit - System.currentTimeMillis()))
-                available
-            }
-            if (!arrived) return shown != Long.MIN_VALUE
-            surfaceTexture.updateTexImage(); surfaceTexture.getTransformMatrix(matrix)
-            shown = pendingTime
-            return true
+            if (best >= 0 && pendingTime > target) break
+            // Frames that end before the target are passed over without drawing.
+            if (best >= 0) decoder.releaseOutputBuffer(best, false)
+            best = pending; bestTime = pendingTime; pending = -1
         }
-        return shown != Long.MIN_VALUE
+        if (best < 0) return have
+        synchronized(lock) { available = false }
+        decoder.releaseOutputBuffer(best, true)
+        val arrived = synchronized(lock) {
+            val limit = System.currentTimeMillis() + 1000
+            while (!available && System.currentTimeMillis() < limit) lock.wait(maxOf(1, limit - System.currentTimeMillis()))
+            available
+        }
+        if (!arrived) return have
+        surfaceTexture.updateTexImage(); surfaceTexture.getTransformMatrix(matrix)
+        // A first frame later than the target covers it too.
+        shown = minOf(bestTime, target)
+        return true
     }
 
     private fun seek(target: Long) {
         extractor.seekTo(target, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
         if (pending >= 0) { decoder.releaseOutputBuffer(pending, false); pending = -1 }
         decoder.flush()
-        inputDone = false; outputDone = false
+        inputDone = false; outputDone = false; shown = Long.MIN_VALUE
     }
     /// Advance until one decoded frame is pending. False once the stream has ended.
     private fun next(): Boolean {
@@ -136,6 +151,7 @@ class DecodedAudio(file: File) : PCMSource {
     private var runStart = 0L            // output position of the first frame decoded since the last seek
     private var runInput = 0L            // source frames decoded since then
     private var positioned = false
+    private var sought = Long.MIN_VALUE  // where the last seek was asked to land
     private var inputDone = false
     private var ended = false
 
@@ -162,6 +178,12 @@ class DecodedAudio(file: File) : PCMSource {
                 System.arraycopy(chunk, ((p - chunkStart) * 2).toInt(), into, offset + done * 2, n * 2)
                 done += n; continue
             }
+            // A track can begin after the position asked for (sound that starts later
+            // than the picture). Nothing was recorded there: silence, not another seek.
+            if (positioned && chunkFrames > 0 && p < chunkStart && p >= sought) {
+                val n = minOf((frames - done).toLong(), chunkStart - p).toInt()
+                java.util.Arrays.fill(into, offset + done * 2, offset + (done + n) * 2, 0f); done += n; continue
+            }
             // Before the decoded window, or more than half a second ahead of it.
             if (!positioned || p < chunkStart || p > chunkStart + chunkFrames + AudioMix.sampleRate / 2) seek(p)
             if (ended || !decode()) break
@@ -175,7 +197,7 @@ class DecodedAudio(file: File) : PCMSource {
         // before its output is exact again. Those frames are decoded and passed over.
         extractor.seekTo(maxOf(0L, position * 1_000_000 / AudioMix.sampleRate - 100_000), MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
         codec.flush()
-        inputDone = false; ended = false; positioned = false; chunkFrames = 0; chunkStart = position
+        inputDone = false; ended = false; positioned = false; chunkFrames = 0; chunkStart = position; sought = position
     }
     private fun decode(): Boolean {
         val codec = decoder ?: return false
