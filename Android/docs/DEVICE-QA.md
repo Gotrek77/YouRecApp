@@ -9,12 +9,23 @@ successful callbacks are not evidence; the visible preview and the saved file
 are. Keep hypothesis, observation and remaining doubt separate in any report.
 
 Faults the emulator run exposed, now fixed, are a guide to where others may be:
-a decoder flushed before its first output lost its configuration data (no
-preview, no export); and a take's last frames were dropped when the encoder was
-still working through its queue at Stop. On the emulator the video track of a
-take is still shorter than its sound, because its software encoder needs up to
-three seconds per frame. **Check first on a phone that video and audio tracks of
-a take have the same length** (`ffprobe`), at 1080p and at 4K.
+
+- A decoder flushed before its first output lost its configuration data: no
+  preview picture and no export.
+- A take's last frames were dropped when the encoder was still working through
+  its queue at Stop, leaving the video track shorter than the sound. The close
+  now waits while frames keep arriving; on the emulator both tracks of a take
+  end within half a second of each other, with an encoder that needs up to
+  three seconds per frame.
+- A decoder that never announces the end of its stream made every later frame
+  of an export wait, and reads past the end of a sound track asked the decoder
+  again on every block.
+- The playhead depended on the audio device reporting progress; it now
+  continues on the system clock when that position stalls.
+
+**Check first on a phone that the video and audio tracks of a take have the
+same length** (`ffprobe`), at 1080p and at 4K, and that a take shows no
+`YouRec` warnings in `adb logcat -s YouRec`.
 
 Record the phone model, Android version and commit for every run. Use a test
 project, never a project you care about, until section 2 has passed.
