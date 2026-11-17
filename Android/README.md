@@ -6,14 +6,14 @@ under `Android/`; the iPhone app and its documents are untouched. The
 behaviour, and where the two platforms differ the difference is written down
 here rather than left to be discovered.
 
-**Status: first milestone, awaiting hardware acceptance.** The code compiles
-against the Android 15 framework classes and the platform-independent core
-passes its checks. It has **not yet been built with Gradle, installed, or run
-on a phone**: the environment it was written in had no Android SDK and no
-device. Following the project's own [camera rule](../docs/CAMERA-QA.md), nothing
-that touches a camera, an encoder or a screen is described as working until
-[the device checks](docs/DEVICE-QA.md) have been carried out. Expect the first
-build on real hardware to need fixes.
+**Status: first milestone, awaiting hardware acceptance.** The Gradle build
+succeeds and produces a debug APK on GitHub Actions, and the
+platform-independent core passes its checks. The app has **not yet been
+installed or run on a phone**: it was written without access to a device or an
+emulator. Following the project's own [camera rule](../docs/CAMERA-QA.md),
+nothing that touches a camera, an encoder or a screen is described as working
+until [the device checks](docs/DEVICE-QA.md) have been carried out. Expect the
+first run on real hardware to need fixes.
 
 ## What is ported
 

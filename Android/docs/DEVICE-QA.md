@@ -12,9 +12,8 @@ project, never a project you care about, until section 2 has passed.
 
 ## 0. Build
 
-- `./gradlew assembleDebug` completes. The Gradle files were written without
-  being executed (plugin versions, the custom source directories and the
-  manifest location are all unproven).
+- `./gradlew assembleDebug` completes (it does on GitHub Actions; a local
+  build with Android Studio is still to be tried).
 - The app installs, launches into the recorder, and asks for camera and
   microphone access.
 
