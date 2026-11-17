@@ -43,6 +43,9 @@ class YouRecActivity : Activity(), Navigation {
         store = ProjectStore(this)
         container = FrameLayout(this).apply { setBackgroundColor(Design.background) }
         setContentView(container)
+        // The screen stays on in every destination while the app is in front:
+        // framing a shot, reading a timeline or waiting for an export all look like idleness to the system.
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // Draw behind the system bars; each screen is padded clear of them,
         // except the recorder, whose preview fills the whole display.
         if (Build.VERSION.SDK_INT >= 30) window.setDecorFitsSystemWindows(false)
