@@ -6,14 +6,23 @@ under `Android/`; the iPhone app and its documents are untouched. The
 behaviour, and where the two platforms differ the difference is written down
 here rather than left to be discovered.
 
-**Status: first milestone, awaiting hardware acceptance.** The Gradle build
-succeeds and produces a debug APK on GitHub Actions, and the
-platform-independent core passes its checks. The app has **not yet been
-installed or run on a phone**: it was written without access to a device or an
-emulator. Following the project's own [camera rule](../docs/CAMERA-QA.md),
-nothing that touches a camera, an encoder or a screen is described as working
-until [the device checks](docs/DEVICE-QA.md) have been carried out. Expect the
-first run on real hardware to need fixes.
+**Status: first milestone, awaiting hardware acceptance.** What has been
+observed so far, and where:
+
+- The platform-independent core passes its checks (`scripts/test-core.sh`).
+- The Gradle build produces a debug APK on GitHub Actions.
+- On an Android 14 emulator in the same workflow, `scripts/emulator-smoke.py`
+  drives the app through record, camera switch while recording, bookmark,
+  pause, resume, stop, edit, play, split, undo, redo and export, and checks the
+  files: two upright 1080×1920 H.264/AAC segments without a rotation flag, the
+  capture events beside them, a project document, and an exported movie whose
+  length matches the takes to within a frame.
+
+It has **not been run on a phone**. An emulator's camera is a synthetic scene
+and its encoder is far slower than real time, so none of this is evidence of
+correct framing, mirroring, focus, audio/video sync or performance on a real
+sensor. Following the project's own [camera rule](../docs/CAMERA-QA.md), those
+stay open until [the device checks](docs/DEVICE-QA.md) have been carried out.
 
 ## What is ported
 
@@ -136,9 +145,16 @@ project, with the same layout as on iPhone.
 ./scripts/test-core.sh
 ```
 
-The repository's `Android` workflow on GitHub Actions runs these checks and
-`./gradlew assembleDebug` on every push that touches `Android/`, and attaches
-the debug APK to the run.
+The repository's `Android` workflow on GitHub Actions runs these checks,
+`./gradlew assembleDebug`, and the emulator run on every push that touches
+`Android/`. It attaches the debug APK, and the screenshots, takes, export and
+log of the emulator run. The same script works against a connected test phone:
+
+```sh
+python3 scripts/emulator-smoke.py build/outputs/apk/debug/YouRec-debug.apk out
+```
+
+It reinstalls the app, so use a phone with no projects you care about.
 
 Requires only a JDK and `kotlinc`. It compiles the core with its checks into one
 program, as the iPhone `scripts/test-core.sh` does with `swiftc`. The checks are

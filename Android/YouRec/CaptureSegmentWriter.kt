@@ -46,6 +46,8 @@ class CaptureSegmentWriter(val file: File, val width: Int, val height: Int, bitr
     private val freeInputs = ArrayDeque<Int>()
     private var audioAnchor = -1L                  // microseconds; audio time is counted in samples from here
     private var audioFrames = 0L
+    private var finishDeadline = 0L
+    private val giveUp = Runnable { close(null) }
     private var videoWritten = 0
     private var lastVideo = -1L
     private var lastAudio = -1L
@@ -164,8 +166,10 @@ class CaptureSegmentWriter(val file: File, val width: Int, val height: Int, bitr
             finishing = true
             try { video.signalEndOfInputStream() } catch (e: Exception) { videoEnded = true }
             if (audio == null || audioTrack < 0 && muxing) audioEnded = true else feed()
-            // An encoder that never answers must not keep the file open.
-            handler.postDelayed({ close(null) }, 2500)
+            // An encoder that never answers must not keep the file open; one that
+            // is still delivering frames it had queued is given time to finish.
+            finishDeadline = android.os.SystemClock.uptimeMillis() + 12_000
+            handler.postDelayed(giveUp, 2500)
             if (videoEnded && audioEnded) close(null)
         }
     }
@@ -189,6 +193,8 @@ class CaptureSegmentWriter(val file: File, val width: Int, val height: Int, bitr
                 }
             }
             codec.releaseOutputBuffer(index, false)
+            // Each frame that still arrives after Stop pushes the forced close back, up to a limit.
+            if (finishing && isVideo && android.os.SystemClock.uptimeMillis() < finishDeadline) { handler.removeCallbacks(giveUp); handler.postDelayed(giveUp, 2500) }
             if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
                 if (isVideo) videoEnded = true else audioEnded = true
                 if (videoEnded && audioEnded) close(null)

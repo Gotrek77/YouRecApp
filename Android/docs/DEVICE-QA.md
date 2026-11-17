@@ -1,19 +1,27 @@
 # Android: first-device acceptance
 
-Nothing in this port has run on hardware. This is the list of what must be
+The port builds, and has been driven through its main path on an emulator (see
+the README). It has not run on hardware. This is the list of what must be
 observed on a phone before any of it is called working, in the order that finds
 the most with the least effort. It applies the iPhone app's
 [camera acceptance process](../../docs/CAMERA-QA.md): requested settings and
 successful callbacks are not evidence; the visible preview and the saved file
 are. Keep hypothesis, observation and remaining doubt separate in any report.
 
+Faults the emulator run exposed, now fixed, are a guide to where others may be:
+a decoder flushed before its first output lost its configuration data (no
+preview, no export); and a take's last frames were dropped when the encoder was
+still working through its queue at Stop. On the emulator the video track of a
+take is still shorter than its sound, because its software encoder needs up to
+three seconds per frame. **Check first on a phone that video and audio tracks of
+a take have the same length** (`ffprobe`), at 1080p and at 4K.
+
 Record the phone model, Android version and commit for every run. Use a test
 project, never a project you care about, until section 2 has passed.
 
 ## 0. Build
 
-- `./gradlew assembleDebug` completes (it does on GitHub Actions; a local
-  build with Android Studio is still to be tried).
+- `./gradlew assembleDebug` completes locally as it does on GitHub Actions.
 - The app installs, launches into the recorder, and asks for camera and
   microphone access.
 
