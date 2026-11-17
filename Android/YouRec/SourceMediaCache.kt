@@ -121,7 +121,14 @@ class FrameReader(file: File) {
             val index = decoder.dequeueOutputBuffer(info, 5000)
             // Output of any kind means the configuration data has been consumed.
             if (index >= 0 || index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) fed = true
-            if (index < 0) { idle++; continue }
+            if (index < 0) {
+                idle++
+                // Not every decoder announces the end of the stream. With all input
+                // given and nothing coming back, the last frame has been seen;
+                // otherwise every later request would wait here again.
+                if (inputDone && idle >= 60) outputDone = true
+                continue
+            }
             if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputDone = true
             if (info.size == 0) { decoder.releaseOutputBuffer(index, false); continue }
             pending = index; pendingTime = info.presentationTimeUs
