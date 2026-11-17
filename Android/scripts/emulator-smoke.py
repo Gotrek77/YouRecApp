@@ -120,9 +120,13 @@ def pull():
     return movies
 
 def crashed():
+    """Only a crash of the app itself counts; the test tools have their own."""
     log = adb("logcat", "-d", "-b", "crash")
-    if PACKAGE in log or "FATAL EXCEPTION" in log:
-        fail("the app crashed:\n" + log[-6000:])
+    blocks = [b for b in log.split("FATAL EXCEPTION") if "Process: " + PACKAGE in b]
+    if blocks:
+        with open(os.path.join(OUT, "crash.txt"), "w") as f:
+            f.write("FATAL EXCEPTION".join(blocks))
+        fail("the app crashed: " + " / ".join(blocks[-1].strip().splitlines()[2:8]))
         return True
     return False
 
@@ -246,12 +250,11 @@ try:
 except Exception as error:
     fail("the script stopped: %r" % (error,))
 finally:
+    log = adb("logcat", "-d", timeout=300)
     with open(os.path.join(OUT, "logcat.txt"), "w") as f:
-        f.write(adb("logcat", "-d", timeout=300))
-    errors = [l for l in open(os.path.join(OUT, "logcat.txt"), errors="replace") if (" E " in l or " W " in l) and ("yourec" in l.lower() or "MediaCodec" in l or "Camera" in l or "EGL" in l or "AndroidRuntime" in l)]
-    note("log lines worth reading (%d, last 60):\n%s" % (len(errors), "".join(errors[-60:])))
-    # The emulator prints its own noise between our lines: repeat ours together.
-    print("==== SUMMARY ====\n" + "\n".join(n for n in notes if not n.startswith("log lines")), flush=True)
-    print("==== APP LOG ====\n" + "".join(l for l in open(os.path.join(OUT, "logcat.txt"), errors="replace") if "YouRec" in l)[-6000:], flush=True)
-    note("RESULT: " + ("PASS" if not failures else "%d failure(s)\n- " % len(failures) + "\n- ".join(failures)))
+        f.write(log)
+    # The emulator prints its own noise between our lines: repeat ours together, last.
+    print("==== SUMMARY ====\n" + "\n".join(notes), flush=True)
+    print("==== APP LOG ====\n" + "\n".join(l for l in log.splitlines() if " YouRec" in l)[-5000:], flush=True)
+    print("RESULT: " + ("PASS" if not failures else "%d failure(s)\n- " % len(failures) + "\n- ".join(f[:600] for f in failures)), flush=True)
     sys.exit(1 if failures else 0)
