@@ -68,6 +68,25 @@ most likely traces to one of these; check them first.
     segment is finalized. Leaving and returning quickly relies on one retry if
     the camera is still closing.
 
+Known weak points found in code review, not yet fixed because each needs a
+device to confirm:
+
+- While Recording, nothing checks that frames are still reaching the encoder.
+  If the encoder fails to attach or the camera silently stops, the indicator
+  stays on. Wanted: end the take when the last written video time stops
+  advancing for about two seconds.
+- On a camera whose timestamp source is not REALTIME, sound may lead picture by
+  the camera pipeline latency (roughly 70–150 ms).
+- After an audio overrun the microphone clock may drift from the sample count.
+- If the microphone is replaced mid-segment by one with a different channel
+  count, the rest of that segment's sound would play at the wrong speed. Wanted:
+  end the segment when the channel count changes.
+- Leaving mid-take blocks the interface thread for up to about four seconds.
+- Two sounds from the same source playing at once share one decoder and will
+  stutter in preview and slow an export.
+- BT.709 is declared for the recording; some encoders convert with BT.601
+  regardless. Compare a colour chart in preview and file.
+
 ## 2. Projects and durability
 
 | Check | Pass when |

@@ -136,8 +136,9 @@ class CaptureController(private val context: Context) {
             if (hasTake || field == value) return
             field = value; preferences.edit().putString("quality", value.name).apply()
             // The camera stream follows the quality, so the session is rebuilt.
-            val current = camera
-            if (current != null && ready && !switching) { cancelRamp(); switching = true; cameraHandler?.post { open(current, null, null) } }
+            // Also when no camera is running: this is the way back from a stream that failed to start.
+            val current = camera ?: cameras.firstOrNull()
+            if (current != null && started && !switching) { cancelRamp(); switching = true; cameraHandler?.post { retries = 1; open(current, null, null) } }
             onChange?.invoke()
         }
     /// The front preview behaves like a mirror; the saved movie keeps writing readable.
@@ -187,20 +188,31 @@ class CaptureController(private val context: Context) {
         if (started) return
         started = true; error = null
         if (cameras.isEmpty()) cameras = discover()
-        val camera = HandlerThread("yourec.camera").apply { start() }; val render = HandlerThread("yourec.render").apply { start() }
-        cameraThread = camera; renderThread = render
-        cameraHandler = Handler(camera.looper); renderHandler = Handler(render.looper)
+        // Both threads live as long as the controller. A late callback from a
+        // camera that was opening when the screen went away still has a live
+        // queue to arrive on, and is closed there; and a start that follows a
+        // stop closely waits behind that stop's teardown instead of racing it.
+        if (cameraThread == null) {
+            val camera = HandlerThread("yourec.camera").apply { start() }; val render = HandlerThread("yourec.render").apply { start() }
+            cameraThread = camera; renderThread = render
+            cameraHandler = Handler(camera.looper); renderHandler = Handler(render.looper)
+        }
         if (orientation.canDetectOrientation()) orientation.enable()
         if (!audio.start()) warning = "No microphone is available. Recordings will have no sound."
         val first = cameras.firstOrNull { it.id == preferences.getString("camera", null) } ?: cameras.firstOrNull { !it.front } ?: cameras.firstOrNull()
         if (first == null) { error = "No camera is available on this device."; return }
         switching = true
-        renderHandler?.post {
-            try { setUpRender() } catch (e: Exception) { main.post { switching = false; error = "The preview could not start. " + (e.message ?: "") }; return@post }
-            cameraHandler?.post { retries = 1; open(first, null, null) }
+        val mine = ++run
+        cameraHandler?.post {
+            renderHandler?.post {
+                if (run != mine) return@post
+                try { setUpRender() } catch (e: Exception) { main.post { switching = false; error = "The preview could not start. " + (e.message ?: "") }; return@post }
+                cameraHandler?.post { if (run == mine) { retries = 1; open(first, null, null) } }
+            }
         }
         onChange?.invoke()
     }
+    @Volatile private var run = 0
 
     /// Finalize any take and release the camera and the microphone. The movie
     /// is complete on disk when this returns: the app may be killed right after.
@@ -211,7 +223,8 @@ class CaptureController(private val context: Context) {
         if (state == State.Recording) end(State.Idle)
         else if (state == State.Paused) { state = State.Idle; audio.endTake() }
         afterSaving = State.Idle
-        open?.await(4000)
+        // Just longer than the writer's own forced close, and short of what the system tolerates in onPause.
+        open?.await(3000)
         saveLens.run(); main.removeCallbacks(saveLens)
         cancelRamp()
         orientation.disable()
@@ -220,16 +233,13 @@ class CaptureController(private val context: Context) {
         // The screen surface may die right after this, or outlive it and be
         // used again by the next start. Either way nothing draws to it from here.
         val screenSurface = pendingWindow; clearPreview(); pendingWindow = screenSurface
-        val cameraQueue = cameraHandler; val renderQueue = renderHandler
-        val camera = cameraThread; val render = renderThread
-        cameraHandler = null; renderHandler = null; cameraThread = null; renderThread = null
+        ++run
         // In this order: the camera lets go of the Surface before its texture is destroyed.
-        cameraQueue?.post {
+        cameraHandler?.post {
             attempt++; afterClose = null
             try { device?.close() } catch (e: Exception) { }
             device = null; closing = null; session = null; request = null; opened = null; live = false
-            renderQueue?.post { tearDownRender(); render?.quitSafely() }
-            camera?.quitSafely()
+            renderHandler?.post { tearDownRender() }
         }
         onChange?.invoke()
     }
@@ -434,7 +444,11 @@ class CaptureController(private val context: Context) {
                 fallback != null && !wasLive -> open(fallback, null, "Could not switch to " + target.name + ". Still using " + fallback.name + ".")
                 // Closing one recorder and opening the next can overlap for a moment.
                 !wasLive && retries > 0 -> { retries--; cameraHandler?.postDelayed({ open(target, null, null) }, 600) }
-                else -> main.post { cameraLost("The " + target.name.lowercase(Locale.US) + " camera " + reason + ".") }
+                else -> main.post {
+                    cameraLost("The " + target.name.lowercase(Locale.US) + " camera " + reason + ".")
+                    // A 4K stream that cannot start must not be retried on every launch.
+                    if (quality == Quality.UHD && !hasTake) quality = Quality.HD
+                }
             }
         }
     }

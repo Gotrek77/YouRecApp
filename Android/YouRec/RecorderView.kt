@@ -270,9 +270,10 @@ class RecorderView(context: Context, private val store: ProjectStore, private va
         bookmark.visibility = if (state == CaptureController.State.Recording) VISIBLE else INVISIBLE
 
         val opposite = capture.oppositeCamera
-        enable(flip, usable && opposite != null && state != CaptureController.State.Saving)
+        // Choosing a camera stays possible with none running: it is the way back after one is lost.
+        enable(flip, !capture.switching && opposite != null && state != CaptureController.State.Saving)
         flip.contentDescription = if (opposite == null) "Switch camera" else "Switch to " + (if (opposite.front) "front" else "back") + " camera, " + opposite.name
-        enable(cameraName, usable && state != CaptureController.State.Saving)
+        enable(cameraName, !capture.switching && state != CaptureController.State.Saving)
         cameraName.text = if (capture.switching) "Switching…" else (camera?.name ?: "Camera") + " ▾"
         cameraName.contentDescription = "Camera, " + (camera?.name ?: "unavailable")
 
@@ -541,7 +542,7 @@ class RecorderView(context: Context, private val store: ProjectStore, private va
         rows.add(Design.label(context, "Quality", 13f, Design.secondary, bold = true))
         for (quality in CaptureController.Quality.values()) {
             val supported = quality == CaptureController.Quality.HD || capture.camera?.supports4K != false
-            rows.add(choice(quality.title + if (supported) "" else "  ·  not on this camera", quality == capture.quality, !capture.hasTake && supported && capture.ready && !capture.switching) { capture.quality = quality; openSettings() })
+            rows.add(choice(quality.title + if (supported) "" else "  ·  not on this camera", quality == capture.quality, !capture.hasTake && supported && !capture.switching) { capture.quality = quality; openSettings() })
         }
         rows.add(note("4K uses more storage and power. Quality stays fixed until Stop."))
         rows.add(toggle("Mirror front preview", capture.previewMirrored) { capture.previewMirrored = it })
