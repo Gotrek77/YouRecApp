@@ -19,6 +19,12 @@ struct CoreTests {
         if CommandLine.arguments.contains("--timeline-effect-range") { try await timelineEffectRangeTests(root: root); return }
         if CommandLine.arguments.contains("--effect-animation") { try await effectAnimationTests(root:root); return }
         if CommandLine.arguments.contains("--auto-background-export") { try await autoBackgroundExportTests(root); return }
+        if CommandLine.arguments.contains("--hdr-effects") {
+            try testHDREffectDisplayBrightness()
+            try await testHDREffectExport(root: root)
+            print("PASS: HDR display and neutral creative effect brightness in the saved movie")
+            return
+        }
         if CommandLine.arguments.contains("--batch-video-import") { try await batchVideoImportTests(root); return }
         if CommandLine.arguments.contains("--export-options") { try await exportOptionsTests(root); return }
         if CommandLine.arguments.contains("--export-resume") { try await resumableExportTests(root); return }

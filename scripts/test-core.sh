@@ -43,6 +43,10 @@ xcrun clang++ -std=c++17 -O3 -mmacosx-version-min=13.0 -c ThirdParty/VoiceFixer/
 xcrun clang++ -std=c++17 -O3 -mmacosx-version-min=13.0 -c YouRec/StabilizationMotion.cpp -o "$TEST_DIRECTORY/stabilization.o"
 xcrun clang++ -std=c++17 -O3 Tests/StabilizationMotionTests.cpp "$TEST_DIRECTORY/stabilization.o" -o "$TEST_DIRECTORY/motion-tests"
 "$TEST_DIRECTORY/motion-tests"
+if [[ "${1:-}" == "--hdr-effects" ]]; then
+  ffmpeg -v error -y -f lavfi -i "nullsrc=s=320x180:r=30:d=1,format=yuv420p10le,geq=lum='64+876*X/(W-1)':cb=512:cr=512" \
+    -c:v libx265 -x265-params 'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:log-level=error' -tag:v hvc1 "$TEST_DIRECTORY/effects-hlg.mp4"
+fi
 if [[ "${1:-}" == "--titles-only" ]]; then
   mkdir -p "$TEST_DIRECTORY/TitleFonts"; cp -R ThirdParty/TitleFonts/. "$TEST_DIRECTORY/TitleFonts/"
   ffmpeg -y -hide_banner -loglevel error -f lavfi -i 'color=c=black:size=640x360:rate=30:duration=3' -c:v libx264 -pix_fmt yuv420p "$TEST_DIRECTORY/title-black.mp4"
