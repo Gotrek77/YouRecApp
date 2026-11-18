@@ -482,7 +482,6 @@ final class EditorUITests: XCTestCase {
         shot("Showcase camera settings typography")
         revealInViewport(app.switches["recorder.mirrorPreview"], scroll: settingsList); pause()
         shot("Showcase settings expanded")
-        XCTAssertFalse(app.staticTexts["This project"].exists)
         app.buttons["recorder.settingsDone"].tap()
 
         app.buttons["recorder.videoEffects"].tap(); pause(1.2)
@@ -846,7 +845,6 @@ final class EditorUITests: XCTestCase {
         app.alerts["Camera assist"].buttons["OK"].tap()
         XCTAssertEqual(light.value as? String, "On", "Asking for help must not toggle the setting")
         light.tap(); XCTAssertEqual(light.value as? String, "Off")
-        XCTAssertFalse(app.staticTexts["This project"].exists)
         XCTAssertFalse(app.buttons["recorder.moreSettings"].exists)
         let bar = app.navigationBars["Camera settings"], collapsedTop = bar.frame.minY
         let collapsed = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
@@ -858,6 +856,9 @@ final class EditorUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["recorder.colorNotice"].isHittable)
         let color = XCTAttachment(screenshot: app.screenshot())
         color.name = "Camera settings typography and segmented recording color"; color.lifetime = .keepAlways; add(color)
+        let projectHeader = app.staticTexts["This project"]
+        revealInViewport(projectHeader, scroll: list)
+        XCTAssertTrue(projectHeader.isHittable, "Current project details remain available in camera settings")
         let mirror = app.switches["recorder.mirrorPreview"]
         for _ in 0..<8 { if mirror.exists && mirror.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(mirror.isHittable, "Detailed settings live in the expanded sheet")
@@ -10441,14 +10442,7 @@ final class EditorUITests: XCTestCase {
         let toggle = app.switches["recorder.allowAudioPlayback"]
         func open() {
             openMoreCameraSettings(in: app)
-            let form = app.collectionViews.firstMatch
-            for _ in 0..<6 {
-                if toggle.isHittable && form.frame.insetBy(dx: 0, dy: 18).contains(CGPoint(x: toggle.frame.midX, y: toggle.frame.midY)) { break }
-                let start = form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
-                let end = start.withOffset(CGVector(dx: 0, dy: -100))
-                start.press(forDuration: 0.08, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.25)
-            }
-            XCTAssertTrue(toggle.isHittable)
+            revealInViewport(toggle, scroll: app.collectionViews["recorder.settingsControls"])
         }
         func set(_ value: String) {
             if toggle.value as? String != value {
