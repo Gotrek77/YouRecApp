@@ -1001,13 +1001,14 @@ private struct RecorderApertureButton: View {
 
     var body: some View {
         Button { withAnimation(.easeOut(duration: 0.16)) { open.toggle() } } label: {
-            Group {
+            ZStack {
                 if let aperture = camera.selectedAperture {
                     Text(CameraAperture.label(aperture)).font(.system(size: 12, weight: .semibold))
                 } else { Image(systemName: "camera.aperture").font(.system(size: 18, weight: .medium)) }
             }
             .foregroundStyle(open || camera.selectedAperture != nil ? .yellow : .white)
             .frame(width: 52, height: 44)
+            .contentShape(Rectangle())
         }
         .disabled(!camera.ready || camera.busy || camera.switchingCamera)
         .accessibilityIdentifier("recorder.aperture").accessibilityLabel("Aperture")

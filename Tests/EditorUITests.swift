@@ -227,15 +227,9 @@ final class EditorUITests: XCTestCase {
         lens.tap(); app.buttons["Rear wide"].tap()
         XCTAssertTrue(aperture.waitForExistence(timeout: 5)); expectAperture(app, "ƒ/2.8")
         XCTAssertFalse(auto.exists, "Changing camera closes the secondary bar")
-        app.buttons["recorder.settings"].tap()
-        let dual = app.switches["recorder.dualEnabled"]
-        dual.tap()
-        expectation(for: NSPredicate(format: "value == '1' AND enabled == true"), evaluatedWith: dual); waitForExpectations(timeout: 15)
-        app.buttons["recorder.settingsDone"].tap()
+        setDualMode(true, in: app)
         XCTAssertFalse(aperture.exists)
-        app.buttons["recorder.settings"].tap(); dual.tap()
-        expectation(for: NSPredicate(format: "value == '0' AND enabled == true"), evaluatedWith: dual); waitForExpectations(timeout: 15)
-        app.buttons["recorder.settingsDone"].tap()
+        setDualMode(false, in: app)
         expectAperture(app, "ƒ/2.8")
         app.terminate(); app.launchArguments = arguments; app.launch()
         XCTAssertTrue(aperture.waitForExistence(timeout: 15)); expectAperture(app, "ƒ/2.8")
@@ -2059,6 +2053,11 @@ final class EditorUITests: XCTestCase {
     private func setDualMode(_ enabled: Bool, in app: XCUIApplication) {
         app.buttons["recorder.settings"].tap()
         let toggle = app.switches["recorder.dualEnabled"]
+        if !toggle.isHittable {
+            expandCameraSheet(in: app)
+            let form = app.collectionViews.firstMatch
+            for _ in 0..<5 where !toggle.isHittable { form.swipeUp() }
+        }
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: toggle); waitForExpectations(timeout: 20)
         if (toggle.value as? String == "1") != enabled {
@@ -10442,11 +10441,18 @@ final class EditorUITests: XCTestCase {
         let toggle = app.switches["recorder.allowAudioPlayback"]
         func open() {
             openMoreCameraSettings(in: app)
-            XCTAssertTrue(toggle.waitForExistence(timeout: 8))
+            let form = app.collectionViews.firstMatch
+            for _ in 0..<6 {
+                if toggle.isHittable && form.frame.insetBy(dx: 0, dy: 18).contains(CGPoint(x: toggle.frame.midX, y: toggle.frame.midY)) { break }
+                let start = form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+                let end = start.withOffset(CGVector(dx: 0, dy: -100))
+                start.press(forDuration: 0.08, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.25)
+            }
+            XCTAssertTrue(toggle.isHittable)
         }
         func set(_ value: String) {
             if toggle.value as? String != value {
-                toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+                toggle.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).withOffset(CGVector(dx: -25, dy: 0)).tap()
             }
             expectation(for: NSPredicate(format: "value == %@", value), evaluatedWith: toggle)
             waitForExpectations(timeout: 5)
@@ -10455,13 +10461,13 @@ final class EditorUITests: XCTestCase {
         let original = try XCTUnwrap(toggle.value as? String)
         let changed = original == "0" ? "1" : "0"
         set(changed)
-        app.buttons["Done"].tap()
+        app.buttons["recorder.settingsDone"].tap()
         app.terminate()
         app.launch()
         open()
         XCTAssertEqual(toggle.value as? String, changed)
         set(original)
-        app.buttons["Done"].tap()
+        app.buttons["recorder.settingsDone"].tap()
     }
 
     func testRecordingAlertProtectionControl() {

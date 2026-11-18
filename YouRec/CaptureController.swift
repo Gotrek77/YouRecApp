@@ -1850,22 +1850,20 @@ final class CaptureController: NSObject, ObservableObject, AVCaptureVideoDataOut
     }
 
     private static func supportedApertures(_ device: AVCaptureDevice) -> [Float] {
-        guard #available(iOS 27.0, *), device.isExposureModeSupported(.custom),
+        guard #available(iOS 27.0, macCatalyst 27.0, *), device.isExposureModeSupported(.custom),
               device.isExposureModeSupported(.continuousAutoExposure) else { return [] }
         let format = device.activeFormat
-        return CameraAperture.stops(recommended: format.recommendedLensApertureStops,
+        return CameraAperture.stops(recommended: YRApertureStops(format).map(\.floatValue),
                                     minimum: format.minLensAperture, maximum: format.maxLensAperture) {
-            format.supportsExposureModeCustom(lensAperture: $0, duration: AVCaptureDevice.autoExposureDuration,
-                                               iso: AVCaptureDevice.autoISO)
+            YRApertureSupports(format, $0)
         }
     }
 
     // The caller holds the device configuration lock and has checked the active format.
     private static func applyAperture(_ value: Float?, to device: AVCaptureDevice) {
-        guard #available(iOS 27.0, *) else { return }
+        guard #available(iOS 27.0, macCatalyst 27.0, *) else { return }
         if let value {
-            device.setExposureModeCustom(lensAperture: value, duration: AVCaptureDevice.autoExposureDuration,
-                                         iso: AVCaptureDevice.autoISO, completionHandler: nil)
+            YRSetAperture(device, value)
         } else if device.isExposureModeSupported(.continuousAutoExposure) { device.exposureMode = .continuousAutoExposure }
     }
 
@@ -2824,7 +2822,7 @@ final class CaptureController: NSObject, ObservableObject, AVCaptureVideoDataOut
         let id = device.uniqueID
         #if DEBUG
         var apertureProbe = ""
-        if CommandLine.arguments.contains("--probe-aperture-controls"), #available(iOS 27.0, *) {
+        if CommandLine.arguments.contains("--probe-aperture-controls"), #available(iOS 27.0, macCatalyst 27.0, *) {
             apertureProbe = String(format: "actual=%.3f", aperture)
                 + " apertureAuto=\(device.automaticallyAdjustsLensAperture) shutterAuto=\(device.automaticallyAdjustsExposureDuration) isoAuto=\(device.automaticallyAdjustsISO)"
         }
@@ -3630,7 +3628,7 @@ struct CameraPreview: UIViewRepresentable {
             let center = CameraFraming.oriented(camera.probePanCenter, angle: angle, mirrored: camera.frontPreviewMirrored)
             view.accessibilityValue = (view.accessibilityValue ?? "") + String(format: " pan=%.4f,%.4f", center.x, center.y) + " stabilized=\(camera.singleStabilizationActive)"
         }
-        if CommandLine.arguments.contains("--probe-aperture-controls"), #available(iOS 27.0, *),
+        if CommandLine.arguments.contains("--probe-aperture-controls"), #available(iOS 27.0, macCatalyst 27.0, *),
            let device = AVCaptureDevice(uniqueID: camera.cameraID) {
             view.accessibilityValue = (view.accessibilityValue ?? "")
                 + " apertureAuto=\(device.automaticallyAdjustsLensAperture)"
