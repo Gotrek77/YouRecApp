@@ -11,6 +11,7 @@
 		F19900000000000000000002 /* FinderIntegration.m in Sources */ = {isa = PBXBuildFile; fileRef = F19900000000000000000012; };
 		F19900000000000000000003 /* FinderIntegration.bundle in PlugIns */ = {isa = PBXBuildFile; fileRef = F19900000000000000000013; platformFilter = maccatalyst; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy); }; };
 		A18200000000000000000001 /* RecorderAppearance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18200000000000000000002 /* RecorderAppearance.swift */; };
+		E7D271000000000000000001 /* OrderedMediaPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D271000000000000000002 /* OrderedMediaPicker.swift */; };
 		D17300000000000000000002 /* CameraCrop.metal in Sources */ = {isa = PBXBuildFile; fileRef = D17300000000000000000102; };
 		D17300000000000000000003 /* CameraCrop.metal in Test Sources */ = {isa = PBXBuildFile; fileRef = D17300000000000000000102; };
 		D17300000000000000000001 /* ZoomTransition.swift in Test Sources */ = {isa = PBXBuildFile; fileRef = B09000000000000000000002 /* ZoomTransition.swift */; };
@@ -205,6 +206,7 @@
 		F19900000000000000000012 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = YouRec/FinderIntegration.m; sourceTree = SOURCE_ROOT; };
 		F19900000000000000000013 /* FinderIntegration.bundle */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = FinderIntegration.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
 		A18200000000000000000002 /* RecorderAppearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecorderAppearance.swift; sourceTree = "<group>"; };
+		E7D271000000000000000002 /* OrderedMediaPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrderedMediaPicker.swift; sourceTree = "<group>"; };
 		D17300000000000000000102 /* CameraCrop.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = CameraCrop.metal; sourceTree = "<group>"; };
 		D16300000000000000000101 /* SingleCameraFollowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SingleCameraFollowTests.swift; sourceTree = "<group>"; };
 		D16300000000000000000102 /* astronaut.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Fixtures/astronaut.png; sourceTree = "<group>"; };
@@ -567,6 +569,7 @@
 				B00000000000000000000205 /* EditorController.swift */,
 				B00000000000000000000206 /* RecorderView.swift */,
 				A18200000000000000000002 /* RecorderAppearance.swift */,
+				E7D271000000000000000002 /* OrderedMediaPicker.swift */,
 				B0000000000000000000E168 /* RecorderFrontLight.swift */,
 				B0000000000000000000E171 /* RecorderZoomViewport.swift */,
 				D17300000000000000000102 /* CameraCrop.metal */,
@@ -882,6 +885,7 @@
 				B00000000000000000000105 /* EditorController.swift in Sources */,
 				B00000000000000000000106 /* RecorderView.swift in Sources */,
 				A18200000000000000000001 /* RecorderAppearance.swift in Sources */,
+				E7D271000000000000000001 /* OrderedMediaPicker.swift in Sources */,
 				B0000000000000000000F168 /* RecorderFrontLight.swift in Sources */,
 				B0000000000000000000F171 /* RecorderZoomViewport.swift in Sources */,
 				D17300000000000000000002 /* CameraCrop.metal in Sources */,

@@ -34,7 +34,6 @@ final class ProjectStore: ObservableObject {
     @Published var operationLabel = ""
     @Published var archiveURL: URL?
     private var operation: Task<Void, Never>?
-    private var photoTransfer: Progress?
     let disk: ProjectDisk
     private let selectionKey:String
     var selected: Project? { projects.first { $0.id == selectedID } }
@@ -424,10 +423,10 @@ final class ProjectStore: ObservableObject {
         }
     }
 
-    func insertVideos(_ items: [PhotosPickerItem], into id: UUID, at position: Double, site: VideoInsertionSite? = nil,
+    func insertVideos(_ items: [NSItemProvider], into id: UUID, at position: Double, site: VideoInsertionSite? = nil,
                       completion: @escaping (Result<Double, Error>) -> Void) {
         insertMedia(count: items.count, origin: "Photos", into: id, at: position, site: site, load: { index in
-            try await self.loadSelectedMedia(items[index])
+            try await ImportedPhotoMedia.load(items[index])
         }, completion: completion)
     }
 
@@ -473,7 +472,7 @@ final class ProjectStore: ObservableObject {
         }
     }
 
-    func newProjectFromPhotos(_ items: [PhotosPickerItem], completed: @escaping () -> Void) {
+    func newProjectFromPhotos(_ items: [NSItemProvider], completed: @escaping () -> Void) {
         guard !items.isEmpty, !importing else { return }
         let project = Project(title: newProjectTitle)
         importing = true; operationProgress = 0
@@ -486,7 +485,7 @@ final class ProjectStore: ObservableObject {
                 var batch = try VideoBatchImport(stagingAt: staged.folder(project.id))
                 defer { batch.discard() }
                 try await stageMedia(count: items.count, origin: "Photos", in: &batch) { index in
-                    try await self.loadSelectedMedia(items[index])
+                    try await ImportedPhotoMedia.load(items[index])
                 }
                 operationLabel = "Creating project…"
                 var candidate = project
@@ -524,16 +523,6 @@ final class ProjectStore: ObservableObject {
                     "Couldn’t add item " + itemNumber + ". " + error.localizedDescription])
             }
         }
-    }
-
-    private func loadSelectedMedia(_ item: PhotosPickerItem) async throws -> ImportedPhotoMedia {
-        try Task.checkCancellation()
-        defer { photoTransfer = nil }
-        let media: ImportedPhotoMedia? = try await withCheckedThrowingContinuation { continuation in
-            photoTransfer = item.loadTransferable(type: ImportedPhotoMedia.self) { continuation.resume(with: $0) }
-        }
-        guard let media else { throw ProjectError.invalidMedia }
-        return media
     }
 
     func insertAudio(_ url: URL, into id: UUID, at position: Double) async -> Bool {
@@ -674,7 +663,7 @@ final class ProjectStore: ObservableObject {
             if opened { completed() }
         }
     }
-    func cancelOperation() { operation?.cancel(); photoTransfer?.cancel() }
+    func cancelOperation() { operation?.cancel() }
     func dismissArchive() {
         if let archiveURL { try? FileManager.default.removeItem(at: archiveURL.deletingLastPathComponent()) }
         archiveURL = nil

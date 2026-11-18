@@ -11,8 +11,8 @@ struct AddVideoPanel: View {
     let record: () -> Void
     let inserted: (Int, Double) -> Void
 
-    @State private var picked: [PhotosPickerItem] = []
-    @State private var retryItems: [PhotosPickerItem] = []
+    @State private var choosingPhotos = false
+    @State private var retryItems: [NSItemProvider] = []
     @State private var loading = false
     @State private var cancelling = false
     @State private var problem: String?
@@ -43,19 +43,16 @@ struct AddVideoPanel: View {
                             Button("Retry selection") { importPhotos(retryItems) }.frame(minHeight: 44)
                         }
                     }
-                    PhotosPicker(selection: $picked, maxSelectionCount: nil, selectionBehavior: .ordered,
-                                 matching: .any(of: [.images, .videos]), preferredItemEncoding: .current) {
+                    Button { choosingPhotos = true } label: {
                         Label("From Photos", systemImage: "photo.on.rectangle")
                             .frame(maxWidth: .infinity, minHeight: 48)
                     }.buttonStyle(.borderedProminent)
-                    if UIDevice.current.userInterfaceIdiom != .phone {
-                        Button { choosingFiles = true } label: {
-                            VStack(spacing: 3) {
-                                Label("From Files", systemImage: "folder")
-                                Text("Multiple files are added in filename order").font(.caption).foregroundStyle(.secondary)
-                            }.frame(maxWidth: .infinity, minHeight: 44)
-                        }.buttonStyle(.bordered).accessibilityIdentifier("addVideo.files")
-                    }
+                    Button { choosingFiles = true } label: {
+                        VStack(spacing: 3) {
+                            Label("From Files", systemImage: "folder")
+                            Text("Multiple files are added in filename order").font(.caption).foregroundStyle(.secondary)
+                        }.frame(maxWidth: .infinity, minHeight: 44)
+                    }.buttonStyle(.bordered).accessibilityIdentifier("addVideo.files")
                     Button(action: record) {
                         Label("Record here", systemImage: "record.circle").frame(maxWidth: .infinity, minHeight: 48)
                     }.buttonStyle(.bordered).accessibilityIdentifier("editor.recordHere")
@@ -100,10 +97,12 @@ struct AddVideoPanel: View {
                 }
             }
         }
-        .onChange(of: picked) { _, items in
-            guard !items.isEmpty else { return }
-            picked = []
-            importPhotos(items)
+        .sheet(isPresented: $choosingPhotos) {
+            OrderedMediaPicker { items in
+                choosingPhotos = false
+                if !items.isEmpty { importPhotos(items) }
+            }
+            .ignoresSafeArea()
         }
         .fileImporter(isPresented: $choosingFiles, allowedContentTypes: [.movie, .image], allowsMultipleSelection: true) { result in
             switch result {
@@ -131,7 +130,7 @@ struct AddVideoPanel: View {
         return "Choose photos and videos in playback order. \(placement) Each photo lasts \(PhotoClip.seconds) seconds."
     }
 
-    private func importPhotos(_ items: [PhotosPickerItem]) {
+    private func importPhotos(_ items: [NSItemProvider]) {
         guard !loading else { return }
         loading = true; cancelling = false; problem = nil; retryItems = items
         store.insertVideos(items, into: project.id, at: position, site: site) { result in

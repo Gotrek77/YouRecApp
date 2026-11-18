@@ -24,7 +24,6 @@ struct ContentView: View {
     @State private var choosingImportFile = false
     @State private var importFileType = UTType.zip
     @State private var choosingPhotos = false
-    @State private var importPhotos: [PhotosPickerItem] = []
     @State private var repairFeedback: String?
     @State private var repairing: Project?
     @State private var relinkSource: SourceMedia?
@@ -646,12 +645,12 @@ struct ContentView: View {
                     }
             }
         }
-        .photosPicker(isPresented: $choosingPhotos, selection: $importPhotos, maxSelectionCount: nil,
-                      selectionBehavior: .ordered, matching: .any(of: [.images, .videos]), preferredItemEncoding: .current)
-        .onChange(of: importPhotos) { _, items in
-            guard !items.isEmpty else { return }
-            importPhotos = []
-            store.newProjectFromPhotos(items) { screen = 2 }
+        .sheet(isPresented: $choosingPhotos) {
+            OrderedMediaPicker { items in
+                choosingPhotos = false
+                if !items.isEmpty { store.newProjectFromPhotos(items) { screen = 2 } }
+            }
+            .ignoresSafeArea()
         }
         .fileImporter(isPresented: $choosingImportFile, allowedContentTypes: [importFileType]) { result in
             switch result {

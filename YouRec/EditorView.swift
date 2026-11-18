@@ -2240,50 +2240,6 @@ final class PlayerLayerView: UIView, UIGestureRecognizerDelegate {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
 
-final class ImportedPhotoMedia: Transferable, Sendable {
-    let url: URL
-    let originalName: String
-    let isPhoto: Bool
-    private init(url: URL, originalName: String, isPhoto: Bool) {
-        self.url = url; self.originalName = originalName; self.isPhoto = isPhoto
-    }
-    deinit { try? FileManager.default.removeItem(at: url) }
-
-    // The provider can finish a copy after cancellation. Own it until the
-    // consumer finishes, and sweep interrupted transfers on the next use.
-    private static let transferDirectory: URL = {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("YouRecPhotoTransfers", isDirectory: true)
-        try? FileManager.default.removeItem(at: folder)
-        return folder
-    }()
-    static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(importedContentType: .movie) { received in
-            try await copy(received.file, isPhoto: false)
-        }
-        FileRepresentation(importedContentType: .image) { received in
-            try await copy(received.file, isPhoto: true)
-        }
-    }
-
-    static func copy(_ source: URL, isPhoto: Bool) async throws -> ImportedPhotoMedia {
-        let ext = source.pathExtension.lowercased()
-        try FileManager.default.createDirectory(at: transferDirectory, withIntermediateDirectories: true)
-        let url = transferDirectory.appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension(isPhoto || ["mp4", "m4v"].contains(ext) ? ext : "mov")
-        let size = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        let free = (try FileManager.default.attributesOfFileSystem(forPath: transferDirectory.path)[.systemFreeSize] as? NSNumber)?.int64Value ?? 0
-        guard free > Int64(size) + 256_000_000 else { throw CocoaError(.fileWriteOutOfSpace) }
-        do {
-            try await ProjectArchive.copyFile(source, to: url) { _ in }
-            try Task.checkCancellation()
-            return ImportedPhotoMedia(url: url, originalName: source.lastPathComponent, isPhoto: isPhoto)
-        } catch {
-            try? FileManager.default.removeItem(at: url)
-            throw error
-        }
-    }
-}
-
 private struct EffectChipLabelLayout: Layout {
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         guard let label = subviews.first else { return .zero }
