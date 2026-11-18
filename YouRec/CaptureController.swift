@@ -143,6 +143,7 @@ final class CaptureController: NSObject, ObservableObject, AVCaptureVideoDataOut
     @Published private(set) var cameraID = ""
     @Published private(set) var switchingCamera = false
     @Published private(set) var microphones: [MicrophoneChoice] = []
+    static let allowAudioPlaybackKey = "allowAudioPlayback"
     @Published private(set) var microphonePriority: [MicrophoneChoice] = []
     @Published private(set) var recordingGainDB = 0.0
     private let recordingGain = RecordingGain() // media queue
@@ -1050,10 +1051,7 @@ final class CaptureController: NSObject, ObservableObject, AVCaptureVideoDataOut
         configuring = true
         defer { configuring = false }
         do {
-            let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.allowBluetoothHFP])
-            try audioSession.setActive(true)
-            try audioSession.setAllowHapticsAndSystemSoundsDuringRecording(true)
+            try activateRecorderAudio()
             devices = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera, .builtInUltraWideCamera, .builtInTelephotoCamera], mediaType: .video, position: .unspecified).devices
             guard let camera = devices.first(where: { $0.position == .back && $0.deviceType == .builtInWideAngleCamera }) ?? devices.first else { throw ProjectError.invalidMedia }
             let videoInput = try AVCaptureDeviceInput(device: camera)
@@ -1101,12 +1099,26 @@ final class CaptureController: NSObject, ObservableObject, AVCaptureVideoDataOut
         } catch { publish { $0.error = error.localizedDescription } }
     }
 
-    private func resumeSession() throws {
-        refreshFramePreview()
+    private func activateRecorderAudio() throws {
         let audio = AVAudioSession.sharedInstance()
-        try audio.setCategory(.playAndRecord, mode: .videoRecording, options: [.allowBluetoothHFP])
+        var options: AVAudioSession.CategoryOptions = [.allowBluetoothHFP]
+        if UserDefaults.standard.bool(forKey: Self.allowAudioPlaybackKey) { options.insert(.mixWithOthers) }
+        try audio.setCategory(.playAndRecord, mode: .videoRecording, options: options)
         try audio.setActive(true)
         try audio.setAllowHapticsAndSystemSoundsDuringRecording(true)
+    }
+
+    func refreshAudioPlaybackPreference() {
+        queue.async {
+            guard self.configured, self.wantsPreview, !self.captureActive, !self.finalizing else { return }
+            do { try self.activateRecorderAudio() }
+            catch { self.publish { $0.warning = "Could not change audio playback. " + error.localizedDescription } }
+        }
+    }
+
+    private func resumeSession() throws {
+        refreshFramePreview()
+        try activateRecorderAudio()
         if dualEnabled {
             if !dualCapture.isDelivering {
                 meterLock.lock(); dualLastFrame = ProcessInfo.processInfo.systemUptime; meterLock.unlock()

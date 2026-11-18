@@ -147,8 +147,64 @@ func titleDesignTests(root: URL) async throws {
         }
         return data
     }
+    let singleLooks = TitleDesign.looks
+    try require(Set(singleLooks.map(\.name)).count == singleLooks.count, "Single text look names must be unique in the gallery")
+    var singleRasters = Set<Data>()
+    for collection in TitleDesign.LookCollection.allCases {
+        let looks = singleLooks.filter { $0.collection == collection }
+        try require(looks.count == 6, collection.rawValue + " must have six distinct choices")
+        try require(looks.contains { $0.design.plate != .off && (0.3...0.9).contains($0.design.backing.alpha) },
+                    collection.rawValue + " must include a look that lets the footage show through its backing")
+    }
+    for (_, name, preset) in singleLooks {
+        try require(preset.valid && TitleTypeface.families.contains { family in
+            family.id == preset.face && family.weights.contains(preset.weight) && (!preset.italic || family.slanted != nil)
+        }, name + " must use an available font and weight")
+        let applied = design.applyingLook(preset)
+        try require(applied.outlined && applied.border == design.border && applied.borderWidth == design.borderWidth,
+                    name + " must keep the user's outline")
+        let restored = try JSONDecoder().decode(TitleDesign.self, from: JSONEncoder().encode(applied))
+        try require(restored == applied, name + " must survive saving and reopening")
+        let copy = "Città di notte\nVia Roma, 21:05"
+        let layout = StyledTextLayout(text: copy, design: preset, fontSize: 36, maxWidth: 330)
+        try require(CTFrameGetVisibleStringRange(layout.frame).length == copy.utf16.count, name + " lost text on a narrow canvas")
+        guard let bitmap = layout.image(scale: 1) else { throw ProjectError.invalidMedia }
+        let rgba = pixels(bitmap)
+        if preset.plate != .off, preset.backing.alpha < 1 {
+            let opacity = UInt8(preset.backing.rgba & 255)
+            try require(stride(from: 3, to: rgba.count, by: 4).contains { rgba[$0] == opacity },
+                        name + " lost its background opacity in the raster")
+        }
+        try require(singleRasters.insert(Data(rgba)).inserted, name + " duplicates another rendered look")
+    }
     var chapter = LabelHeadline()
     let cardCanvas = CGSize(width: 1280, height: 720)
+    var custom = chapter
+    custom.label = "Location 04"
+    custom.labelStyle.outlined = true
+    custom.labelStyle.border = TitleInk(0xFF4040)
+    custom.headlineStyle.borderWidth = 0.09
+    custom.card.labelOffset = .init(x: 0.5, y: -0.2)
+    custom.card.headlineOffset = .init(x: -0.4, y: 0.2)
+    var pairRasters = Set<Data>()
+    for (name, look) in LabelHeadline.looks {
+        let applied = custom.applyingLook(look)
+        try require(applied.valid && applied.look == look && applied.label == custom.label, name + " changes appearance only")
+        try require(applied.card.labelOffset == custom.card.labelOffset && applied.card.headlineOffset == custom.card.headlineOffset
+                    && applied.labelStyle.outlined && applied.labelStyle.border == custom.labelStyle.border
+                    && applied.headlineStyle.borderWidth == custom.headlineStyle.borderWidth, name + " preserves custom positions and text borders")
+        for line in [applied.labelStyle, applied.headlineStyle] {
+            try require(TitleTypeface.families.contains { $0.id == line.face && $0.weights.contains(line.weight) }, name + " uses bundled font weights")
+        }
+        let archived = try JSONEncoder().encode(applied)
+        let restored = try JSONDecoder().decode(LabelHeadline.self, from: archived)
+        try require(restored == applied, name + " survives reopening the title")
+        let design = chapter.applyingLook(look)
+        let layout = LabelHeadlineLayout(design, headline: "After hours", fontSize: 72, width: 500, folder: root)
+        guard let bitmap = layout.image(fitting: cardCanvas), let label = layout.label, let headline = layout.headline else { throw ProjectError.invalidMedia }
+        try require(label.rect.maxY <= headline.rect.minY, name + " keeps the two lines distinct")
+        try require(pairRasters.insert(Data(pixels(bitmap))).inserted, name + " has its own rendered appearance")
+    }
     let cardLayout = LabelHeadlineLayout(chapter, headline: LabelHeadline.defaultHeadline, fontSize: 88, width: cardCanvas.width * 0.94, folder: root)
     guard let label = cardLayout.label, let heading = cardLayout.headline, let cardImage = cardLayout.image(fitting: cardCanvas) else {
         throw ProjectError.invalidMedia
@@ -345,7 +401,34 @@ func titleDesignTests(root: URL) async throws {
 
 private func overlayTimingTests() throws {
     let frame = TimelineEditing.frame
-    var timing = OverlayTiming(range: 3.125...6.125, bounds: 1.25...70.38)
+    var timing = EditorRangeTiming(range: 3.125...6.125, bounds: 1.25...70.38)
+    let fade = TitleMotion(entrance: .fade, inSeconds: 5)
+    let readable = fade.readableRange(in: timing.range)
+    let opening = timing.openingPosition(footage: [1.25...70.38], readable: readable)
+    try require(readable.contains(timing.range.lowerBound + opening)
+                && fade.pose(at: opening, duration: timing.duration).opacity == 1, "Long entrance must open fully readable")
+    try require(timing.openingPosition(footage: [1.25...70.38], readable: nil) == 1.5, "Static overlay opens halfway through its range")
+    let split = EditorRangeTiming(range: 3.125...4.125, bounds: timing.range)
+    try require(abs(split.openingPosition(footage: [split.range], readable: readable) - (1-frame)) < 0.000001,
+                "Previewing only the entrance stays on its most visible in-range frame")
+    let sparse = EditorRangeTiming(range: 0...10, bounds: 0...10)
+    try require(sparse.openingPosition(footage: [0...1, 7...10], readable: nil) == 7, "The poster should not land in a gap")
+    var trim = EditorRangeTiming(range: 4...12, bounds: 2...22)
+    let fixedEnd = trim.fraction(for: .end)
+    trim.set(.start, to: trim.time(at: 0.25, edge: .start))
+    try require(trim.range == 7...12 && trim.fraction(for: .end) == fixedEnd, "Moving Start must leave End on the same tick of a fixed ruler")
+    let fixedStart = trim.fraction(for: .start)
+    trim.set(.end, to: trim.time(at: 0.75, edge: .end))
+    try require(trim.range == 7...17 && trim.fraction(for: .start) == fixedStart, "Moving End must leave Start at its absolute time and thumb position")
+    try require(trim.previewTime(for: .start) == 7 && abs(trim.previewTime(for: .end) - (17 - frame)) < 0.00001, "Start shows its first frame and End its last included frame")
+    let clip = TimelineClip(sourceID: UUID(), start: 0, end: 18)
+    let edit = EditState(clips: [clip])
+    let request = ToolRequest(tool: .crop, range: 4...12, scopeTitle: "", clipIDs: [clip.id])
+    try require(request.videoPreviewRange(in: edit, ids: [clip.id]) == 4...12, "A video tool must honor a range inside its target clip")
+    let (frozen, hold) = TimelineEditing.freezing(edit, at: 18)
+    let effects = ToolRequest(tool: .videoEffects, range: 0...18, scopeTitle: "")
+    try require(hold != nil && effects.videoPreviewRange(in: frozen, ids: Set(frozen.clips.map(\.id)), inspecting: hold) == 18...21,
+                "A hold inserted at the project's original end must preview its full new duration")
     for seconds in EditorDurationPresets.wholeSeconds {
         try require(EditorDurationPresets.fits(seconds, within: timing.available), "Expected a usable duration preset")
         timing.set(.end, to: timing.range.lowerBound + seconds)
@@ -359,8 +442,8 @@ private func overlayTimingTests() throws {
     try require(abs(timing.duration - frame) < 0.000001, "Dragging End past Start must preserve a frame")
     for length in [0.0, frame / 2, frame, frame * 1.4] {
         let bounds = 8.125...(8.125 + length)
-        var short = OverlayTiming(range: bounds, bounds: bounds)
-        for edge in [OverlayTiming.Edge.start, .end] {
+        var short = EditorRangeTiming(range: bounds, bounds: bounds)
+        for edge in [EditorRangeTiming.Edge.start, .end] {
             for fraction in [0.0, 0.1, 0.95, 1.0] {
                 short.set(edge, to: short.time(at: fraction, edge: edge))
                 try require(bounds.contains(short.range.lowerBound) && bounds.contains(short.range.upperBound)

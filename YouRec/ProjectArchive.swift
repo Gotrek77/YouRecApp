@@ -402,12 +402,12 @@ enum ProjectArchive {
         return try publish(project, from: staged, into: disk)
     }
 
-    private static func stagingDisk(in disk: ProjectDisk) -> ProjectDisk {
+    static func stagingDisk(in disk: ProjectDisk) -> ProjectDisk {
         discardInterruptedRestores(in: disk)
         return ProjectDisk(root: restoreWorkspace(in: disk).appendingPathComponent(restoreSession, isDirectory: true))
     }
 
-    private static func publish(_ project: Project, from staged: ProjectDisk, into disk: ProjectDisk) throws -> Project {
+    static func publish(_ project: Project, from staged: ProjectDisk, into disk: ProjectDisk) throws -> Project {
         try Task.checkCancellation()
         try staged.save(project)
         try Task.checkCancellation()

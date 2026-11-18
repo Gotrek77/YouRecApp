@@ -366,7 +366,7 @@ func videoEffectIntegrationTests(root: URL) async throws {
         for t in [piece.start,(piece.start+piece.end)/2,piece.end-0.000001] {
             let plan=VideoEffectSamplePlan.make(clip:piece,sourceTime:t,sourceFPS:30,clock:integrated)!
             try require(plan.times[0]>=lastBoundary-0.00001,"Speed-ramp pieces never rewind cadence frames")
-            if t>=1.6 {try require(abs(integrated.cadence.hold(at:t)!.boundary-splitClock.cadence.hold(at:t)!.boundary)<0.00001,"Splitting does not reset the cadence clock")}
+            if t>=1.6 {try require(abs(integrated.hold(at:t)!.boundary-splitClock.hold(at:t)!.boundary)<0.00001,"Splitting does not reset the cadence clock")}
             lastBoundary=plan.times[0]
         }
     }
@@ -485,7 +485,7 @@ private func jitteredCadenceMovieTest(folder:URL,variableRate:Bool=false) async 
     let combined=TimelineClip(sourceID:UUID(),start:0,end:duration,videoEffects:[cadence,step]),combinedClock=VideoEffectSequenceClock(combined)
     // Deliberately visit frames out of order through the same bounded reader.
     for offset in 0..<60 {
-        let frame=(offset*137)%300,t=index.times[frame],hold=combinedClock.cadence.hold(at:t)!
+        let frame=(offset*137)%300,t=index.times[frame],hold=combinedClock.hold(at:t)!
         let ordinal=min(299,index.first(at:hold.boundary)),first=ordinal/3*3
         let plan=VideoEffectSamplePlan.make(clip:combined,sourceTime:t,sourceFPS:30,clock:combinedClock,frames:index)!
         for j in 0..<3 {

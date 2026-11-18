@@ -13,14 +13,18 @@ struct TitleInspector: View {
     var replay: ((Bool) -> Void)?
     var changeSection: () -> Void = {}
     let pauseForFonts: () -> Void
-    var prominentBorder = false
     var showsMotion = true
+    var showsLooks = true
     @State private var tab = Tab.looks
     @State private var systemFonts = false
     @State private var savePrompt = false
     @State private var name = ""
     @State private var lastGradient = TitleGradient.gallery[0].value
     @State private var deleting: SavedLook?
+    @State private var chosenLookID: String?
+    @State private var browsedCollection: TitleDesign.LookCollection?
+    @ScaledMetric(relativeTo: .caption) private var lookTileWidth: CGFloat = 122
+    @State private var lookColumns = 2
     @AppStorage("title.savedLooks.v1") private var saved = Data()
     @AppStorage("title.favoriteFonts.v1") private var favoriteData = Data()
 
@@ -28,7 +32,7 @@ struct TitleInspector: View {
         case looks = "Looks"
         case font = "Font"
         case fill = "Fill"
-        case border = "Outline"
+        case border = "Border"
         case shadow = "Shadow"
         case plate = "Background"
         case motion = "Motion"
@@ -37,7 +41,7 @@ struct TitleInspector: View {
             case .looks: "square.grid.2x2"
             case .font: "textformat"
             case .fill: "paintpalette"
-            case .border: "circle.dashed"
+            case .border: "character.textbox"
             case .shadow: "circle.righthalf.filled"
             case .plate: "rectangle.fill"
             case .motion: "arrow.right.to.line"
@@ -54,14 +58,8 @@ struct TitleInspector: View {
     private var demo: String { sample.isEmpty ? "Your title" : String(sample.prefix(48)) }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if prominentBorder {
-                Toggle(isOn: $design.outlined) {
-                    Label("Text border", systemImage: "character.textbox")
-                }.frame(minHeight: 44).accessibilityIdentifier(prefix + ".outline")
-                if design.outlined { borderControls }
-            }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 82), spacing: 6)], spacing: 6) {
-                ForEach(Tab.allCases.filter { ($0 != .motion || showsMotion) && ($0 != .border || !prominentBorder) }, id: \.self) { value in
+                ForEach(Tab.allCases.filter { ($0 != .motion || showsMotion) && ($0 != .looks || showsLooks) }, id: \.self) { value in
                     Button {
                         changeSection()
                         tab = value
@@ -72,22 +70,21 @@ struct TitleInspector: View {
                         }
                         .frame(maxWidth: .infinity, minHeight: 46)
                         .background(
-                            tab == value ? Color.cyan.opacity(0.22) : .white.opacity(0.07),
+                            visibleTab == value ? Color.cyan.opacity(0.22) : .white.opacity(0.07),
                             in: RoundedRectangle(cornerRadius: 8))
-                    }.buttonStyle(.plain).accessibilityAddTraits(tab == value ? .isSelected : [])
+                    }.buttonStyle(.plain).accessibilityAddTraits(visibleTab == value ? .isSelected : [])
                         .accessibilityIdentifier(prefix + ".tab." + value.rawValue)
                 }
             }
             Divider()
-            switch tab {
+            switch visibleTab {
             case .looks: looks
             case .font: fonts
             case .fill: fill
             case .border:
-                Toggle("Letter outline", isOn: $design.outlined).accessibilityIdentifier(prefix + ".outline")
-                if design.outlined {
-                    borderControls
-                }
+                Toggle("Text border", isOn: $design.outlined)
+                    .frame(minHeight: 44).accessibilityIdentifier(prefix + ".outline")
+                if design.outlined { borderControls }
             case .shadow:
                 Toggle("Drop shadow", isOn: $design.shadow)
                 if design.shadow {
@@ -102,14 +99,22 @@ struct TitleInspector: View {
                     Text("Each line").tag(TitlePlate.lines)
                 }.pickerStyle(.segmented)
                 if design.plate != .off {
-                    color("Box color", $design.backing)
+                    TitleColorControl(title: "Box color", ink: $design.backing, frame: frame, editsOpacity: false)
+                    slider("Background opacity", Binding(get: { design.backing.alpha }, set: { opacity in
+                        design.backing = TitleInk(design.backing.rgb, alpha: UInt8((opacity * 255).rounded()))
+                    }), 0...1)
                     slider("Padding", $design.padding, 0...0.8)
                     slider("Corner radius", $design.radius, 0...0.8)
                 }
             case .motion: TitleMotionControls(motion: $motion, prefix: prefix, replay: replay)
             }
         }
-        .task(id: tab) { if tab == .font { try? await importedFonts.refresh() } }
+        .onGeometryChange(for: Int.self) { geometry in
+            let capacity = Int((geometry.size.width + 8) / (lookTileWidth + 8))
+            // Each collection has six tiles. Keep the rows even as the inspector resizes.
+            return [6, 3, 2, 1].first { $0 <= capacity } ?? 1
+        } action: { lookColumns = $0 }
+        .task(id: visibleTab) { if visibleTab == .font { try? await importedFonts.refresh() } }
         .sheet(isPresented: $fontLibrary) {
             NavigationStack {
                 FontLibraryView(use: { chooseFace($0.id) }, draftFace: design.face, folder: folder)
@@ -130,14 +135,17 @@ struct TitleInspector: View {
             Button("Cancel", role: .cancel) {}
             Button("Save") {
                 let entry = SavedLook(name: name.trimmingCharacters(in: .whitespacesAndNewlines), design: design)
-                if let data = try? JSONEncoder().encode([entry] + library) { saved = data }
+                if let data = try? JSONEncoder().encode([entry] + library) {
+                    saved = data
+                    chosenLookID = entry.id.uuidString
+                }
             }.disabled(
                 name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 60
                     || library.contains {
                         $0.name.caseInsensitiveCompare(name.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
                     })
         } message: {
-            Text("Saves the font and appearance across projects. Outline and motion are set on each overlay.")
+            Text("Saves the font and appearance across projects. Border and motion are set on each overlay.")
         }
         .confirmationDialog(
             "Delete this saved style?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
@@ -148,6 +156,11 @@ struct TitleInspector: View {
                 deleting = nil
             }
         }
+    }
+    private var visibleTab: Tab {
+        if tab == .looks && !showsLooks { return .font }
+        if tab == .motion && !showsMotion { return showsLooks ? .looks : .font }
+        return tab
     }
     @ViewBuilder private var borderControls: some View {
         Picker("Border thickness", selection: $design.borderWidth) {
@@ -177,23 +190,43 @@ struct TitleInspector: View {
             Slider(value: value, in: range, step: step).accessibilityLabel(name)
         }.font(.subheadline)
     }
-    private func look(_ label: String, _ value: TitleDesign) -> some View {
-        Button {
-            design = design.applyingLook(value)
+    private func look(_ label: String, _ value: TitleDesign, id: String, selectedID: String?) -> some View {
+        let applied = design.applyingLook(value)
+        let selected = id == selectedID
+        return Button {
+            changeSection()
+            design = applied
+            chosenLookID = id
         } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                TitleLookSpecimen(words: demo, design: design.applyingLook(value), folder: folder)
-                Text(label).font(.caption).foregroundStyle(.secondary)
-            }.padding(8).frame(maxWidth: .infinity, minHeight: 58, alignment: .leading).background(
-                .white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-        }.buttonStyle(.plain).accessibilityLabel(label).accessibilityIdentifier(prefix + ".look." + label)
+            TitleLookTile(name: label, selected: selected) {
+                TitleLookSpecimen(words: demo, design: applied, folder: folder)
+            }
+        }.buttonStyle(.plain).accessibilityLabel(label).accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityIdentifier(prefix + ".look." + label)
     }
     @ViewBuilder private var looks: some View {
-        if !library.isEmpty {
+        let personal = library
+        let builtIn = TitleDesign.looks.first { design.applyingLook($0.design) == design }
+        let matches = [builtIn?.name].compactMap { $0 }
+            + personal.filter { design.applyingLook($0.design) == design }.map { $0.id.uuidString }
+        let selected = chosenLookID.flatMap { matches.contains($0) ? $0 : nil } ?? matches.first
+        let collection = browsedCollection ?? builtIn?.collection ?? .editorial
+        Picker("Look collection", selection: Binding(get: { collection }, set: { group in
+            changeSection()
+            browsedCollection = group
+        })) {
+            ForEach(TitleDesign.LookCollection.allCases, id: \.self) { group in Text(group.rawValue).tag(group) }
+        }.pickerStyle(.segmented).accessibilityIdentifier(prefix + ".lookCollection")
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: lookColumns), spacing: 8) {
+            ForEach(TitleDesign.looks.filter { $0.collection == collection }, id: \.name) { item in
+                look(item.name, item.design, id: item.name, selectedID: selected)
+            }
+        }
+        if !personal.isEmpty {
             Text("My styles").font(.headline)
-            ForEach(library) { entry in
+            ForEach(personal) { entry in
                 HStack {
-                    look(entry.name, entry.design)
+                    look(entry.name, entry.design, id: entry.id.uuidString, selectedID: selected)
                     Button {
                         deleting = entry
                     } label: {
@@ -201,9 +234,6 @@ struct TitleInspector: View {
                     }.accessibilityLabel("Delete " + entry.name)
                 }
             }
-        }
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 115), spacing: 8)]) {
-            ForEach(TitleDesign.looks, id: \.name) { item in look(item.name, item.design) }
         }
         Button {
             name = ""
@@ -414,23 +444,184 @@ struct TitleMotionControls: View {
     }
 }
 
-private struct TitleLookSpecimen: View {
-    struct Key: Hashable {
-        let words: String
-        let design: TitleDesign
-    }
-    let words: String, design: TitleDesign
+struct GroupTitleLooks: View {
+    @Binding var group: LabelHeadline
+    let headline: String
     let folder: URL
+    let dismissKeyboard: () -> Void
+    @State private var expanded = false
+    @AppStorage("title.groupLooks.v1") private var saved = Data()
+    @State private var saving = false
+    @State private var name = ""
+    @State private var chosenName: String?
+    @State private var deleting: Saved?
+
+    private struct Saved: Identifiable, Codable {
+        var id = UUID()
+        let name: String
+        let look: LabelHeadline.Look
+    }
+    private var library: [Saved] { (try? JSONDecoder().decode([Saved].self, from: saved)) ?? [] }
+    private func store(_ styles: [Saved]) {
+        if let data = try? JSONEncoder().encode(styles) { saved = data }
+    }
+
+    var body: some View {
+        let current = group.look
+        let personal = library
+        let matches = LabelHeadline.looks.filter { $0.design == current }.map(\.name) + personal.filter { $0.look == current }.map(\.name)
+        let selected = chosenName.flatMap { matches.contains($0) ? $0 : nil } ?? matches.first ?? "Custom"
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                dismissKeyboard()
+                expanded.toggle()
+            } label: {
+                HStack {
+                    Label("Looks", systemImage: "square.grid.2x2")
+                    Spacer()
+                    Text(selected).foregroundStyle(.secondary)
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.caption)
+                }.padding(.horizontal, 12).frame(minHeight: 44)
+                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            }.buttonStyle(.plain).accessibilityLabel("Looks").accessibilityValue(selected)
+                .accessibilityHint(expanded ? "Hide title looks" : "Show looks for the label, headline and card")
+                .accessibilityIdentifier("title.tab.Looks")
+            if expanded {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 8)], spacing: 8) {
+                    ForEach(LabelHeadline.looks, id: \.name) { item in
+                        tile(item.name, look: item.design, selected: selected == item.name, id: "title.groupLook." + item.name)
+                    }
+                }
+                if !personal.isEmpty {
+                    Text("My styles").font(.headline)
+                    ForEach(personal) { entry in
+                        HStack {
+                            tile(entry.name, look: entry.look, selected: selected == entry.name, id: "title.savedGroupLook." + entry.name)
+                            Button { deleting = entry } label: {
+                                Image(systemName: "trash").frame(width: 44, height: 44)
+                            }.accessibilityLabel("Delete " + entry.name)
+                        }
+                    }
+                }
+                Button { name = ""; saving = true } label: {
+                    Label("Save as channel style", systemImage: "bookmark").frame(minHeight: 44)
+                }
+            }
+        }
+        .alert("Save title look", isPresented: $saving) {
+            TextField("Style name", text: $name)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") {
+                let entered = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                store([Saved(name: entered, look: group.look)] + library)
+                chosenName = entered
+            }
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 60
+                    || (personal.map(\.name) + LabelHeadline.looks.map(\.name) + ["Custom"]).contains {
+                    $0.caseInsensitiveCompare(name.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+                })
+        } message: { Text("Saves the appearance of the label, headline, and card for other titles.") }
+        .confirmationDialog("Delete this saved look?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                            titleVisibility: .visible, presenting: deleting) { entry in
+            Button("Delete look", role: .destructive) { store(personal.filter { $0.id != entry.id }) }
+        }
+    }
+
+    private func tile(_ name: String, look: LabelHeadline.Look, selected: Bool, id: String) -> some View {
+        Button {
+            dismissKeyboard()
+            group = group.applyingLook(look)
+            chosenName = name
+        } label: {
+            TitleLookTile(name: name, selected: selected) {
+                GroupLookSpecimen(group: group.applyingLook(look), headline: headline, folder: folder)
+            }
+        }.buttonStyle(.plain).accessibilityLabel(name).accessibilityAddTraits(selected ? .isSelected : []).accessibilityIdentifier(id)
+    }
+}
+
+private struct TitleLookTile<Specimen: View>: View {
+    let name: String
+    let selected: Bool
+    @ViewBuilder var specimen: () -> Specimen
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            specimen()
+                .frame(maxWidth: .infinity).frame(height: 54)
+                .background(.black)
+            HStack {
+                Text(name).font(.caption.weight(.semibold)).lineLimit(1)
+                Spacer(minLength: 2)
+                if selected { Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(.cyan) }
+            }.padding(.horizontal, 9).frame(minHeight: 28)
+        }
+        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
+        .clipShape(RoundedRectangle(cornerRadius: 9))
+        .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(selected ? Color.cyan : .clear, lineWidth: 1.5) }
+    }
+}
+
+private struct GroupLookSpecimen: View {
+    private struct Sample: Equatable {
+        var group: LabelHeadline
+        let headline: String
+        let folder: URL
+    }
+    private let sample: Sample
     @State private var image: CGImage?
+
+    init(group: LabelHeadline, headline: String, folder: URL) {
+        // Bound the gallery sample so long or multiline copy remains readable at thumbnail size.
+        func excerpt(_ text: String, limit: Int) -> String {
+            let words = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            return words.count <= limit ? words : String(words.prefix(limit - 1)) + "…"
+        }
+        var copy = group
+        copy.label = excerpt(group.label, limit: 18)
+        var heading = excerpt(headline, limit: 23)
+        if copy.label.isEmpty && heading.isEmpty { copy.label = "First text"; heading = LabelHeadline.defaultHeadline }
+        sample = Sample(group: copy, headline: heading, folder: folder)
+    }
+
     var body: some View {
         Group {
             if let image { Image(decorative: image, scale: 1).resizable().scaledToFit() } else { Color.clear }
-        }.frame(maxWidth: .infinity, minHeight: 28, maxHeight: 32, alignment: .leading)
-            .task(id: Key(words: words, design: design)) {
-                let words = self.words
-                let style = self.design
+        }.padding(.horizontal, 10).padding(.vertical, 7)
+            .task(id: sample) {
+                let sample = self.sample
                 let result = await Task.detached(priority: .utility) {
-                    StyledTextLayout(text: words, design: style, fontSize: 36, maxWidth: 360, folder: folder).image(scale: 1)
+                    LabelHeadlineLayout(sample.group, headline: sample.headline, fontSize: 58, width: 460, folder: sample.folder)
+                        .image(fitting: CGSize(width: 460, height: 240))
+                }.value
+                if !Task.isCancelled { image = result }
+            }
+    }
+}
+
+private struct TitleLookSpecimen: View {
+    private struct Sample: Equatable {
+        let words: String
+        let design: TitleDesign
+        let folder: URL
+    }
+    private let sample: Sample
+    @State private var image: CGImage?
+
+    init(words: String, design: TitleDesign, folder: URL) {
+        let line = words.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let excerpt = line.count > 20 ? String(line.prefix(19)) + "…" : line
+        sample = Sample(words: excerpt.isEmpty ? "Your title" : excerpt, design: design, folder: folder)
+    }
+
+    var body: some View {
+        Group {
+            if let image { Image(decorative: image, scale: 1).resizable().scaledToFit() } else { Color.clear }
+        }.padding(.horizontal, 9).padding(.vertical, 3)
+            .task(id: sample) {
+                let sample = self.sample
+                let result = await Task.detached(priority: .utility) {
+                    StyledTextLayout(text: sample.words, design: sample.design, fontSize: 48, maxWidth: 560, folder: sample.folder).image(scale: 1)
                 }.value
                 if !Task.isCancelled { image = result }
             }
@@ -487,7 +678,15 @@ struct TitleColorControl: View {
     }
     private func select(_ c: TitleInk) {
         ink = editsOpacity ? c : TitleInk(c.rgb, alpha: UInt8(ink.rgba & 255))
-        remember(ink)
+        remember(editsOpacity ? ink : TitleInk(ink.rgb))
+    }
+    private var swatches: [TitleInk] {
+        let palette = TextColor.allCases.map(TitleInk.init)
+        var seen = Set(palette)
+        return palette + recents.compactMap { recent in
+            let swatch = editsOpacity ? recent : TitleInk(recent.rgb)
+            return seen.insert(swatch).inserted ? swatch : nil
+        }
     }
     private var encoded: String { String(format: "%06X", ink.rgb) }
     var body: some View {
@@ -532,9 +731,8 @@ struct TitleColorControl: View {
                         Text(ink.alpha.formatted(.percent)).monospacedDigit()
                     }
                 }
-                let palette = TextColor.allCases.map(TitleInk.init)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 38), spacing: 2)], spacing: 1) {
-                    ForEach(palette + recents.filter { !palette.contains($0) }, id: \.self) { c in
+                    ForEach(swatches, id: \.self) { c in
                         Button {
                             select(c)
                         } label: {
@@ -542,7 +740,8 @@ struct TitleColorControl: View {
                                 width: 24, height: 24
                             ).frame(maxWidth: .infinity, minHeight: 44)
                         }
-                        .buttonStyle(.plain).accessibilityLabel(String(format: "Color %06X", c.rgb))
+                        .buttonStyle(.plain).accessibilityLabel(String(format: "Color %06X", c.rgb)
+                            + (c.alpha < 1 ? ", " + c.alpha.formatted(.percent) + " opacity" : ""))
                     }
                 }
                 Button {

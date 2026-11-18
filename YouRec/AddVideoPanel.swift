@@ -17,6 +17,7 @@ struct AddVideoPanel: View {
     @State private var cancelling = false
     @State private var problem: String?
     @State private var choosingTakes = false
+    @State private var choosingFiles = false
 
     private var unused: [SourceMedia] {
         let used = Set(project.edit.clips.map(\.sourceID))
@@ -47,6 +48,14 @@ struct AddVideoPanel: View {
                         Label("From Photos", systemImage: "photo.on.rectangle")
                             .frame(maxWidth: .infinity, minHeight: 48)
                     }.buttonStyle(.borderedProminent)
+                    if UIDevice.current.userInterfaceIdiom != .phone {
+                        Button { choosingFiles = true } label: {
+                            VStack(spacing: 3) {
+                                Label("From Files", systemImage: "folder")
+                                Text("Multiple files are added in filename order").font(.caption).foregroundStyle(.secondary)
+                            }.frame(maxWidth: .infinity, minHeight: 44)
+                        }.buttonStyle(.bordered).accessibilityIdentifier("addVideo.files")
+                    }
                     Button(action: record) {
                         Label("Record here", systemImage: "record.circle").frame(maxWidth: .infinity, minHeight: 48)
                     }.buttonStyle(.bordered).accessibilityIdentifier("editor.recordHere")
@@ -96,6 +105,17 @@ struct AddVideoPanel: View {
             picked = []
             importPhotos(items)
         }
+        .fileImporter(isPresented: $choosingFiles, allowedContentTypes: [.movie, .image], allowsMultipleSelection: true) { result in
+            switch result {
+            case .success(let urls) where !urls.isEmpty:
+                loading = true; cancelling = false; problem = nil; retryItems = []
+                let ordered = urls.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+                store.insertFiles(ordered, into: project.id, at: position, site: site) { finishImport($0, count: ordered.count) }
+            case .failure(let error) where (error as NSError).code != NSUserCancelledError:
+                problem = error.localizedDescription
+            default: break
+            }
+        }
         .interactiveDismissDisabled(loading)
         .onDisappear { if loading { store.cancelOperation() } }
     }
@@ -115,15 +135,19 @@ struct AddVideoPanel: View {
         guard !loading else { return }
         loading = true; cancelling = false; problem = nil; retryItems = items
         store.insertVideos(items, into: project.id, at: position, site: site) { result in
-            loading = false; cancelling = false
-            switch result {
-            case .success(let start):
-                retryItems = []; inserted(items.count, start)
-            case .failure(let error) where error is CancellationError:
-                problem = "Import cancelled."
-            case .failure(let error):
-                problem = error.localizedDescription
-            }
+            finishImport(result, count: items.count)
+        }
+    }
+
+    private func finishImport(_ result: Result<Double, Error>, count: Int) {
+        loading = false; cancelling = false
+        switch result {
+        case .success(let start):
+            retryItems = []; inserted(count, start)
+        case .failure(let error) where error is CancellationError:
+            problem = "Import cancelled."
+        case .failure(let error):
+            problem = error.localizedDescription
         }
     }
 }

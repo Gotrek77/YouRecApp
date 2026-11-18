@@ -1219,6 +1219,7 @@ private struct RecorderSettings: View {
     let adjustHorizon: () -> Void
     @AppStorage("zoomTransitionSeconds") private var rampSeconds = 0.0
     @AppStorage("protectRecordingAudio") private var protectRecordingAudio = false
+    @AppStorage(CaptureController.allowAudioPlaybackKey) private var allowAudioPlayback = false
     @AppStorage("fitRecordedFrame") private var fitRecordedFrame = true
     private var keepFraming: Bool { camera.hasActiveTake || camera.state == .paused }
     var body: some View {
@@ -1226,6 +1227,40 @@ private struct RecorderSettings: View {
             Section("This project") {
                 Text(project?.title ?? "New project")
                 Text("\(recorderClock(project?.capturedDuration ?? 0)) captured").font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                Toggle("Allow audio playback", isOn: $allowAudioPlayback)
+                    .disabled(camera.hasActiveTake)
+                    .accessibilityIdentifier("recorder.allowAudioPlayback")
+                    .onChange(of: allowAudioPlayback) { _, _ in camera.refreshAudioPlaybackPreference() }
+            } header: {
+                Text("Audio")
+            } footer: {
+                Text("Keep music and other audio apps playing while you use the camera. Your video records the selected microphone.")
+            }
+            Section {
+                NavigationLink {
+                    List {
+                        Section("Automatically while YouRec is open") {
+                            Text("On your iPhone, open Settings → Focus → Do Not Disturb → Add Schedule → App. Choose YouRec.")
+                            Text("Do Not Disturb then follows the whole app, including the editor. Your Focus settings decide which calls and notifications can come through.")
+                        }
+                        Section("For one take") {
+                            Text("Before you press Record, open Control Center, tap Focus, and turn on Do Not Disturb. Turn it off in Control Center after you stop recording.")
+                        }
+                    }
+                    .navigationTitle("Do Not Disturb")
+                    .navigationBarTitleDisplayMode(.inline)
+                } label: {
+                    Label("Set up Do Not Disturb", systemImage: "moon.fill")
+                }
+                .accessibilityIdentifier("recorder.doNotDisturb")
+                Toggle("Protect recording audio", isOn: $protectRecordingAudio)
+                    .disabled(camera.hasActiveTake).accessibilityIdentifier("recorder.protectAudio")
+            } header: {
+                Text("Interruptions")
+            } footer: {
+                Text("Protect recording audio keeps the microphone running through incoming call banners during a take. Answering a call or receiving a full-screen call still interrupts recording.")
             }
             Section("Level horizon") {
                 Button(action: adjustHorizon) {
@@ -1261,12 +1296,6 @@ private struct RecorderSettings: View {
                 .accessibilityIdentifier("recorder.transition").accessibilityLabel("Zoom transition duration")
                 .accessibilityValue(ZoomTransition.durationLabel(rampSeconds))
                 Text("Swipe the time beside the zoom presets up or down to adjust by half a second. Double-tap a zoom preset to reach it in one second. Each camera remembers its own zoom.").font(.caption).foregroundStyle(.secondary)
-            }
-            Section {
-                Toggle("Protect recording audio", isOn: $protectRecordingAudio)
-                    .disabled(camera.hasActiveTake).accessibilityIdentifier("recorder.protectAudio")
-            } header: { Text("Interruptions") } footer: {
-                Text("Keeps audio recording through incoming call banners. Answering a call or receiving a full-screen call interrupts the take. For Do Not Disturb throughout YouRec, choose Settings → Focus → Do Not Disturb → Add Schedule → App → YouRec.")
             }
             Section("Microphone") {
                 ForEach(camera.microphones) { microphone in
