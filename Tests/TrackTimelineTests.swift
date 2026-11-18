@@ -328,7 +328,10 @@ private func placementCropTests() throws {
 
 private func moveCompanionTests() throws {
     let source = SourceMedia(filename: "companions.mov", duration: 18)
-    let clips = (0..<5).map { i in TimelineClip(sourceID: source.id, start: Double(3 * i), end: Double(3 * i + 3)) }
+    let clips = (0..<5).map { (index: Int) -> TimelineClip in
+        let start = Double(index * 3)
+        return TimelineClip(sourceID: source.id, start: start, end: start + 3)
+    }
     var timeline = TrackTimeline(clips: clips)
     let seed = timeline.selection(of: clips[1].id)
     let later = timeline.selection(ids: Set(clips.suffix(2).map(\.id)))
@@ -385,7 +388,10 @@ private func moveCompanionTests() throws {
 
 private func multiSelectionTests() throws {
     let source = SourceMedia(filename: "multi.mp4", duration: 12)
-    let clips = (0..<3).map { TimelineClip(sourceID: source.id, start: Double($0 * 4), end: Double(($0 + 1) * 4)) }
+    let clips = (0..<3).map { (index: Int) -> TimelineClip in
+        let start = Double(index * 4)
+        return TimelineClip(sourceID: source.id, start: start, end: start + 4)
+    }
     let original = TrackTimeline(clips: clips)
     let all = original.entireSelection()
     var chosen = original.selection(of: clips[0].id).ids
@@ -570,7 +576,10 @@ private func multiSelectionTests() throws {
 /// overwrite edit, and every intersecting item must remain visible/hit-testable.
 private func overlapInteractionTests() throws {
     let source = SourceMedia(filename: "source.mp4", duration: 12)
-    let clips = (0..<3).map { TimelineClip(sourceID: source.id, start: Double($0 * 4), end: Double(($0 + 1) * 4)) }
+    let clips = (0..<3).map { (index: Int) -> TimelineClip in
+        let start = Double(index * 4)
+        return TimelineClip(sourceID: source.id, start: start, end: start + 4)
+    }
     let original = TrackTimeline(clips: clips)
     func lanesAreDisjoint(_ timeline: TrackTimeline) throws {
         let lanes = timelineLanes(timeline)
@@ -843,7 +852,10 @@ func timelineNavigationTests() throws {
 
 private func reviewRegressionTests() throws {
     let source = SourceMedia(filename: "source.mp4", duration: 20)
-    let clips = (0..<3).map { TimelineClip(sourceID: source.id, start: Double($0 * 4), end: Double(($0 + 1) * 4)) }
+    let clips = (0..<3).map { (index: Int) -> TimelineClip in
+        let start = Double(index * 4)
+        return TimelineClip(sourceID: source.id, start: start, end: start + 4)
+    }
     var overlapped = TrackTimeline(clips: clips)
     overlapped.move(overlapped.selection(of: clips[1].id), by: EditTime(-3))
     var fast = EditState(timeline: overlapped)
