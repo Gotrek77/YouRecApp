@@ -187,6 +187,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         }
         tool("Record") { navigation.showRecorder(project.id) }
         tool("Add video") { addMedia(audioOnly = false) }
+        tool("Add photo") { addPhoto() }
         tool("Add audio") { addMedia(audioOnly = true) }
     }
 
@@ -355,6 +356,15 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         say(""); rebuildTools(); timeline.invalidate()
     }
 
+    private fun addPhoto() {
+        val id = projectID ?: return
+        editor.pause()
+        navigation.pickMedia("image/*") { uri ->
+            if (uri == null) return@pickMedia
+            say("Adding photo…")
+            store.importPhoto(uri, id) { project -> say(if (project != null) "Photo added at the end of the project · Undo available" else store.error ?: "The photo could not be added.") }
+        }
+    }
     private fun addMedia(audioOnly: Boolean) {
         val id = projectID ?: return
         editor.pause()

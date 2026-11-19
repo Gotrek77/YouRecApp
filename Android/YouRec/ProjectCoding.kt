@@ -149,13 +149,12 @@ internal object ProjectCoding {
     private fun encode(event: CaptureEvent) = jsonObject("id" to event.id.text, "time" to event.time, "kind" to event.kind, "detail" to event.detail)
     fun source(value: Fields): SourceMedia {
         if (present(value.raw("videoEffects"))) unsupported("Video effects")
-        if (value.boolOrNull("isStillPhoto") == true) unsupported("Photos")
         return SourceMedia(value.uuid("id"), value.string("filename"), value.double("duration"), Moment(value.double("recordedAt")),
-            value.listOrNull("events")?.let { list(it, ::event) }, value.stringOrNull("sha256"), value.boolOrNull("audioOnly"), null, value.stringOrNull("originalName"))
+            value.listOrNull("events")?.let { list(it, ::event) }, value.stringOrNull("sha256"), value.boolOrNull("audioOnly"), value.boolOrNull("isStillPhoto"), value.stringOrNull("originalName"))
     }
     fun encode(source: SourceMedia) = jsonObject("id" to source.id.text, "filename" to source.filename, "duration" to source.duration,
         "recordedAt" to source.recordedAt.reference, "events" to source.events?.map { encode(it) }, "sha256" to source.sha256,
-        "audioOnly" to source.audioOnly, "originalName" to source.originalName)
+        "audioOnly" to source.audioOnly, "isStillPhoto" to source.isStillPhoto, "originalName" to source.originalName)
 
     private fun settings(value: Fields?): ExportSettings {
         if (value == null) return ExportSettings()

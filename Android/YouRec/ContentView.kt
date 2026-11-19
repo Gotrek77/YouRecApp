@@ -35,6 +35,10 @@ class ProjectsView(context: Context, private val store: ProjectStore, private va
         val bar = Design.row(context, heading, Design.button(context, "Import", fill = Design.raised) { anchor ->
             PopupMenu(context, anchor).apply {
                 menu.add("Import video").setOnMenuItemClickListener { importVideo(); true }
+                menu.add("Import photo").setOnMenuItemClickListener {
+                    navigation.pickMedia("image/*") { uri -> if (uri != null) store.importPhoto(uri, null) { project -> if (project != null && visible) navigation.showEditor(project.id) } }
+                    true
+                }
                 menu.add("Open project backup").setOnMenuItemClickListener { openBackup(); true }
             }.show()
         },

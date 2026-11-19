@@ -22,6 +22,25 @@ fun videoToolsTests() {
     textTests()
     colorTests()
     coverSamplingTests()
+    photoTests()
+}
+
+private fun photoTests() {
+    val take = SourceMedia(filename = "take.mp4", duration = 4.0)
+    val project = Project("Photos"); project.addRecording(take)
+    val photo = SourceMedia(filename = "photos-import-" + java.util.UUID.randomUUID().text + ".mp4", duration = 3.0, sha256 = "ab".repeat(32))
+    project.addPhoto(photo)
+    val timeline = project.edit.timeline
+    val still = timeline.video.single { it.content.sourceID == photo.id }
+    require(still.start == EditTime.seconds(4.0) && still.interval.duration == EditTime.seconds(3.0) && timeline.audio.none { it.sourceID == photo.id },
+        "A photo joins the end of the edit as three seconds of picture without sound")
+    require(project.sources.last().isStillPhoto == true && project.canUndo, "The photo is a still source and adding it is one undo step")
+    val coded = ProjectCoding.source(Fields.of(JSON.parse(JSON.write(ProjectCoding.encode(project.sources.last())))))
+    require(coded == project.sources.last(), "A photo source round-trips with the iPhone app's isStillPhoto flag")
+    val split = TimelineEditing.split(project.edit, 5.5)
+    require(split.timeline.video.count { it.content.sourceID == photo.id } == 2 && split.duration == 7.0, "A photo splits like footage")
+    project.undo()
+    require(project.edit.timeline.video.none { it.content.sourceID == photo.id }, "Undo removes the photo from the edit")
 }
 
 /// Ported from the iPhone app's coverSamplingTests.

@@ -302,6 +302,7 @@ def main():
     if tool("Text") and wait("Title text", 10):
         option("Style Box", "Style "); option("Colour Yellow", "Colour "); tap("Done", 10)
         note("after Text: " + describe())
+    expected += photo()
     shot("editor-after-tools")
     if crashed(): return
 
@@ -332,6 +333,41 @@ def main():
     clipboard()
     if crashed(): return
     interrupted(len(takes))
+
+def photo():
+    """Add a photo through the system picker. Returns the seconds it adds to the
+    edit: 3 when it was added, 0 when the picker could not be driven."""
+    picture = os.path.join(OUT, "yourec-photo.jpg")
+    subprocess.run(("ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=1600x1200", "-frames:v", "1", picture))
+    adb("push", picture, "/sdcard/Download/yourec-photo.jpg")
+    adb("shell", "content", "call", "--method", "scan_volume", "--uri", "content://media", "--arg", "external_primary")
+    if not tool("Add photo"):
+        return 0
+    found = None
+    for attempt in range(15):
+        found = find("yourec-photo")
+        if found:
+            break
+        if attempt == 5:
+            # The picker may open on Recent; look in Downloads.
+            menu = find("Show roots") or find("Open navigation drawer")
+            if menu:
+                adb("shell", "input", "tap", str(menu[3][0]), str(menu[3][1])); time.sleep(1.5)
+                if find("Downloads"):
+                    tap("Downloads", 5)
+        time.sleep(1)
+    if not found:
+        note("photo picker could not be driven; Add photo not checked. On screen: " + describe())
+        shot("photo-picker")
+        adb("shell", "input", "keyevent", "KEYCODE_BACK"); time.sleep(2)
+        return 0
+    adb("shell", "input", "tap", str(found[3][0]), str(found[3][1]))
+    note("tap  yourec-photo.jpg")
+    if not wait("Photo added", 60):
+        fail("the chosen photo was not added. On screen: " + describe())
+        return 0
+    note("after Add photo: " + describe())
+    return 3.0
 
 def cover():
     """Open Select cover, pick a frame, and share it: a JPEG of the project size appears."""

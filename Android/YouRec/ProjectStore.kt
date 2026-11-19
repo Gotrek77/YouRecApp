@@ -213,6 +213,38 @@ class ProjectStore(private val context: Context) {
             }
         }
     }
+    /// Add a photo as a three-second silent clip at the end of a project, or
+    /// as a new project. The completion gets the updated project, or null.
+    fun importPhoto(uri: Uri, into: UUID?, completion: (Project?) -> Unit) {
+        if (importing) return completion(null)
+        val project = (if (into != null) projects.firstOrNull { it.id == into } else create()) ?: return completion(null)
+        val name = displayName(uri)
+        val target = File(folder(project), "photos-import-" + UUID.randomUUID().text + ".mp4")
+        importing = true; operationLabel = "Adding photo"; operationProgress = 0.0; changed()
+        worker.execute {
+            var failure: String? = null; var source: SourceMedia? = null
+            val partial = File(target.parentFile, "." + target.name + ".importing")
+            try {
+                PhotoClip.write(PhotoClip.decode(context, uri), partial)
+                val duration = MediaFiles.duration(partial, needsVideo = true)
+                val hash = RecoveryFile.hash(partial)
+                RecoveryFile.move(partial, target)
+                source = SourceMedia(filename = target.name, duration = duration, sha256 = hash, isStillPhoto = true, originalName = name?.take(255))
+            } catch (e: Exception) { partial.delete(); failure = "This photo could not be added. " + (e.message ?: "") }
+            main.post {
+                importing = false
+                val photo = source
+                val ok = photo != null && update(project.id) { it.addPhoto(photo) }
+                if (!ok) {
+                    if (photo != null) target.delete()
+                    if (into == null) { projects = projects.filter { it.id != project.id }; disk.folder(project.id).deleteRecursively() }
+                    if (failure != null) error = failure
+                }
+                changed()
+                completion(if (ok) projects.firstOrNull { it.id == project.id } else null)
+            }
+        }
+    }
     /// Run a long project operation off the main thread, with progress on the list.
     private fun operation(label: String, work: ((Double) -> Unit) -> Project?, completed: (Project?) -> Unit = {}) {
         if (importing) return

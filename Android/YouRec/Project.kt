@@ -161,6 +161,13 @@ class Project(var title: String) {
         sources = sources + source
         includeRecording(source)
     }
+    /// A photo is a silent picture source: it joins the end of the edit with no sound part.
+    fun addPhoto(source: SourceMedia) {
+        val photo = source.copy(isStillPhoto = true)
+        sources = sources + photo
+        commit(TimelineEditing.inserting(listOf(TimelineClip(sourceID = photo.id, start = 0.0, end = photo.duration)), edit, edit.duration, setOf(photo.id)))
+        updatedAt = Moment.now()
+    }
     /// Imported sound is kept with the originals; placing it is an ordinary edit.
     fun addAudioSource(source: SourceMedia) {
         schemaVersion = maxOf(schemaVersion, 9)
@@ -268,13 +275,14 @@ data class ProjectDeletion(val id: UUID, val token: UUID, val date: Moment, val 
 class ProjectDisk(val root: File) {
     fun folder(id: UUID) = File(root, id.text)
     /// Complete movies in the project folder which no document mentions: a take
-    /// finished just before the app died. Offered again on the next launch.
+    /// finished just before the app died. Offered again on the next launch. A
+    /// photo clip whose project was never saved is not a take and is left out.
     fun unindexedRecordings(project: Project): List<File> {
         val known = project.mediaFiles.map { it.lowercase() }.toSet()
         return (folder(project.id).listFiles() ?: emptyArray()).filter { file ->
             val name = file.name.lowercase()
             file.isFile && !java.nio.file.Files.isSymbolicLink(file.toPath()) && file.extension.lowercase() in setOf("mov", "mp4")
-                && !name.startsWith(".") && !name.startsWith("recovered-") && name !in known
+                && !name.startsWith(".") && !name.startsWith("recovered-") && !name.startsWith("photos-import-") && name !in known
         }.sortedBy { it.name }
     }
     // Fixture stores must never share the user's Recently Deleted directory.
