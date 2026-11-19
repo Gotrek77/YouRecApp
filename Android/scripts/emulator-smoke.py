@@ -200,6 +200,13 @@ def main():
     time.sleep(4)
 
     # Recorder.
+    # A freshly booted emulator can show a system "isn't responding" dialog over the app.
+    for attempt in range(3):
+        if any("isn't responding" in (n[0] or n[1]) for n in nodes(tries=2)):
+            note("system dialog: " + describe())
+            if find("Wait", exact=True):
+                tap("Wait", 5)
+            time.sleep(3)
     if not wait("Record a new project", 40):
         shot("recorder-not-ready"); return
     note("recorder: " + describe())
