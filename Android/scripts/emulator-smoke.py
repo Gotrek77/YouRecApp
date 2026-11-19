@@ -98,6 +98,21 @@ def tool(label):
     fail("the '%s' tool was not found. On screen: %s" % (label, describe()))
     return False
 
+def option(label, family):
+    """Tap a choice in a panel's row of choices, which scrolls sideways like the tools."""
+    for attempt in range(5):
+        node = find(label)
+        if node and node[2]:
+            adb("shell", "input", "tap", str(node[3][0]), str(node[3][1]))
+            note("tap  " + label); time.sleep(0.8); return True
+        anchor = find(family)
+        if not anchor:
+            break
+        adb("shell", "input", "swipe", "900", str(anchor[3][1]), "300", str(anchor[3][1]), "300")
+        time.sleep(1)
+    fail("the choice '%s' was not found. On screen: %s" % (label, describe()))
+    return False
+
 def describe():
     return " | ".join(sorted({(n[0] or n[1]).replace("\n", " ") for n in nodes()}))
 
@@ -245,7 +260,7 @@ def main():
 
     # Clip tools: the whole project at double speed, flipped, in a square frame.
     expected, shape = recorded, None
-    if tool("Speed") and tap("Speed 2 times", 10):
+    if tool("Speed") and option("Speed 2 times", "Speed 1 times"):
         time.sleep(1); tap("Done", 10)
         note("after Speed: " + describe())
         expected = recorded / 2
@@ -254,11 +269,11 @@ def main():
     if tool("Crop") and tap("Video shape 1:1", 10):
         time.sleep(1); tap("Done", 10)
         shape = "width=1080|height=1080"
-    if tool("Color") and tap("Look Cinema", 10):
+    if tool("Color") and option("Look Cinema", "Look "):
         time.sleep(1); tap("Done", 10)
         note("after Color: " + describe())
     if tool("Text") and wait("Title text", 10):
-        tap("Style Box", 10); tap("Colour Yellow", 10); tap("Done", 10)
+        option("Style Box", "Style "); option("Colour Yellow", "Colour "); tap("Done", 10)
         note("after Text: " + describe())
     shot("editor-after-tools")
     if crashed(): return
@@ -292,7 +307,7 @@ def interrupted(before):
     and expect the take back, playable and in the project, after relaunch."""
     if find("Close"):
         tap("Close")
-    tap("Record")
+    tool("Record")
     if not wait("Record into this project", 40):
         shot("recorder-not-ready-again"); return
     tap("Record into this project")
