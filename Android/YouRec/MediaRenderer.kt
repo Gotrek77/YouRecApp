@@ -20,6 +20,8 @@ import java.util.UUID
 class RenderSources(private val project: Project, private val folder: File, private val strict: Boolean = false) {
     private val failed = HashSet<UUID>()
     private val titles = TitleTextures()
+    private val looks = HashMap<Any, IntArray>()   // look or LUT file -> texture, dimension, columns, rows
+    private val domains = HashMap<Any, Pair<FloatArray, FloatArray>>()
     private val frames = LinkedHashMap<Pair<UUID, Int>, FrameReader>(4, 0.75f, true)
     private val sound = HashMap<UUID, DecodedAudio>()
     /// Two edits of the same originals can share open decoders.
@@ -44,6 +46,45 @@ class RenderSources(private val project: Project, private val folder: File, priv
     }
     /// Close the readers of a source whose decoder failed or was reclaimed; the next frame reopens them.
     fun drop(source: UUID) { for (key in frames.keys.filter { it.first == source }) try { frames.remove(key)?.release() } catch (e: Exception) { } }
+    /// GL thread. The look of a grade as a texture, made once per look or LUT file.
+    /// An imported LUT that cannot be read fails an export; the preview shows the
+    /// picture with its balance only.
+    private fun grade(color: ColorSettings?): FrameGrade? {
+        if (color == null || color.isIdentity) return null
+        val key: Any? = color.imported?.filename ?: color.look.takeIf { it != ColorLook.Natural }
+        var entry = key?.let { looks[it] }
+        if (key != null && entry == null) {
+            val cube = try { color.imported?.let { ColorCube.load(it, folder) } ?: ColorCube.of(color.look) } catch (e: Exception) {
+                if (strict) throw ProjectError.InvalidMedia()
+                android.util.Log.w("YouRec", "color: ${color.imported?.filename} cannot be read", e); null
+            }
+            entry = IntArray(4)
+            if (cube != null) {
+                val atlas = cube.atlas()
+                val ids = IntArray(1); android.opengl.GLES20.glGenTextures(1, ids, 0)
+                android.opengl.GLES20.glBindTexture(android.opengl.GLES20.GL_TEXTURE_2D, ids[0])
+                for ((name, value) in listOf(android.opengl.GLES20.GL_TEXTURE_MIN_FILTER to android.opengl.GLES20.GL_LINEAR, android.opengl.GLES20.GL_TEXTURE_MAG_FILTER to android.opengl.GLES20.GL_LINEAR,
+                    android.opengl.GLES20.GL_TEXTURE_WRAP_S to android.opengl.GLES20.GL_CLAMP_TO_EDGE, android.opengl.GLES20.GL_TEXTURE_WRAP_T to android.opengl.GLES20.GL_CLAMP_TO_EDGE))
+                    android.opengl.GLES20.glTexParameteri(android.opengl.GLES20.GL_TEXTURE_2D, name, value)
+                android.opengl.GLES20.glPixelStorei(android.opengl.GLES20.GL_UNPACK_ALIGNMENT, 1)
+                android.opengl.GLES20.glTexImage2D(android.opengl.GLES20.GL_TEXTURE_2D, 0, android.opengl.GLES20.GL_RGBA, atlas.width, atlas.height, 0,
+                    android.opengl.GLES20.GL_RGBA, android.opengl.GLES20.GL_UNSIGNED_BYTE, ByteBuffer.wrap(atlas.rgba))
+                android.opengl.GLES20.glBindTexture(android.opengl.GLES20.GL_TEXTURE_2D, 0)
+                entry = intArrayOf(ids[0], atlas.dimension, atlas.columns, atlas.rows)
+                domains[key] = FloatArray(3) { cube.domainMin[it].toFloat() } to FloatArray(3) { (cube.domainMax[it] - cube.domainMin[it]).toFloat() }
+            }
+            looks[key] = entry
+        }
+        val domain = key?.let { domains[it] }
+        return FrameGrade(entry?.get(0) ?: 0, entry?.get(1) ?: 2, entry?.get(2) ?: 1, entry?.get(3) ?: 1, color.amount.toFloat(), color.gains,
+            domain?.first ?: floatArrayOf(0f, 0f, 0f), domain?.second ?: floatArrayOf(1f, 1f, 1f))
+    }
+    private fun releaseLooks() {
+        val ids = looks.values.map { it[0] }.filter { it != 0 }.toIntArray()
+        if (ids.isNotEmpty()) android.opengl.GLES20.glDeleteTextures(ids.size, ids, 0)
+        looks.clear(); domains.clear()
+    }
+
     /// Draw one moment of the edit into the current surface, already cleared to
     /// black. Preview and export both come through here. False if a picture
     /// that should be there could not be shown.
@@ -56,9 +97,10 @@ class RenderSources(private val project: Project, private val folder: File, priv
             val source = CanvasSize(reader.video.displayWidth.toDouble(), reader.video.displayHeight.toDouble())
             var placed = layer.picture.clip.pictureTransform(source, frame)
             val placement = layer.placement
+            val tone = grade(layer.picture.clip.color)
             val texts = layer.picture.clip.visibleTexts(layer.picture.sourceTime)
             if (placement == null) {
-                program.draw(reader.texture, reader.matrix, placed, source, frame)
+                program.draw(reader.texture, reader.matrix, placed, source, frame, tone)
                 // Titles are placed on the finished frame, so a mirrored picture keeps them readable.
                 for (title in texts) titles.draw(title, width, height, null)
                 continue
@@ -72,7 +114,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
             android.opengl.GLES20.glEnable(android.opengl.GLES20.GL_SCISSOR_TEST)
             android.opengl.GLES20.glScissor(left, height - bottom, right - left, bottom - top)
             android.opengl.GLES20.glClearColor(0f, 0f, 0f, 1f); android.opengl.GLES20.glClear(android.opengl.GLES20.GL_COLOR_BUFFER_BIT)
-            program.draw(reader.texture, reader.matrix, placed, source, frame)
+            program.draw(reader.texture, reader.matrix, placed, source, frame, tone)
             // A picture in a window carries its titles into that window with it.
             for (title in texts) titles.draw(title, width, height, placement.transform(frame))
             android.opengl.GLES20.glDisable(android.opengl.GLES20.GL_SCISSOR_TEST)
@@ -81,7 +123,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
     }
     /// Audio thread.
     fun sound(source: UUID): PCMSource? = sound.getOrPut(source) { DecodedAudio(file(source) ?: return null) }
-    fun releaseFrames() { for (reader in frames.values) try { reader.release() } catch (e: Exception) { }; frames.clear(); failed.clear(); titles.release() }
+    fun releaseFrames() { for (reader in frames.values) try { reader.release() } catch (e: Exception) { }; frames.clear(); failed.clear(); titles.release(); releaseLooks() }
     fun releaseSound() { for (reader in sound.values) reader.release(); sound.clear() }
 
     /// The project picture size: a fixed shape if one was chosen, otherwise

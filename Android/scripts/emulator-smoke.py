@@ -254,6 +254,9 @@ def main():
     if tool("Crop") and tap("Video shape 1:1", 10):
         time.sleep(1); tap("Done", 10)
         shape = "width=1080|height=1080"
+    if tool("Color") and tap("Look Cinema", 10):
+        time.sleep(1); tap("Done", 10)
+        note("after Color: " + describe())
     if tool("Text") and wait("Title text", 10):
         tap("Style Box", 10); tap("Colour Yellow", 10); tap("Done", 10)
         note("after Text: " + describe())

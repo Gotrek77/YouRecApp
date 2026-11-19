@@ -20,6 +20,72 @@ fun videoToolsTests() {
     stretchTests()
     placementTests()
     textTests()
+    colorTests()
+}
+
+private fun colorTests() {
+    fun close(a: FloatArray, b: FloatArray, tolerance: Float) = (0 until 3).all { abs(a[it] - b[it]) <= tolerance }
+    val natural = ColorCube.of(ColorLook.Natural)
+    for (colour in listOf(floatArrayOf(0f, 0f, 0f), floatArrayOf(1f, 1f, 1f), floatArrayOf(0.2f, 0.55f, 0.91f), floatArrayOf(0.013f, 0.99f, 0.5f)))
+        require(close(natural.sample(colour[0], colour[1], colour[2]), colour, 1e-5f), "The Natural look leaves every colour as it is")
+    val mono = ColorCube.of(ColorLook.Mono).sample(1f, 0f, 0f)
+    require(close(mono, floatArrayOf(0.2126f, 0.2126f, 0.2126f), 1e-4f), "Mono is the luma of the picture")
+    val ink = ColorCube.of(ColorLook.Ink)
+    require(close(ink.sample(0.05f, 0.05f, 0.05f), floatArrayOf(0f, 0f, 0f), 1e-3f) && close(ink.sample(0.95f, 0.95f, 0.95f), floatArrayOf(1f, 1f, 1f), 1e-3f), "Ink crushes the ends of the scale")
+    val warm = ColorCube.of(ColorLook.Warm).sample(0.5f, 0.5f, 0.5f)
+    require(warm[0] > 0.5f && warm[2] < 0.5f && abs(warm[1] - 0.5f) < 1e-4f, "Warm lifts red and lowers blue")
+    require(ColorLook.values().size == 14 && ColorLook.GoldenHour.raw == "goldenHour" && ColorLook.values().all { look -> ColorCube.of(look).rgb.all { it in 0f..1f } }, "Fourteen looks, each inside the display range")
+    // The flat picture a renderer samples gives the same colours as the cube, to within its 8 bits.
+    for (look in listOf(ColorLook.Cinema, ColorLook.Pastel, ColorLook.GoldenHour)) {
+        val cube = ColorCube.of(look); val atlas = cube.atlas()
+        require(atlas.columns == 6 && atlas.rows == 6 && atlas.rgba.size == 198 * 198 * 4, "A 33-point cube is laid out as six rows of six tiles")
+        var worst = 0f
+        for (i in 0 until 400) {
+            val r = (i * 37 % 101) / 100f; val g = (i * 53 % 103) / 102f; val b = (i * 71 % 107) / 106f
+            val a = cube.sample(r, g, b); val c = atlas.sample(r, g, b)
+            for (k in 0 until 3) worst = maxOf(worst, abs(a[k] - c[k]))
+        }
+        require(worst < 0.006f, "The ${look.title} atlas matches its cube ($worst)")
+    }
+    val big = ColorCube(65, FloatArray(65 * 65 * 65 * 3) { 0.5f }).atlas()
+    require(big.width <= 4096 && big.height <= 4096, "The largest cube still fits an ordinary texture")
+
+    val text = StringBuilder("# made for a check\nTITLE \"Inverted\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n")
+    for (b in 0..1) for (g in 0..1) for (r in 0..1) text.append("${1 - r} ${1 - g} ${1 - b}\n")
+    val inverted = ColorCube.parse(text.toString().toByteArray())
+    require(inverted.dimension == 2 && inverted.title == "Inverted" && close(inverted.sample(0.25f, 1f, 0f), floatArrayOf(0.75f, 0f, 1f), 1e-5f), "A 3D .cube file is read with red changing fastest")
+    val curves = ColorCube.parse("LUT_1D_SIZE 3\n0 0 0\n0.25 0.5 0.75\n1 1 1\n".toByteArray())
+    require(close(curves.sample(0.5f, 0.5f, 0.5f), floatArrayOf(0.25f, 0.5f, 0.75f), 1e-3f) && close(curves.sample(0.75f, 0.25f, 1f), floatArrayOf(0.625f, 0.25f, 1f), 1e-2f), "A 1D .cube file applies one curve per channel")
+    for (bad in listOf("", "LUT_3D_SIZE 2\n0 0 0\n", "LUT_3D_SIZE 99\n", "LUT_1D_SIZE 2\nLUT_3D_SIZE 2\n", "LUT_3D_SIZE 2\nDOMAIN_MIN 1 1 1\n" + "0 0 0\n".repeat(8), "LUT_3D_SIZE 2\n" + "0 0 x\n".repeat(8), "TITLE a\nTITLE b\n"))
+        requireFailure<LUTError>("A malformed LUT is refused: ${bad.take(24)}") { ColorCube.parse(bad.toByteArray()) }
+
+    val half = ColorSettings(look = ColorLook.Mono, amount = 0.5)
+    require(close(half.graded(floatArrayOf(1f, 0f, 0f), ColorCube.of(ColorLook.Mono)), floatArrayOf(0.6063f, 0.1063f, 0.1063f), 1e-3f), "Strength mixes the look with the picture")
+    require(close(ColorSettings(amount = 0.0, look = ColorLook.Ink).graded(floatArrayOf(0.3f, 0.4f, 0.5f), ColorCube.of(ColorLook.Ink)), floatArrayOf(0.3f, 0.4f, 0.5f), 1e-6f), "At zero strength the picture is untouched")
+    val brighter = ColorSettings(exposure = 1.0).graded(floatArrayOf(0.25f, 0.25f, 0.25f), null)
+    require(brighter[0] > 0.33f && brighter[0] < 0.36f && brighter[0] == brighter[2], "One stop of exposure is a gain in linear light, applied to display values")
+    val warmer = ColorSettings(warmth = 1.0).graded(floatArrayOf(0.5f, 0.5f, 0.5f), null)
+    require(warmer[0] > 0.5f && warmer[2] < 0.5f && ColorSettings(warmth = 0.0, tint = 0.0).gains.all { it == 1f }, "Warmth moves red against blue; neutral settings change nothing")
+    require(ColorSettings().isIdentity && !ColorSettings(look = ColorLook.Warm, amount = 0.0).isIdentity && !ColorSettings(exposure = 0.3).isIdentity
+        && ColorSettings(exposure = 0.3).title == "Color balance" && !ColorSettings(amount = 1.5).valid && !ColorSettings(exposure = 5.0).valid, "A grade knows when it is empty and when it is out of range")
+
+    val source = SourceMedia(filename = "grade.mp4", duration = 4.0)
+    val edit = EditState(listOf(TimelineClip(sourceID = source.id, start = 0.0, end = 2.0), TimelineClip(sourceID = source.id, start = 2.0, end = 4.0)))
+    val lut = ImportedLUT("effect-lut-" + "ab".repeat(32) + ".cube", "Teal & orange")
+    val graded = TimelineEditing.settingColor(ColorSettings(look = ColorLook.Cinema, amount = 0.7, imported = lut, exposure = -0.5, warmth = 0.2), edit.timeline.selection(edit.timeline.video[0].id), edit)
+    require(graded.clips[0].color?.amount == 0.7 && graded.clips[1].color == null && graded.duration == edit.duration, "A grade applies to the selected clip only and changes no timing")
+    require(ProjectCoding.editState(Fields.of(JSON.parse(JSON.write(ProjectCoding.encode(graded))))) == graded && String(JSON.write(ProjectCoding.encode(graded))).contains("\"look\":\"cinema\""), "Grades round-trip with the iPhone app's look names")
+    require(TimelineEditing.settingColor(ColorSettings(), TimelineSelection(), graded).clips.all { it.color == null }, "An empty grade is removed, with nothing selected from every clip")
+    val project = Project("Grade"); project.sources = listOf(source); project.history = listOf(edit); project.commit(graded)
+    require(project.effectFiles == listOf(lut.filename) && lut.filename in project.mediaFiles && lut.valid && !ImportedLUT("../x.cube", "x").valid, "An imported LUT is one of the project's files, under a safe name")
+    @Suppress("UNCHECKED_CAST")
+    for ((change, words) in listOf<Pair<(MutableMap<String, Any?>) -> Unit, String>>({ m: MutableMap<String, Any?> -> m["highlights"] = 0.4 } to "highlight", { m: MutableMap<String, Any?> -> m["motion"] = mapOf("x" to 1) } to "animated Color",
+        { m: MutableMap<String, Any?> -> (m["imported"] as MutableMap<String, Any?>)["input"] = "appleLog2" } to "Log LUTs")) {
+        val json = JSON.parse(JSON.write(ProjectCoding.encode(graded))) as MutableMap<String, Any?>
+        val clip = (((json["timeline"] as MutableMap<String, Any?>)["video"] as List<Any?>)[0] as MutableMap<String, Any?>)["content"] as MutableMap<String, Any?>
+        change(clip["color"] as MutableMap<String, Any?>)
+        try { ProjectCoding.editState(Fields.of(json)); require(false, "$words must be refused") } catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains(words), "The refusal names $words") }
+    }
 }
 
 private fun textTests() {

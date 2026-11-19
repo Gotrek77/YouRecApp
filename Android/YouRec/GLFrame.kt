@@ -75,29 +75,60 @@ class EGLCore {
 }
 
 /// Draws one external (camera or decoder) texture as a quad.
+/// A grade ready for the shader: the look as a flat picture of its cube, the
+/// input range it covers, its strength and the balance gains.
+class FrameGrade(val texture: Int, val dimension: Int, val columns: Int, val rows: Int, val amount: Float, val gain: FloatArray, val low: FloatArray, val span: FloatArray)
+
 class FrameProgram {
-    private val program: Int
-    private val position: Int
-    private val coordinate: Int
-    private val transform: Int
-    private val texture: Int
+    /// One compiled shader. The graded one is only built when a clip needs it.
+    private class Shader(graded: Boolean) {
+        val program = link("""
+            attribute vec4 position; attribute vec4 coordinate; uniform mat4 transform; varying vec2 uv;
+            void main() { gl_Position = position; uv = (transform * coordinate).xy; }""",
+            if (!graded) """#extension GL_OES_EGL_image_external : require
+            precision mediump float; uniform samplerExternalOES frame; varying vec2 uv;
+            void main() { gl_FragColor = texture2D(frame, uv); }"""
+            // Balance first, then the look, mixed in by its strength. The cube is a
+            // grid of tiles, one per blue step: two neighbouring tiles are read with
+            // the texture's own filtering and blended, which is a trilinear lookup.
+            else """#extension GL_OES_EGL_image_external : require
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
+            precision highp float;
+            #else
+            precision mediump float;
+            #endif
+            uniform samplerExternalOES frame; uniform sampler2D lut; varying vec2 uv;
+            uniform vec3 gain; uniform vec3 low; uniform vec3 span; uniform vec4 grid;
+            vec3 tile(vec3 c, float slice) {
+                float n = grid.x; float row = floor((slice + 0.5) / grid.y); float column = slice - row * grid.y;
+                return texture2D(lut, vec2((column * n + 0.5 + c.r * (n - 1.0)) / (n * grid.y), (row * n + 0.5 + c.g * (n - 1.0)) / (n * grid.z))).rgb;
+            }
+            void main() {
+                vec4 picture = texture2D(frame, uv);
+                vec3 c = clamp(picture.rgb * gain, 0.0, 1.0);
+                if (grid.w > 0.0) {
+                    vec3 p = clamp((c - low) / span, 0.0, 1.0);
+                    float z = p.b * (grid.x - 1.0); float z0 = floor(z); float z1 = min(z0 + 1.0, grid.x - 1.0);
+                    c = mix(c, mix(tile(p, z0), tile(p, z1), z - z0), grid.w);
+                }
+                gl_FragColor = vec4(c, picture.a);
+            }""")
+        val position = GLES20.glGetAttribLocation(program, "position")
+        val coordinate = GLES20.glGetAttribLocation(program, "coordinate")
+        val transform = GLES20.glGetUniformLocation(program, "transform")
+        val texture = GLES20.glGetUniformLocation(program, "frame")
+        val lut = GLES20.glGetUniformLocation(program, "lut")
+        val gain = GLES20.glGetUniformLocation(program, "gain")
+        val low = GLES20.glGetUniformLocation(program, "low")
+        val span = GLES20.glGetUniformLocation(program, "span")
+        val grid = GLES20.glGetUniformLocation(program, "grid")
+    }
+    private val plain = Shader(false)
+    private var graded: Shader? = null
     private val vertices: FloatBuffer = floats(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
     private val coordinates: FloatBuffer = floats(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
     private val quad = FloatArray(8)
     private val quadBuffer: FloatBuffer = floats(*quad)
-
-    init {
-        program = link("""
-            attribute vec4 position; attribute vec4 coordinate; uniform mat4 transform; varying vec2 uv;
-            void main() { gl_Position = position; uv = (transform * coordinate).xy; }""",
-            """#extension GL_OES_EGL_image_external : require
-            precision mediump float; uniform samplerExternalOES frame; varying vec2 uv;
-            void main() { gl_FragColor = texture2D(frame, uv); }""")
-        position = GLES20.glGetAttribLocation(program, "position")
-        coordinate = GLES20.glGetAttribLocation(program, "coordinate")
-        transform = GLES20.glGetUniformLocation(program, "transform")
-        texture = GLES20.glGetUniformLocation(program, "frame")
-    }
 
     /// `matrix` is SurfaceTexture's transform. The picture covers scaleX by scaleY
     /// of the viewport, centred; `rotation` turns it clockwise in quarter turns and
@@ -113,34 +144,42 @@ class FrameProgram {
         }
         present(textureID, matrix)
     }
-    private fun present(textureID: Int, matrix: FloatArray) {
+    private fun present(textureID: Int, matrix: FloatArray, grade: FrameGrade? = null) {
         quadBuffer.position(0); quadBuffer.put(quad); quadBuffer.position(0)
-        GLES20.glUseProgram(program)
+        val shader = if (grade == null) plain else graded ?: Shader(true).also { graded = it }
+        GLES20.glUseProgram(shader.program)
+        if (grade != null) {
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, grade.texture)
+            GLES20.glUniform1i(shader.lut, 1)
+            GLES20.glUniform3fv(shader.gain, 1, grade.gain, 0); GLES20.glUniform3fv(shader.low, 1, grade.low, 0); GLES20.glUniform3fv(shader.span, 1, grade.span, 0)
+            GLES20.glUniform4f(shader.grid, grade.dimension.toFloat(), grade.columns.toFloat(), grade.rows.toFloat(), if (grade.texture == 0) 0f else grade.amount)
+        }
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureID)
-        GLES20.glUniform1i(texture, 0)
-        GLES20.glUniformMatrix4fv(transform, 1, false, matrix, 0)
-        GLES20.glEnableVertexAttribArray(position)
-        GLES20.glVertexAttribPointer(position, 2, GLES20.GL_FLOAT, false, 0, quadBuffer)
-        GLES20.glEnableVertexAttribArray(coordinate)
-        GLES20.glVertexAttribPointer(coordinate, 2, GLES20.GL_FLOAT, false, 0, coordinates)
+        GLES20.glUniform1i(shader.texture, 0)
+        GLES20.glUniformMatrix4fv(shader.transform, 1, false, matrix, 0)
+        GLES20.glEnableVertexAttribArray(shader.position)
+        GLES20.glVertexAttribPointer(shader.position, 2, GLES20.GL_FLOAT, false, 0, quadBuffer)
+        GLES20.glEnableVertexAttribArray(shader.coordinate)
+        GLES20.glVertexAttribPointer(shader.coordinate, 2, GLES20.GL_FLOAT, false, 0, coordinates)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
-        GLES20.glDisableVertexAttribArray(position); GLES20.glDisableVertexAttribArray(coordinate)
+        GLES20.glDisableVertexAttribArray(shader.position); GLES20.glDisableVertexAttribArray(shader.coordinate)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, 0)
     }
     /// Draw a source picture placed by an affine map from its own pixels to canvas
     /// pixels (both with y down). Whatever falls outside the canvas is clipped by
     /// the viewport, which is how a crop, a mirror or a rotation is drawn.
-    fun draw(textureID: Int, matrix: FloatArray, placement: Affine, source: CanvasSize, canvas: CanvasSize) {
+    fun draw(textureID: Int, matrix: FloatArray, placement: Affine, source: CanvasSize, canvas: CanvasSize, grade: FrameGrade? = null) {
         // Texture corners in strip order (bottom-left, bottom-right, top-left, top-right) as source pixels.
         val px = doubleArrayOf(0.0, source.width, 0.0, source.width); val py = doubleArrayOf(source.height, source.height, 0.0, 0.0)
         for (i in 0 until 4) {
             quad[i * 2] = (placement.x(px[i], py[i]) * 2 / canvas.width - 1).toFloat()
             quad[i * 2 + 1] = (1 - placement.y(px[i], py[i]) * 2 / canvas.height).toFloat()
         }
-        present(textureID, matrix)
+        present(textureID, matrix, grade)
     }
-    fun release() { GLES20.glDeleteProgram(program) }
+    fun release() { GLES20.glDeleteProgram(plain.program); graded?.let { GLES20.glDeleteProgram(it.program) }; graded = null }
 
     companion object {
         val identity = floatArrayOf(1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f)

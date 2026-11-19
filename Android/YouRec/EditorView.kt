@@ -174,7 +174,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if ((a != null && b != null) || !chosen.isEmpty) tool("Delete", Design.recording) { delete() }
             if (!chosen.isEmpty) tool("Move") { beginMove() }
             tool("Volume") { openVolume() }
-            if (edit.timeline.video.isNotEmpty()) { tool("Speed") { openSpeed() }; tool("Crop") { openCrop() }; tool("Mirror") { openMirror() } }
+            if (edit.timeline.video.isNotEmpty()) { tool("Speed") { openSpeed() }; tool("Crop") { openCrop() }; tool("Mirror") { openMirror() }; tool("Color") { openColor() } }
             if (edit.timeline.video.isNotEmpty()) tool("Text") { openText(null) }
             if (edit.timeline.compile().any { it.video.size > 1 }) tool("Placement") { openPlacement(null) }
             if (!chosen.isEmpty && edit.timeline.links.any { link -> link.members.any { it in chosen.ids } }) tool("Unlink") { unlink() }
@@ -445,6 +445,70 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         showPanel(Design.column(context, Design.label(context, "Mirror · " + scopeTitle(project.edit), 15f, bold = true),
             Design.row(context, option("Flip left–right", first?.horizontal == true, true), option("Flip top–bottom", first?.vertical == true, false)),
             Design.button(context, "Done", Design.accent) { closePanel() }))
+    }
+
+    /// A look or an imported LUT with its strength, after exposure and white
+    /// balance. Dragging previews the draft; releasing commits one undo step.
+    private fun openColor() {
+        val project = project ?: return
+        editor.pause()
+        var color = targets(project.edit).firstOrNull()?.content?.color ?: ColorSettings()
+        val values = List(4) { Design.label(context, "", 14f, mono = true) }
+        fun describe() {
+            values[0].text = String.format("%.0f%%", color.amount * 100); values[1].text = String.format("%+.1f", color.exposure ?: 0.0)
+            values[2].text = String.format("%+.0f", (color.warmth ?: 0.0) * 100); values[3].text = String.format("%+.0f", (color.tint ?: 0.0) * 100)
+        }
+        fun draft(now: Project) = TimelineEditing.settingColor(color, selection(now.edit), now.edit)
+        fun apply(message: String) {
+            val now = this.project ?: return
+            val edit = draft(now)
+            if (edit != now.edit) commit(edit, message)
+        }
+        fun bar(max: Int, start: Int, change: (Int) -> Unit) = SeekBar(context).apply {
+            this.max = max; progress = start
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(b: SeekBar, value: Int, user: Boolean) {
+                    if (!user) return
+                    change(value); describe()
+                    this@EditorView.project?.let { editor.show(draft(it)) }
+                }
+                override fun onStartTrackingTouch(b: SeekBar) { }
+                override fun onStopTrackingTouch(b: SeekBar) { apply("Color changed") }
+            })
+        }
+        describe()
+        fun choice(title: String, chosen: Boolean, action: () -> Unit) = Design.button(context, title, if (chosen) Design.background else Design.text, if (chosen) Design.accent else Design.raised, 13f) { action() }
+            .apply { contentDescription = "Look $title" + if (chosen) ", selected" else "" }
+        val looks = ArrayList<View>()
+        color.imported?.let { looks.add(choice(it.name, true) { }) }
+        for (look in ColorLook.values()) looks.add(choice(look.title, color.imported == null && color.look == look) {
+            color = color.copy(look = look, imported = null); apply("Look " + look.title); openColor()
+        })
+        looks.add(Design.button(context, "Import LUT…", Design.text, Design.raised, 13f) {
+            val id = projectID ?: return@button
+            navigation.pickMedia("*/*") { uri ->
+                if (uri == null) return@pickMedia
+                store.importLUT(uri, id) { lut, failure ->
+                    if (lut == null) { say(failure ?: "The LUT could not be imported."); return@importLUT }
+                    color = color.copy(imported = lut); apply("LUT " + lut.name); openColor()
+                }
+            }
+        })
+        val content = Design.column(context, Design.label(context, "Color · " + scopeTitle(project.edit), 15f, bold = true), spacing = 2f)
+        fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        add(choices(*looks.toTypedArray()))
+        // Strength in percent; exposure in tenths of a stop over ±2; warmth and tint in percent over ±100.
+        add(labelled("Strength", bar(100, Math.round(color.amount * 100).toInt()) { color = color.copy(amount = it / 100.0) }, values[0]))
+        add(labelled("Exposure", bar(40, Math.round((color.exposure ?: 0.0) * 10 + 20).toInt()) { color = color.copy(exposure = (it - 20) / 10.0) }, values[1]))
+        add(labelled("Warmth", bar(200, Math.round((color.warmth ?: 0.0) * 100 + 100).toInt()) { color = color.copy(warmth = (it - 100) / 100.0) }, values[2]))
+        add(labelled("Tint", bar(200, Math.round((color.tint ?: 0.0) * 100 + 100).toInt()) { color = color.copy(tint = (it - 100) / 100.0) }, values[3]))
+        add(Design.row(context, Design.button(context, "Reset color") {
+            val now = this.project ?: return@button
+            val edit = TimelineEditing.settingColor(null, selection(now.edit), now.edit)
+            if (edit != now.edit) commit(edit, "Color removed")
+            openColor()
+        }, Design.button(context, "Done", Design.accent) { closePanel() }).apply { setPadding(0, Design.dp(context, 8f), 0, 0) })
+        showPanel(content)
     }
 
     /// Framing inside the project shape. Dragging a control previews the draft;

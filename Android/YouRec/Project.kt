@@ -30,7 +30,7 @@ data class SourceMedia(val id: UUID = UUID.randomUUID(), val filename: String, v
 
 data class TimelineClip(val id: UUID = UUID.randomUUID(), val sourceID: UUID, val start: Double, val end: Double,
                         val speed: SpeedSettings? = null, val crop: CropSettings? = null, val mirror: MirrorSettings? = null,
-                        val texts: List<TextOverlay>? = null) {
+                        val texts: List<TextOverlay>? = null, val color: ColorSettings? = null) {
     /// The titles to draw while this clip shows one source time.
     fun visibleTexts(sourceTime: Double) = texts?.filter { it.hasText && it.start <= sourceTime && sourceTime < it.end } ?: emptyList()
     /// Source seconds played per timeline second.
@@ -128,7 +128,9 @@ class Project(var title: String) {
         get() = snapshots.map { materialized(it) }
         set(value) { snapshots = value.map { EditSnapshot(it, 0) }; captureLedger = emptyList() }
     val edit: EditState get() = materialized(snapshots[historyCursor])
-    val mediaFiles: List<String> get() = sources.map { it.filename }
+    /// LUT files any retained edit refers to: part of the project, like its recordings.
+    val effectFiles: List<String> get() = snapshots.flatMap { snapshot -> snapshot.state.clips.mapNotNull { it.color?.imported?.filename } }.distinct().sorted()
+    val mediaFiles: List<String> get() = sources.map { it.filename } + effectFiles
     val hasSourceMedia: Boolean get() = sources.isNotEmpty()
     val capturedDuration: Double get() = sources.sumOf { it.duration }
     val canUndo: Boolean get() = (deferredHistory?.cursor ?: historyCursor) > 0
@@ -205,6 +207,7 @@ class Project(var title: String) {
                 require(source != null && clip.start.isFinite() && clip.end.isFinite() && clip.start >= 0 && clip.end > clip.start && clip.end <= source.duration + 0.001)
                 require(clip.speed?.let { it.rate.isFinite() && it.rate in 0.25..4.0 } ?: true)
                 require(clip.crop?.valid ?: true)
+                require(clip.color?.valid ?: true)
                 require(clip.texts?.let { texts -> texts.map { it.id }.toSet().size == texts.size && texts.all { it.valid(source!!.duration) } } ?: true)
             }
         }

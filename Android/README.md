@@ -60,6 +60,10 @@ capture, recording controls, the cut editor, export.
   **Text** puts timed titles on the picture in the four plain styles and six
   colours, with size, position and duration; a title stays with its footage
   through cuts, moves and speed changes.
+  **Color** grades the selected clips or the whole project: the fourteen
+  built-in looks or an imported `.cube` LUT (3D or 1D, Rec.709), with strength,
+  after exposure, warmth and tint. Exposure and white balance are per-channel
+  gains on display values: close to the iPhone result, not identical to it.
   **Placement** arranges videos that overlap: Full, Side by side, Stacked and
   Inset presets, front/back order, Fit or Fill, and each picture's window and
   framing.
@@ -82,7 +86,7 @@ policy older iPhone builds apply to newer projects.
 
 Subtitles and the Qwen3-ASR model · Title designs, looks and outlines, imported fonts,
 animated titles ·
-Color LUTs, Log, HDR capture and export · Video effects and their Metal
+Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export · Video effects and their Metal
 shaders · Transitions · Dragging and pinching a placed picture in the preview,
 and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
 animated Crop and Placement · Image overlays · Photos

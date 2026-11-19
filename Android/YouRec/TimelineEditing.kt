@@ -120,6 +120,10 @@ object TimelineEditing {
         return result
     }
 
+    /// A grade on the selected clips or the whole project. An empty grade is removed.
+    fun settingColor(color: ColorSettings?, selection: TimelineSelection, state: EditState) = applying(selection, state) { clip ->
+        clip.copy(color = color?.takeIf { !it.isIdentity }?.copy(id = clip.color?.id ?: UUID.randomUUID()))
+    }
     /// A project-wide picture shape. Null returns to the shape of the reference take.
     fun settingShape(size: CanvasSize?, state: EditState): EditState = state.copy().also { it.outputSize = size }
 

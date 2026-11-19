@@ -211,6 +211,24 @@ class ProjectStore(private val context: Context) {
             }
         }
     }
+    /// Read a picked .cube file, check it and keep it in the project folder.
+    /// The completion gets the LUT, or the reason it was refused.
+    fun importLUT(uri: Uri, into: UUID, completion: (ImportedLUT?, String?) -> Unit) {
+        val project = projects.firstOrNull { it.id == into } ?: return completion(null, null)
+        val name = displayName(uri) ?: "Imported LUT"
+        worker.execute {
+            var lut: ImportedLUT? = null; var failure: String? = null
+            try {
+                val data = (context.contentResolver.openInputStream(uri) ?: throw java.io.IOException("The file could not be opened.")).use { input ->
+                    val bytes = java.io.ByteArrayOutputStream(); val buffer = ByteArray(1 shl 16)
+                    while (true) { val n = input.read(buffer); if (n < 0) break; bytes.write(buffer, 0, n); if (bytes.size() > ColorCube.maximumBytes) throw LUTError("Choose a UTF-8 .cube file smaller than 32 MB.") }
+                    bytes.toByteArray()
+                }
+                lut = ColorCube.ingest(data, name, folder(project))
+            } catch (e: Exception) { failure = e.message ?: "The LUT could not be imported." }
+            main.post { completion(lut, failure) }
+        }
+    }
     private fun displayName(uri: Uri): String? = try {
         context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null }
     } catch (e: Exception) { null }

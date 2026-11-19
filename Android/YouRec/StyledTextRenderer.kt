@@ -13,24 +13,25 @@ import android.opengl.GLUtils
 /// Everything here belongs to the thread that owns the GL context.
 class TitleTextures {
     class Entry(val texture: Int, val size: CanvasSize)
-    private val entries = LinkedHashMap<Pair<TextOverlay, Int>, Entry>(16, 0.75f, true)
+    private val entries = LinkedHashMap<Pair<TextOverlay, Pair<Int, Int>>, Entry>(16, 0.75f, true)
     private var program: OverlayProgram? = null
 
     /// Draw one title on a canvas of `width` by `height`, through `placement` when its picture has a window of its own.
     fun draw(title: TextOverlay, width: Int, height: Int, placement: Affine?) {
-        val short = minOf(width, height)
         // Position and time do not change the picture of a title: share it.
-        val key = title.copy(start = 0.0, end = 0.0, x = 0.0, y = 0.0) to short
-        val entry = entries.getOrPut(key) { render(key.first, short) ?: return }
+        val key = title.copy(start = 0.0, end = 0.0, x = 0.0, y = 0.0) to (width to height)
+        val entry = entries.getOrPut(key) { render(key.first, width, height) ?: return }
         while (entries.size > 24) { val oldest = entries.keys.first(); entries.remove(oldest)?.let { GLES20.glDeleteTextures(1, intArrayOf(it.texture), 0) } }
         val shader = program ?: OverlayProgram().also { program = it }
-        var place = Affine.translation(title.x * width - entry.size.width / 2, title.y * height - entry.size.height / 2)
+        // Kept inside the recorded frame, not the device screen or its safe area.
+        var place = Affine.translation((title.x * width - entry.size.width / 2).coerceIn(0.0, maxOf(0.0, width - entry.size.width)),
+                                       (title.y * height - entry.size.height / 2).coerceIn(0.0, maxOf(0.0, height - entry.size.height)))
         if (placement != null) place = place.then(placement)
         shader.draw(entry.texture, place, entry.size, CanvasSize(width.toDouble(), height.toDouble()))
     }
 
-    private fun render(title: TextOverlay, short: Int): Entry? {
-        val bitmap = picture(title, short) ?: return null
+    private fun render(title: TextOverlay, width: Int, height: Int): Entry? {
+        val bitmap = picture(title, width, height) ?: return null
         val ids = IntArray(1); GLES20.glGenTextures(1, ids, 0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
@@ -51,32 +52,44 @@ class TitleTextures {
     }
 
     companion object {
-        /// The four plain styles: Clean and Bold are coloured letters with a soft
-        /// shadow to stay legible over footage; Box sets them on a dark plate;
-        /// Highlight sets black letters on a plate of the chosen colour.
-        fun picture(title: TextOverlay, short: Int): Bitmap? {
-            val lines = title.text.trim().split("\n").map { it.trimEnd() }
-            if (lines.all { it.isBlank() }) return null
-            val size = (title.size * short).toFloat().coerceAtLeast(4f)
+        /// The four plain styles, drawn as the iPhone app draws them: Clean and
+        /// Bold are coloured letters with a soft shadow to stay legible over
+        /// footage; Box sets them on a dark rounded plate; Highlight sets near-black
+        /// letters on a plate of the chosen colour. Long lines wrap at 84% of the frame.
+        fun picture(title: TextOverlay, canvasWidth: Int, canvasHeight: Int): Bitmap? {
+            if (!title.hasText) return null
+            val size = maxOf(8f, (title.size * minOf(canvasWidth, canvasHeight)).toFloat())
             val plate = title.style == TextStyle.Box || title.style == TextStyle.Highlight
             val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
                 textSize = size
                 typeface = if (title.style == TextStyle.Clean) Typeface.DEFAULT else Typeface.DEFAULT_BOLD
                 color = if (title.style == TextStyle.Highlight) TextColor.Black.argb else title.color.argb
                 textAlign = Paint.Align.CENTER
-                if (!plate) setShadowLayer(size * 0.08f, 0f, size * 0.04f, 0x99000000.toInt())
+                if (!plate) setShadowLayer(size * 0.12f, 0f, size * 0.04f, 0xE6000000.toInt())
+            }
+            val padding = size * 0.35f
+            val widest = canvasWidth * 0.84f - padding * 2
+            val lines = ArrayList<String>()
+            for (paragraph in title.text.trim().split("\n")) {
+                var line = ""
+                for (word in paragraph.trim().split(" ")) {
+                    val longer = if (line.isEmpty()) word else "$line $word"
+                    if (line.isNotEmpty() && paint.measureText(longer) > widest) { lines.add(line); line = word } else line = longer
+                }
+                lines.add(line)
             }
             val metrics = paint.fontMetrics
             val lineHeight = metrics.descent - metrics.ascent
-            val widest = lines.maxOf { paint.measureText(it) }
-            // Room for the plate, or for the shadow to fade inside the bitmap.
-            val padX = size * (if (plate) 0.35f else 0.2f); val padY = size * (if (plate) 0.18f else 0.2f)
-            val width = Math.ceil((widest + 2 * padX).toDouble()).toInt().coerceIn(2, 8192)
-            val height = Math.ceil((lineHeight * lines.size + 2 * padY).toDouble()).toInt().coerceIn(2, 8192)
+            val shown = lines.take(maxOf(1, ((canvasHeight * 0.8f) / lineHeight).toInt()))
+            val width = Math.ceil((minOf(widest, maxOf(size, shown.maxOf { paint.measureText(it) })) + 2 * padding).toDouble()).toInt().coerceIn(2, 8192)
+            val height = Math.ceil((lineHeight * shown.size + 2 * padding).toDouble()).toInt().coerceIn(2, 8192)
             val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
-            if (plate) canvas.drawColor(if (title.style == TextStyle.Highlight) title.color.argb else 0xD1050505.toInt())
-            for ((index, line) in lines.withIndex()) canvas.drawText(line, width / 2f, padY - metrics.ascent + index * lineHeight, paint)
+            if (plate) {
+                val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = if (title.style == TextStyle.Highlight) title.color.argb else 0xD1050505.toInt() }
+                canvas.drawRoundRect(1f, 1f, width - 1f, height - 1f, padding * 0.7f, padding * 0.7f, fill)
+            }
+            for ((index, line) in shown.withIndex()) canvas.drawText(line, width / 2f, padding - metrics.ascent + index * lineHeight, paint)
             return bitmap
         }
     }

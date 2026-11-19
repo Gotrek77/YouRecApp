@@ -15,7 +15,7 @@ internal object ProjectCoding {
     private fun present(value: Any?) = when (value) { null -> false; is List<*> -> value.isNotEmpty(); else -> true }
 
     // TimelineClip
-    private val clipTools = mapOf("stabilization" to "Stabilization", "color" to "Color", "pauses" to "Pause cuts",
+    private val clipTools = mapOf("stabilization" to "Stabilization", "pauses" to "Pause cuts",
         "images" to "Image overlays", "openingTransition" to "Transitions", "transition" to "Transitions",
         "videoEffects" to "Video effects", "frozenFrame" to "Freeze frame", "colorRegions" to "Color",
         "effectWindows" to "effects limited to a range", "framingVariants" to "Crop, Mirror or Stabilization on a range")
@@ -38,12 +38,25 @@ internal object ProjectCoding {
                 TextStyle.values().firstOrNull { it.name.lowercase() == text.string("style") } ?: throw ProjectError.InvalidDocument(),
                 TextColor.values().firstOrNull { it.name.lowercase() == text.string("color") } ?: throw ProjectError.InvalidDocument())
         } }
-        return TimelineClip(value.uuid("id"), value.uuid("sourceID"), value.double("start"), value.double("end"), speed, crop, mirror, texts)
+        val color = value.fieldsOrNull("color")?.let { grade ->
+            if (present(grade.raw("motion"))) unsupported("animated Color")
+            if ((grade.doubleOrNull("highlights") ?: 0.0) != 0.0 || (grade.doubleOrNull("localRecovery") ?: 0.0) != 0.0) unsupported("Color highlight recovery")
+            val lut = grade.fieldsOrNull("imported")?.let {
+                if ((it.stringOrNull("input") ?: "rec709") != "rec709") unsupported("Log LUTs")
+                ImportedLUT(it.string("filename"), it.string("name"))
+            }
+            ColorSettings(grade.uuid("id"), ColorLook.values().firstOrNull { it.raw == grade.string("look") } ?: throw ProjectError.InvalidDocument(), grade.double("amount"), lut,
+                grade.doubleOrNull("exposure"), grade.doubleOrNull("warmth"), grade.doubleOrNull("tint"))
+        }
+        return TimelineClip(value.uuid("id"), value.uuid("sourceID"), value.double("start"), value.double("end"), speed, crop, mirror, texts, color)
     }
     fun encode(clip: TimelineClip) = jsonObject("id" to clip.id.text, "sourceID" to clip.sourceID.text, "start" to clip.start, "end" to clip.end,
         "speed" to clip.speed?.let { jsonObject("id" to it.id.text, "rate" to it.rate) },
         "crop" to clip.crop?.let { jsonObject("id" to it.id.text, "x" to it.x, "y" to it.y, "zoom" to it.zoom, "rotation" to it.rotation) },
         "mirror" to clip.mirror?.let { jsonObject("id" to it.id.text, "horizontal" to it.horizontal, "vertical" to it.vertical) },
+        "color" to clip.color?.let { jsonObject("id" to it.id.text, "look" to it.look.raw, "amount" to it.amount,
+            "imported" to it.imported?.let { lut -> jsonObject("filename" to lut.filename, "name" to lut.name, "input" to "rec709") },
+            "exposure" to it.exposure, "warmth" to it.warmth, "tint" to it.tint) },
         "texts" to clip.texts?.map { jsonObject("id" to it.id.text, "text" to it.text, "start" to it.start, "end" to it.end, "x" to it.x, "y" to it.y,
             "size" to it.size, "style" to it.style.name.lowercase(), "color" to it.color.name.lowercase()) })
 
