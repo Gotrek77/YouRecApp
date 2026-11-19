@@ -256,6 +256,8 @@ sealed class ProjectError(message: String) : Exception(message) {
     class NewerProject : ProjectError("This project was saved by a newer version of YouRec. Its files have been preserved.")
     class MissingMedia : ProjectError("A source file is missing. The project has been preserved.")
     class EmptyTimeline : ProjectError("Add a recording before previewing or exporting.")
+    class InsufficientStorage : ProjectError("Not enough free storage. Free some space and try again.")
+    class SourceChanged : ProjectError("A recording changed during backup. Wait for recording to finish and try again.")
     class InvalidMedia : ProjectError("The recording could not be opened as a valid video. Its file has been preserved.")
 }
 

@@ -117,6 +117,7 @@ device to confirm:
 | Kill right after Stop | A take finished but not yet indexed appears on the next launch |
 | Recently Deleted | Delete, restore, delete again; nothing is erased without confirmation |
 | iPhone project | A project folder made by the iPhone app using only cuts opens here with the same timeline; one using an unported tool is refused by name and its files are unchanged (compare checksums before and after) |
+| Duplicate, Back up, Open backup | The copy edits and plays alone after the original is deleted; a backup shared to Files and opened again restores every take and Undo step; a backup made on iPhone opens |
 
 ## 3. Editor
 

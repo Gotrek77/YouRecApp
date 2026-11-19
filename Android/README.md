@@ -69,6 +69,10 @@ capture, recording controls, the cut editor, export.
   **Placement** arranges videos that overlap: Full, Side by side, Stacked and
   Inset presets, front/back order, Fit or Fill, and each picture's window and
   framing.
+- **Projects**: Duplicate (an independent copy with the same history), Back up
+  (a `.zip` in the iPhone app's archive format, shared from the phone) and Open
+  project backup, also for backups made on iPhone. The OpenTimelineIO file of
+  an iPhone backup is ignored.
 - **Export** to a new MP4 (H.264 or H.265, project size/720p/1080p/4K, 24–60
   fps, AAC), with a receipt naming the edit revision and source checksums. An
   unchanged edit offers its existing movie. Share, or save to the gallery.
@@ -94,7 +98,7 @@ and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
 animated Crop and Placement · Image overlays · Photos
 as clips · Stabilization · Enhance audio (RNNoise, DeepFilterNet3, LavaSR,
 VoiceFixer) · Censor audio · Pause cuts · Cover picker · Original
-recordings browser · Duplicate, Zip project and OpenTimelineIO · Dual-camera
+recordings browser · OpenTimelineIO export · Dual-camera
 layouts, live effects, face follow, front light, horizon level, focus peaking ·
 Record-here insertion ·
 Landscape editor layout · Label and headline cards in Text · Color, Crop,

@@ -403,6 +403,46 @@ def interrupted(before):
         fail("a journal remained after recovery: %s" % left)
     note("after recovery: " + describe())
     crashed()
+    if not crashed():
+        projects()
+
+def projects():
+    """Duplicate the project, back the copy up, and check the archive."""
+    import zipfile, json
+    tap("Projects", 15)
+    if not tap("More actions for", 20):
+        return
+    tap("Duplicate project", 10)
+    time.sleep(10)
+    local = os.path.join(OUT, "files")
+    pull()
+    manifests = [os.path.join(r, n) for r, _, ns in os.walk(local) for n in ns if n == "project.json" and "RecentlyDeleted" not in r]
+    note("projects after Duplicate: %d" % len(manifests))
+    if len(manifests) != 2:
+        fail("Duplicate project should leave two projects, found %d" % len(manifests)); return
+    titles = sorted(json.load(open(m))["title"] for m in manifests)
+    if not any(t.endswith(" copy") for t in titles):
+        fail("the duplicate is not titled as a copy: %s" % titles)
+    if not tap("More actions for", 10) or not tap("Back up project", 10):
+        return
+    time.sleep(15)
+    shot("backup-share")
+    adb("shell", "input", "keyevent", "KEYCODE_BACK"); time.sleep(1)
+    pull()
+    archives = [os.path.join(r, n) for r, _, ns in os.walk(local) for n in ns if n.endswith(".zip")]
+    if len(archives) != 1:
+        fail("expected one project backup, found %d" % len(archives)); return
+    with zipfile.ZipFile(archives[0]) as archive:
+        bad = archive.testzip()
+        names = archive.namelist()
+        integrity = json.loads(archive.read("integrity.json"))
+        movies = [n for n in names if n.endswith(".mp4")]
+        note("backup: %d entries, %d movies, damaged: %s" % (len(names), len(movies), bad))
+        if bad or "project.json" not in names or not movies or sorted(integrity["sha256"]) != sorted(n for n in names if n not in ("project.json", "integrity.json") and not n.startswith("History/")):
+            fail("the project backup is incomplete or damaged")
+        if any(i.compress_type != zipfile.ZIP_STORED for i in archive.infolist()):
+            fail("the project backup is compressed; the iPhone format stores entries")
+    crashed()
 
 try:
     main()

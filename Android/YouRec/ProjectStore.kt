@@ -213,6 +213,76 @@ class ProjectStore(private val context: Context) {
             }
         }
     }
+    /// Run a long project operation off the main thread, with progress on the list.
+    private fun operation(label: String, work: ((Double) -> Unit) -> Project?, completed: (Project?) -> Unit = {}) {
+        if (importing) return
+        importing = true; operationLabel = label; operationProgress = 0.0; changed()
+        worker.execute {
+            var result: Project? = null; var failure: String? = null
+            try { result = work { value -> main.post { operationProgress = value; changed() } } }
+            catch (e: Exception) { failure = e.message ?: "The operation failed." }
+            main.post {
+                importing = false
+                result?.let { project -> projects = (listOf(project) + projects).sortedByDescending { it.updatedAt }; select(project.id) }
+                if (failure != null) error = failure
+                changed(); completed(result)
+            }
+        }
+    }
+    private fun copyTitle(title: String): String {
+        val base = title.replace(Regex(" copy(?: [0-9]+)?$", RegexOption.IGNORE_CASE), "")
+        val existing = projects.map { it.title.lowercase() }.toSet()
+        var number = 1
+        while (true) {
+            val suffix = if (number == 1) " copy" else " copy $number"
+            val candidate = base.take(120 - suffix.length) + suffix
+            if (candidate.lowercase() !in existing) return candidate
+            number += 1
+        }
+    }
+    /// A second, independent project with the same recordings and history.
+    fun duplicate(project: Project, completed: (Project?) -> Unit = {}) {
+        val original = try { hydrated(unsavedDrafts[project.id] ?: projects.firstOrNull { it.id == project.id } ?: return) } catch (e: Exception) { error = e.message; return }
+        val title = copyTitle(original.title)
+        operation("Duplicating project", { progress -> ProjectArchive.duplicate(original, disk, title, progress) }, completed)
+    }
+    /// Write a backup of the project, history included, into its Exports folder.
+    /// The completion gets the file to share, or null.
+    fun backUp(project: Project, completed: (File?) -> Unit) {
+        val original = try { hydrated(unsavedDrafts[project.id] ?: projects.firstOrNull { it.id == project.id } ?: return) } catch (e: Exception) { error = e.message; return }
+        if (importing) return
+        val exports = exportsFolder(original)
+        val name = original.title.map { if (it.isLetterOrDigit() || it == ' ' || it == '-' || it == '_') it else '-' }.joinToString("").trim().take(80).ifEmpty { "YouRec project" }
+        val target = File(exports, "$name.zip")
+        importing = true; operationLabel = "Backing up project"; operationProgress = 0.0; changed()
+        worker.execute {
+            var failure: String? = null
+            try {
+                // Only an earlier backup is replaced; movies in Exports are left alone.
+                for (old in exports.listFiles() ?: emptyArray()) if (old.name.endsWith(".zip") || old.name.endsWith(".partial")) old.delete()
+                ProjectArchive.export(original, folder(original), target, disk) { value -> main.post { operationProgress = value; changed() } }
+            } catch (e: Exception) { target.delete(); failure = "Couldn’t back up the project. " + (e.message ?: "") }
+            main.post {
+                importing = false
+                if (failure != null) error = failure
+                changed(); completed(if (failure == null) target else null)
+            }
+        }
+    }
+    /// Open a project backup, from this phone or from the iPhone app, as a new project.
+    fun restoreBackup(uri: Uri, completed: (Project?) -> Unit) {
+        val staging = File(context.cacheDir, "Backups").apply { mkdirs() }
+        operation("Opening backup", { progress ->
+            val copy = File(staging, UUID.randomUUID().text + ".zip")
+            try {
+                (context.contentResolver.openInputStream(uri) ?: throw java.io.IOException("The file could not be opened.")).use { input ->
+                    java.io.FileOutputStream(copy).use { input.copyTo(it, 1 shl 20) }
+                }
+                try { ProjectArchive.restore(copy, disk) { progress(it) } }
+                catch (e: java.util.zip.ZipException) { throw ProjectError.InvalidDocument() }
+            } finally { copy.delete() }
+        }, completed)
+    }
     /// Read a picked .cube file, check it and keep it in the project folder.
     /// The completion gets the LUT, or the reason it was refused.
     fun importLUT(uri: Uri, into: UUID, completion: (ImportedLUT?, String?) -> Unit) {

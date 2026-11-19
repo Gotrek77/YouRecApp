@@ -32,7 +32,12 @@ class ProjectsView(context: Context, private val store: ProjectStore, private va
         orientation = VERTICAL
         setBackgroundColor(Design.background)
         val heading = Design.label(context, "Projects", 28f, bold = true)
-        val bar = Design.row(context, heading, Design.button(context, "Import", fill = Design.raised) { importVideo() },
+        val bar = Design.row(context, heading, Design.button(context, "Import", fill = Design.raised) { anchor ->
+            PopupMenu(context, anchor).apply {
+                menu.add("Import video").setOnMenuItemClickListener { importVideo(); true }
+                menu.add("Open project backup").setOnMenuItemClickListener { openBackup(); true }
+            }.show()
+        },
             Design.button(context, "● Record", Design.text, Design.recording) { navigation.showRecorder(null) })
         (heading.layoutParams as LayoutParams).apply { width = 0; weight = 1f }
         bar.setPadding(Design.dp(context, 16f), Design.dp(context, 12f), Design.dp(context, 12f), Design.dp(context, 8f))
@@ -96,6 +101,8 @@ class ProjectsView(context: Context, private val store: ProjectStore, private va
             PopupMenu(context, anchor).apply {
                 menu.add("Continue recording").setOnMenuItemClickListener { navigation.showRecorder(project.id); true }
                 menu.add("Rename").setOnMenuItemClickListener { rename(project); true }
+                menu.add("Duplicate project").setOnMenuItemClickListener { store.duplicate(project); true }
+                menu.add("Back up project").setOnMenuItemClickListener { store.backUp(project) { file -> if (file != null) navigation.share(file) }; true }
                 if (project.edit.duration > 0) menu.add("Export movie").setOnMenuItemClickListener { export(project); true }
                 menu.add("Delete").setOnMenuItemClickListener { store.moveToDeleted(project); true }
             }.show()
@@ -131,6 +138,9 @@ class ProjectsView(context: Context, private val store: ProjectStore, private va
         content.setPadding(Design.dp(context, 16f), Design.dp(context, 12f), Design.dp(context, 16f), Design.dp(context, 16f))
         content.background = Design.rounded(Design.surface, Design.dp(context, 16f).toFloat())
         panel.removeAllViews(); panel.addView(content)
+    }
+    private fun openBackup() {
+        navigation.pickMedia("application/zip") { uri -> if (uri != null) store.restoreBackup(uri) { project -> if (project != null && visible && project.sources.isNotEmpty()) navigation.showEditor(project.id) } }
     }
     private fun importVideo() {
         navigation.pickMedia("video/*") { uri -> if (uri != null) store.importVideo(uri) { project -> if (project != null && visible) navigation.showEditor(project.id) } }

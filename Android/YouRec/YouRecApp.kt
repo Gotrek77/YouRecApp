@@ -119,10 +119,10 @@ class YouRecActivity : Activity(), Navigation {
 
     override fun share(movie: File) {
         val uri = ExportProvider.uri(this, movie) ?: return
-        val send = Intent(Intent.ACTION_SEND).setType("video/mp4").putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val send = Intent(Intent.ACTION_SEND).setType(if (movie.name.endsWith(".zip")) "application/zip" else "video/mp4").putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         // The chooser reads the grant from clip data, not from the extra.
         send.clipData = ClipData.newRawUri(movie.name, uri)
-        startActivity(Intent.createChooser(send, "Share movie"))
+        startActivity(Intent.createChooser(send, if (movie.name.endsWith(".zip")) "Share project backup" else "Share movie"))
     }
     override fun saveToGallery(movie: File, completion: (String) -> Unit) {
         Thread {
@@ -160,13 +160,13 @@ class ExportProvider : ContentProvider() {
     private fun file(uri: Uri): File? {
         val context = context ?: return null
         val parts = uri.pathSegments
-        if (parts.size != 2 || !parts[1].endsWith(".mp4") || parts.any { it.contains("/") || it.startsWith(".") }) return null
+        if (parts.size != 2 || !(parts[1].endsWith(".mp4") || parts[1].endsWith(".zip")) || parts.any { it.contains("/") || it.startsWith(".") }) return null
         val file = File(File(File(root(context), parts[0]), "Exports"), parts[1])
         // Resolve links before trusting the location.
         return if (file.isFile && file.canonicalPath.startsWith(root(context).canonicalPath + File.separator)) file else null
     }
     override fun onCreate() = true
-    override fun getType(uri: Uri): String? = if (file(uri) != null) "video/mp4" else null
+    override fun getType(uri: Uri): String? = file(uri)?.let { if (it.name.endsWith(".zip")) "application/zip" else "video/mp4" }
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor? {
         if (mode != "r") throw SecurityException("Exports are read-only.")
         return ParcelFileDescriptor.open(file(uri) ?: throw java.io.FileNotFoundException(), ParcelFileDescriptor.MODE_READ_ONLY)
