@@ -80,7 +80,8 @@ private fun persistenceTests(root: File) {
 
     // History files are immutable and named by content.
     val history = File(disk.folder(project.id), "History")
-    val victim = history.listFiles()!!.first { name -> Fields.of(JSON.parse(head.readBytes())).list("snapshotFiles").contains(name.name) }
+    // The snapshot of the current edit: directory order differs between machines.
+    val victim = File(history, reopened.revision)
     val original = victim.readBytes()
     victim.writeBytes("{}".toByteArray())
     requireFailure<ProjectError.InvalidDocument>("A snapshot that no longer matches its hash is refused") { disk.read(head) }
