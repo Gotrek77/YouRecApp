@@ -35,8 +35,10 @@ capture, recording controls, the cut editor, export.
   Undo and redo survive closing the app, including closing after an undo.
   Recording adds footage to every retained edit state without becoming an undo
   step. Rename, reversible **Recently Deleted** with a 30-day confirmation,
-  video import into managed storage, recovery of a finished take that was not
-  yet indexed when the app died.
+  video import into managed storage. A take that was not yet indexed when the
+  app died is indexed at the next launch; a take that was still being recorded
+  is rebuilt, up to the last second that reached the disk, from a journal of
+  its encoded samples kept beside the movie until it closes (`TakeJournal.kt`).
 - **Recorder**: full-screen preview with overlaid controls. Record, Pause,
   Resume and Stop into immutable source segments; continue a project later.
   Switch cameras *while recording*: the last frame is held in preview and movie
@@ -77,7 +79,7 @@ as clips · Stabilization · Enhance audio (RNNoise, DeepFilterNet3, LavaSR,
 VoiceFixer) · Censor audio · Pause cuts · Copy/paste · Cover picker · Original
 recordings browser · Duplicate, Zip project and OpenTimelineIO · Dual-camera
 layouts, live effects, face follow, front light, horizon level, focus peaking ·
-Record-here insertion · Recovery of a segment interrupted while being written ·
+Record-here insertion ·
 Landscape editor layout · Label and headline cards in Text · Color, Crop,
 Mirror, Stabilization and effects limited to a range of a clip or spanning
 several clips · Variable aperture (the control exists on iPhone only for lenses
@@ -91,11 +93,7 @@ reorderable microphone preference list (Automatic is Android's own choice);
 Bluetooth microphones are listed but no SCO link is opened for them; if every
 microphone disappears the take continues with picture only and a warning.
 
-Two of the larger items deserve a note. **Interrupted takes:** Android's `MediaMuxer`
-writes the MP4 index when a segment is finalized, so a crash or battery loss
-during a take loses the segment in progress (everything up to the last Pause is
-safe). Bounding that loss needs a different container strategy and is the first
-reliability item to do. **Open formats:** the Kotlin `ProjectCoding.kt` reads
+One of the larger items deserves a note. **Open formats:** the Kotlin `ProjectCoding.kt` reads
 and writes the same JSON as the Swift `Codable` types, so the unported tools
 are a matter of adding fields and renderers, not of converting documents.
 

@@ -248,6 +248,48 @@ def main():
         if abs(duration - recorded) > 0.25:
             fail("the export lasts %.2f s but the takes total %.2f s" % (duration, recorded))
     crashed()
+    interrupted(len(takes))
+
+def interrupted(before):
+    """Kill the app in the middle of a take, as a crash or a dead battery would,
+    and expect the take back, playable and in the project, after relaunch."""
+    if find("Close"):
+        tap("Close")
+    tap("Record")
+    if not wait("Record into this project", 40):
+        shot("recorder-not-ready-again"); return
+    tap("Record into this project")
+    time.sleep(8)
+    adb("shell", "am", "force-stop", PACKAGE)
+    note("killed while recording")
+    local = os.path.join(OUT, "files")
+    pull()
+    journals = [n for _, _, ns in os.walk(local) for n in ns if n.endswith(".journal")]
+    note("journals left by the kill: %s" % journals)
+    if len(journals) != 1:
+        fail("expected one journal beside the interrupted take, found %d" % len(journals))
+    adb("shell", "am", "start", "-W", "-n", PACKAGE + "/yourec.YouRecActivity")
+    deadline = time.time() + 90
+    takes = []
+    while time.time() < deadline:
+        time.sleep(5)
+        takes = [m for m in pull() if "/Exports/" not in m and "/Recovery/" not in m]
+        manifests = [os.path.join(r, n) for r, _, ns in os.walk(local) for n in ns if n == "project.json"]
+        if manifests and all(os.path.basename(t) in open(manifests[0]).read() for t in takes) and len(takes) == before + 1:
+            break
+    else:
+        fail("the interrupted take was not back in the project 90 s after relaunch (takes: %d, expected %d)" % (len(takes), before + 1))
+    recovered = sorted(takes)[-1] if takes else None
+    if recovered:
+        out, duration = probe(recovered)
+        if "codec_type=video" not in out or "codec_type=audio" not in out or duration < 2:
+            fail("the recovered take is not a playable movie with picture and sound")
+        note("     middle frame: " + brightness(recovered, duration / 2))
+    left = [n for _, _, ns in os.walk(local) for n in ns if n.endswith(".journal")]
+    if left:
+        fail("a journal remained after recovery: %s" % left)
+    note("after recovery: " + describe())
+    crashed()
 
 try:
     main()

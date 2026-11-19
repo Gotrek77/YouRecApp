@@ -216,11 +216,27 @@ class ProjectStore(private val context: Context) {
     } catch (e: Exception) { null }
 
     /// A take can be complete on disk and absent from its document if the app
-    /// died between the two. Index such takes at launch; never delete them.
+    /// died between the two, or still open if it died while recording. At
+    /// launch, rebuild the interrupted ones from their journals, then index
+    /// every finished movie no document mentions. Nothing is ever deleted here.
     fun recoverUnindexedRecordings() {
-        for (summary in projects) {
-            val files = try { disk.unindexedRecordings(summary) } catch (e: Exception) { continue }
-            for (file in files) addRecording(file, summary.id) { ok -> if (!ok) error = "“${file.name}” in “${summary.title}” could not be opened as a video. Its file has been preserved." }
+        val launched = System.currentTimeMillis()
+        val folders = projects.map { it to folder(it) }
+        worker.execute {
+            val notices = folders.flatMap { (_, folder) -> try { RecordingSalvage.recover(folder, launched) } catch (e: Exception) { emptyList() } }
+            main.post {
+                if (notices.isNotEmpty()) error = notices.distinct().joinToString(" ")
+                for ((summary, _) in folders) {
+                    val files = try { disk.unindexedRecordings(summary) } catch (e: Exception) { continue }
+                    for (file in files) addRecording(file, summary.id) { ok ->
+                        if (ok) return@addRecording
+                        // Asked once: a file that is not a movie moves aside instead of failing at every launch.
+                        val kept = File(folder(summary), "Recovery").apply { mkdirs() }
+                        file.renameTo(File(kept, file.name))
+                        error = "“${file.name}” in “${summary.title}” could not be opened as a video. It was kept in the project's Recovery folder."
+                    }
+                }
+            }
         }
     }
 }

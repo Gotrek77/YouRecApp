@@ -57,6 +57,8 @@ class CaptureSegmentWriter(val file: File, val width: Int, val height: Int, bitr
     private var audioEndSent = false
     private var closed = false
     private val done = CountDownLatch(1)
+    // Insurance against never reaching close(). Recording goes on without it if it cannot be opened.
+    private var journal: TakeJournal.Writer? = try { TakeJournal.Writer(TakeJournal.file(file)) } catch (e: Exception) { null }
     private val events = ArrayList<CaptureEvent>()
     // Zero until the first video frame: the movie starts with a picture, and
     // sound captured before it is trimmed to the sample.
@@ -98,6 +100,7 @@ class CaptureSegmentWriter(val file: File, val width: Int, val height: Int, bitr
             try { sound?.release() } catch (ignored: Exception) { }
             try { container?.release() } catch (ignored: Exception) { }
             thread.quitSafely(); file.delete()
+            journal?.close(delete = true)
             throw e
         }
         video = encoder; audio = sound; muxer = container
@@ -209,10 +212,23 @@ class CaptureSegmentWriter(val file: File, val width: Int, val height: Int, bitr
             videoTrack = muxer.addTrack(picture)
             audioFormat?.let { audioTrack = muxer.addTrack(it) }
             muxer.start(); muxing = true
+            record { it.track(true, described(picture)); audioFormat?.let { sound -> it.track(false, described(sound)) } }
             for (packet in waiting) write(packet.video, packet.data, packet.info)
             waiting.clear()
             if (finishing && audioTrack < 0) { audioEnded = true; if (videoEnded) close(null) }
         } catch (e: Exception) { close("The recording could not be written. " + (e.message ?: "")) }
+    }
+
+    /// A journal that fails, for instance on a full disk, is dropped; the take continues.
+    private fun record(append: (TakeJournal.Writer) -> Unit) {
+        val open = journal ?: return
+        try { append(open) } catch (e: Exception) { journal = null; open.close(delete = true) }
+    }
+    private fun described(format: MediaFormat): TakeJournal.Track {
+        fun int(key: String) = if (format.containsKey(key)) format.getInteger(key) else 0
+        val blocks = (0..2).mapNotNull { format.getByteBuffer("csd-$it") }.map { block -> ByteArray(block.remaining()).also { block.duplicate().get(it) } }
+        return TakeJournal.Track(format.getString(MediaFormat.KEY_MIME) ?: "", int(MediaFormat.KEY_WIDTH), int(MediaFormat.KEY_HEIGHT),
+            int(MediaFormat.KEY_SAMPLE_RATE), int(MediaFormat.KEY_CHANNEL_COUNT), blocks)
     }
 
     private fun write(isVideo: Boolean, data: ByteBuffer, info: MediaCodec.BufferInfo) {
@@ -220,9 +236,13 @@ class CaptureSegmentWriter(val file: File, val width: Int, val height: Int, bitr
         if (isVideo) {
             if (info.presentationTimeUs <= lastVideo) return
             muxer.writeSampleData(videoTrack, data, info); lastVideo = info.presentationTimeUs; videoWritten++
+            // Once a second, at each key frame, what was recorded so far is made safe on disk.
+            val key = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
+            record { data.position(info.offset); data.limit(info.offset + info.size); it.sample(true, info.presentationTimeUs, info.flags, data); if (key) it.sync() }
         } else if (audioTrack >= 0) {
             if (info.presentationTimeUs <= lastAudio) return
             muxer.writeSampleData(audioTrack, data, info); lastAudio = info.presentationTimeUs
+            record { data.position(info.offset); data.limit(info.offset + info.size); it.sample(false, info.presentationTimeUs, info.flags, data) }
         }
     }
 
@@ -289,6 +309,8 @@ class CaptureSegmentWriter(val file: File, val width: Int, val height: Int, bitr
         try { audio?.release() } catch (e: Exception) { }
         surface.release()
         if (empty) { file.delete(); sidecar(file).delete() }
+        // A movie that could not be finalized keeps its journal: the next launch rebuilds it.
+        journal?.close(delete = playable || empty); journal = null
         done.countDown()
         try { onFinish(this, failure) } finally { thread.quitSafely() }
     }

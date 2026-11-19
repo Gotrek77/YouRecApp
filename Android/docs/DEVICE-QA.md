@@ -113,7 +113,7 @@ device to confirm:
 | Continue after relaunch | Record A, pause, B, stop, force-quit, reopen, record C: one project plays A+B+C |
 | Undo across relaunch | Edits A, B, C; undo C; force-quit; reopen; Redo is offered and restores C. Undo C, make D: Redo is gone |
 | Recording never undone | After edits, Undo to the beginning: every take is still present |
-| Kill during a take | The segment in progress is lost (known limitation); all earlier segments and the project open normally |
+| Kill during a take | Force-stop or pull the battery mid-take: on the next launch the take is back in the project, playable, at most a second or two short; earlier segments are untouched. While recording, storage is used at about twice the movie's rate until the take closes |
 | Kill right after Stop | A take finished but not yet indexed appears on the next launch |
 | Recently Deleted | Delete, restore, delete again; nothing is erased without confirmation |
 | iPhone project | A project folder made by the iPhone app using only cuts opens here with the same timeline; one using an unported tool is refused by name and its files are unchanged (compare checksums before and after) |

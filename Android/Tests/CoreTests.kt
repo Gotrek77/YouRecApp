@@ -21,6 +21,7 @@ fun main(arguments: Array<String>) {
     persistenceTests(File(root, "Projects"))
     retentionTests(File(root, "Retention"))
     mixTests()
+    journalTests(File(root, "Journal"))
     println("PASS: YouRec Android core")
 }
 
@@ -165,4 +166,48 @@ private fun retentionTests(root: File) {
     File(disk.deletedRoot, ".purging-" + UUID.randomUUID().text).mkdirs()
     disk.finishPendingDeletions()
     require(disk.deletedRoot.listFiles()!!.isEmpty(), "An interrupted erase finishes on the next launch")
+}
+
+private fun journalTests(root: File) {
+    root.mkdirs()
+    val movie = File(root, "take-1.mp4"); val file = TakeJournal.file(movie)
+    require(TakeJournal.isJournal(file) && TakeJournal.movie(file) == movie && !TakeJournal.isJournal(movie), "A journal is hidden beside its movie and names it")
+    val writer = TakeJournal.Writer(file)
+    writer.track(true, TakeJournal.Track("video/avc", 1080, 1920, 0, 0, listOf(byteArrayOf(1, 2, 3), byteArrayOf(4))))
+    writer.track(false, TakeJournal.Track("audio/mp4a-latm", 0, 0, 48000, 2, listOf(byteArrayOf(9, 8))))
+    val payloads = (0 until 50).map { n -> ByteArray(10 + n * 37) { (it * 7 + n).toByte() } }
+    for ((n, bytes) in payloads.withIndex()) {
+        // A window into a larger buffer, as an encoder hands samples over.
+        val buffer = java.nio.ByteBuffer.allocate(bytes.size + 8); buffer.position(5); buffer.put(bytes); buffer.position(5); buffer.limit(5 + bytes.size)
+        writer.sample(n % 3 != 0, n * 1000L, if (n % 10 == 0) 1 else 0, buffer)
+        require(buffer.position() == 5 && buffer.remaining() == bytes.size, "Journaling leaves the encoder's buffer as it was")
+    }
+    writer.close(delete = false)
+    class Replay(journal: File) {
+        val tracks = ArrayList<Pair<Boolean, TakeJournal.Track>>(); val samples = ArrayList<Pair<Long, ByteArray>>(); var keys = 0
+        val count = TakeJournal.read(journal, { video, track -> tracks.add(video to track) }, { video, time, flags, data, size ->
+            require(video == ((time / 1000) % 3 != 0L), "Each sample returns on its own track")
+            samples.add(time to data.copyOf(size)); keys += flags and 1
+        })
+    }
+    val whole = Replay(file)
+    require(whole.count == 50 && whole.keys == 5 && whole.samples.map { it.first } == (0 until 50).map { it * 1000L }
+        && whole.samples.zip(payloads).all { (a, b) -> a.second.contentEquals(b) }, "Every sample replays in order, byte for byte")
+    require(whole.tracks.size == 2 && whole.tracks[0].first && whole.tracks[0].second.width == 1080 && whole.tracks[0].second.configuration[0].contentEquals(byteArrayOf(1, 2, 3))
+        && whole.tracks[1].second.sampleRate == 48000 && whole.tracks[1].second.channels == 2, "Both track descriptions replay before the samples")
+    // An interruption can cut the file anywhere: everything complete before the cut is kept.
+    val bytes = file.readBytes()
+    var previous = 50
+    for (cut in listOf(bytes.size - 1, bytes.size - 400, bytes.size / 2, 200, 5, 3, 0)) {
+        val torn = File(root, ".torn-$cut.journal"); torn.writeBytes(bytes.copyOf(cut))
+        val part = Replay(torn)
+        require(part.count <= previous && part.count < 50 && part.samples.zip(payloads).all { (a, b) -> a.second.contentEquals(b) }, "A journal cut at byte $cut replays only whole samples")
+        previous = part.count
+    }
+    require(previous == 0, "An empty or headless journal yields nothing")
+    val damaged = bytes.copyOf(); damaged[bytes.size - 1] = 0
+    File(root, ".damaged.journal").writeBytes(damaged)
+    require(Replay(File(root, ".damaged.journal")).count == 49, "A record without its end mark is not delivered")
+    val closing = TakeJournal.Writer(File(root, ".gone.journal")); closing.close(delete = true)
+    require(!File(root, ".gone.journal").exists(), "A take that closes normally leaves no journal")
 }
