@@ -24,6 +24,32 @@ fun videoToolsTests() {
     coverSamplingTests()
     photoTests()
     pauseTests()
+    imageTests()
+}
+
+private fun imageTests() {
+    val source = SourceMedia(filename = "source.mp4", duration = 6.0)
+    val project = Project("Images"); project.addRecording(source)
+    val image = ImageOverlay(filename = "image-" + UUID.randomUUID().text + ".png", width = 0.5, opacity = 0.8)
+    val (added, id) = TimelineEditing.addingImage(image, 1.0, 3.0, project.edit)
+    require(id != null && added.timeline.video[0].content.images!!.single().let { it.start == 1.0 && it.end == 4.0 }, "An image is timed in source seconds from the playhead")
+    require(TimelineEditing.imagesAt(2.0, added).size == 1 && TimelineEditing.imagesAt(4.5, added).isEmpty(), "An image shows only during its time")
+    project.commit(added)
+    require(image.filename in project.mediaFiles && project.imageFiles == listOf(image.filename), "An image file belongs to the project")
+    val split = TimelineEditing.split(project.edit, 2.5)
+    require(split.timeline.video.all { it.content.images?.singleOrNull()?.id == id }, "Both parts of a split keep the image's identity")
+    val moved = TimelineEditing.updatingImage(added.timeline.video[0].content.images!![0].copy(x = 0.2), split)
+    require(moved.timeline.video.all { it.content.images!![0].x == 0.2 }, "Parts split from one take change together")
+    require(TimelineEditing.removingImage(id!!, moved).timeline.video.all { it.content.images == null }, "Removing the image removes it from every part")
+    val coded = ProjectCoding.editState(Fields.of(JSON.parse(JSON.write(ProjectCoding.encode(project.edit)))))
+    require(coded == project.edit, "Images round-trip in the iPhone app's form")
+    val rect = image.rect(400.0, 200.0, CanvasSize(1920.0, 1080.0))
+    require(rect.width == 540.0 && rect.height == 270.0 && rect.x == 960.0 - 270 && rect.y == 540.0 - 135, "Width is a share of the shorter canvas edge and the aspect is kept")
+    require(!ImageOverlay.validFilename("../image-x.png") && !ImageOverlay.validFilename("photo.png") && ImageOverlay.validFilename(image.filename), "Image files have safe names")
+    project.validate()
+    val pasted = TimelinePaste.copied(project.edit.timeline, project.edit.timeline.entireSelection())
+    val twice = project.edit.timeline.copy(); TimelinePaste.paste(twice, pasted, twice.duration.let { it })
+    require(twice.video.flatMap { it.content.images ?: emptyList() }.map { it.id }.toSet().size == 2, "A pasted image is a separate image")
 }
 
 /// Ported from the iPhone app's tool checks for Pauses.

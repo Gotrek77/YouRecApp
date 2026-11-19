@@ -67,6 +67,8 @@ capture, recording controls, the cut editor, export.
   built-in looks or an imported `.cube` LUT (3D or 1D, Rec.709), with strength,
   after exposure, warmth and tint. Exposure and white balance are per-channel
   gains on display values: close to the iPhone result, not identical to it.
+  **Image** places a picture from the phone over the video, with size,
+  position, opacity and duration, timed with its footage like a title.
   **Cover** offers nine frames of the finished edit from the marked range,
   the selected clips or the whole project; swipe through frames and share
   one as a full-size JPEG.
@@ -106,7 +108,7 @@ animated titles ·
 Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export · Video effects and their Metal
 shaders · Transitions · Dragging and pinching a placed picture in the preview,
 and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
-animated Crop and Placement · Image overlays · Stabilization · Enhance audio (RNNoise, DeepFilterNet3, LavaSR,
+animated Crop and Placement · Stabilization · Enhance audio (RNNoise, DeepFilterNet3, LavaSR,
 VoiceFixer) and the RNNoise voice check in Pauses · Original
 recordings browser · OpenTimelineIO export · Dual-camera
 layouts, live effects, face follow, front light, horizon level, focus peaking ·

@@ -30,7 +30,9 @@ data class SourceMedia(val id: UUID = UUID.randomUUID(), val filename: String, v
 
 data class TimelineClip(val id: UUID = UUID.randomUUID(), val sourceID: UUID, val start: Double, val end: Double,
                         val speed: SpeedSettings? = null, val crop: CropSettings? = null, val mirror: MirrorSettings? = null,
-                        val texts: List<TextOverlay>? = null, val color: ColorSettings? = null, val pauses: PauseSettings? = null) {
+                        val texts: List<TextOverlay>? = null, val color: ColorSettings? = null, val pauses: PauseSettings? = null,
+                        val images: List<ImageOverlay>? = null) {
+    fun visibleImages(sourceTime: Double) = images?.filter { it.start <= sourceTime && sourceTime < it.end } ?: emptyList()
     /// The titles to draw while this clip shows one source time.
     fun visibleTexts(sourceTime: Double) = texts?.filter { it.hasText && it.start <= sourceTime && sourceTime < it.end } ?: emptyList()
     /// Source seconds played per timeline second.
@@ -155,7 +157,9 @@ class Project(var title: String) {
     val edit: EditState get() = materialized(snapshots[historyCursor])
     /// LUT files any retained edit refers to: part of the project, like its recordings.
     val effectFiles: List<String> get() = snapshots.flatMap { snapshot -> snapshot.state.clips.mapNotNull { it.color?.imported?.filename } }.distinct().sorted()
-    val mediaFiles: List<String> get() = sources.map { it.filename } + effectFiles
+    /// Pictures placed over the video in any retained edit.
+    val imageFiles: List<String> get() = snapshots.flatMap { snapshot -> snapshot.state.clips.flatMap { clip -> clip.images?.map { it.filename } ?: emptyList() } }.distinct().sorted()
+    val mediaFiles: List<String> get() = sources.map { it.filename } + (imageFiles + effectFiles).distinct().sorted()
     val hasSourceMedia: Boolean get() = sources.isNotEmpty()
     val capturedDuration: Double get() = sources.sumOf { it.duration }
     val canUndo: Boolean get() = (deferredHistory?.cursor ?: historyCursor) > 0
@@ -244,6 +248,7 @@ class Project(var title: String) {
                 require(clip.crop?.valid ?: true)
                 require(clip.color?.valid ?: true)
                 require(clip.pauses?.valid(source!!.duration) ?: true)
+                require(clip.images?.let { images -> images.map { it.id }.toSet().size == images.size && images.all { it.valid(source!!.duration) && ImageOverlay.validFilename(it.filename) } } ?: true)
                 require(clip.texts?.let { texts -> texts.map { it.id }.toSet().size == texts.size && texts.all { it.valid(source!!.duration) } } ?: true)
             }
         }

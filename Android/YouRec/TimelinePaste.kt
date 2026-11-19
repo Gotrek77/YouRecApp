@@ -246,7 +246,8 @@ object TimelinePaste {
             item.copy(occurrenceID = fresh(item.occurrenceID), start = item.start + position, layer = layers[item.layer]!!,
                 content = content.copy(id = fresh(content.id), speed = content.speed?.let { it.copy(id = fresh(it.id)) },
                     crop = content.crop?.let { it.copy(id = fresh(it.id)) }, mirror = content.mirror?.let { it.copy(id = fresh(it.id)) },
-                    color = content.color?.let { it.copy(id = fresh(it.id)) }, texts = content.texts?.map { it.copy(id = fresh(it.id)) }))
+                    color = content.color?.let { it.copy(id = fresh(it.id)) }, texts = content.texts?.map { it.copy(id = fresh(it.id)) },
+                    images = content.images?.map { it.copy(id = fresh(it.id)) }, pauses = content.pauses?.let { it.copy(id = fresh(it.id)) }))
         }
         val audio = addition.audio.map {
             it.copy(id = fresh(it.id), occurrenceID = fresh(it.occurrenceID), followsVideo = it.followsVideo?.let(::fresh), start = it.start + position,

@@ -20,6 +20,7 @@ import java.util.UUID
 class RenderSources(private val project: Project, private val folder: File, private val strict: Boolean = false) {
     private val failed = HashSet<UUID>()
     private val titles = TitleTextures()
+    private val pictures = ImageTextures(folder)
     private val looks = HashMap<Any, IntArray>()   // look or LUT file -> texture, dimension, columns, rows
     private val domains = HashMap<Any, Pair<FloatArray, FloatArray>>()
     private val frames = LinkedHashMap<Pair<UUID, Int>, FrameReader>(4, 0.75f, true)
@@ -99,9 +100,11 @@ class RenderSources(private val project: Project, private val folder: File, priv
             val placement = layer.placement
             val tone = grade(layer.picture.clip.color)
             val texts = layer.picture.clip.visibleTexts(layer.picture.sourceTime)
+            val images = layer.picture.clip.visibleImages(layer.picture.sourceTime)
             if (placement == null) {
                 program.draw(reader.texture, reader.matrix, placed, source, frame, tone)
-                // Titles are placed on the finished frame, so a mirrored picture keeps them readable.
+                // Images and titles are placed on the finished frame, so a mirrored picture keeps them readable.
+                for (image in images) pictures.draw(image, width, height, null)
                 for (title in texts) titles.draw(title, width, height, null)
                 continue
             }
@@ -116,6 +119,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
             android.opengl.GLES20.glClearColor(0f, 0f, 0f, 1f); android.opengl.GLES20.glClear(android.opengl.GLES20.GL_COLOR_BUFFER_BIT)
             program.draw(reader.texture, reader.matrix, placed, source, frame, tone)
             // A picture in a window carries its titles into that window with it.
+            for (image in images) pictures.draw(image, width, height, placement.transform(frame))
             for (title in texts) titles.draw(title, width, height, placement.transform(frame))
             android.opengl.GLES20.glDisable(android.opengl.GLES20.GL_SCISSOR_TEST)
         }
@@ -123,7 +127,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
     }
     /// Audio thread.
     fun sound(source: UUID): PCMSource? = sound.getOrPut(source) { DecodedAudio(file(source) ?: return null) }
-    fun releaseFrames() { for (reader in frames.values) try { reader.release() } catch (e: Exception) { }; frames.clear(); failed.clear(); titles.release(); releaseLooks() }
+    fun releaseFrames() { for (reader in frames.values) try { reader.release() } catch (e: Exception) { }; frames.clear(); failed.clear(); titles.release(); pictures.release(); releaseLooks() }
     fun releaseSound() { for (reader in sound.values) reader.release(); sound.clear() }
 
     /// The project picture size: a fixed shape if one was chosen, otherwise

@@ -224,6 +224,7 @@ class FrameProgram {
 /// Draws an ordinary texture with transparency over what is already there:
 /// titles, drawn once into a bitmap and placed like any other picture.
 class OverlayProgram {
+    private val opacity: Int
     private val program: Int
     private val position: Int
     private val coordinate: Int
@@ -243,7 +244,7 @@ class OverlayProgram {
         }
         program = GLES20.glCreateProgram()
         val v = shader(GLES20.GL_VERTEX_SHADER, "attribute vec4 position; attribute vec2 coordinate; varying vec2 uv; void main() { gl_Position = position; uv = coordinate; }")
-        val f = shader(GLES20.GL_FRAGMENT_SHADER, "precision mediump float; uniform sampler2D image; varying vec2 uv; void main() { gl_FragColor = texture2D(image, uv); }")
+        val f = shader(GLES20.GL_FRAGMENT_SHADER, "precision mediump float; uniform sampler2D image; uniform float opacity; varying vec2 uv; void main() { gl_FragColor = texture2D(image, uv) * opacity; }")
         GLES20.glAttachShader(program, v); GLES20.glAttachShader(program, f); GLES20.glLinkProgram(program)
         val status = IntArray(1); GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, status, 0)
         check(status[0] != 0) { "Program: " + GLES20.glGetProgramInfoLog(program) }
@@ -251,10 +252,11 @@ class OverlayProgram {
         position = GLES20.glGetAttribLocation(program, "position")
         coordinate = GLES20.glGetAttribLocation(program, "coordinate")
         image = GLES20.glGetUniformLocation(program, "image")
+        opacity = GLES20.glGetUniformLocation(program, "opacity")
     }
 
     /// `placement` maps the image's own pixels to canvas pixels, both with y down.
-    fun draw(textureID: Int, placement: Affine, size: CanvasSize, canvas: CanvasSize) {
+    fun draw(textureID: Int, placement: Affine, size: CanvasSize, canvas: CanvasSize, alpha: Float = 1f) {
         val px = doubleArrayOf(0.0, size.width, 0.0, size.width); val py = doubleArrayOf(size.height, size.height, 0.0, 0.0)
         for (i in 0 until 4) {
             quad[i * 2] = (placement.x(px[i], py[i]) * 2 / canvas.width - 1).toFloat()
@@ -267,6 +269,7 @@ class OverlayProgram {
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureID)
         GLES20.glUniform1i(image, 0)
+        GLES20.glUniform1f(opacity, alpha)
         GLES20.glEnableVertexAttribArray(position)
         GLES20.glVertexAttribPointer(position, 2, GLES20.GL_FLOAT, false, 0, quadBuffer)
         GLES20.glEnableVertexAttribArray(coordinate)

@@ -180,6 +180,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if (edit.timeline.video.any { item -> project.sources.firstOrNull { it.id == item.content.sourceID }?.isStillPhoto != true }) tool("Pauses") { openPauses() }
             if (edit.timeline.video.isNotEmpty()) { tool("Speed") { openSpeed() }; tool("Crop") { openCrop() }; tool("Mirror") { openMirror() }; tool("Color") { openColor() } }
             if (edit.timeline.video.isNotEmpty()) tool("Text") { openText(null) }
+            if (edit.timeline.video.isNotEmpty()) tool("Image") { openImage(null) }
             if (edit.timeline.video.isNotEmpty()) tool("Cover") { openCover() }
             if (edit.timeline.compile().any { it.video.size > 1 }) tool("Placement") { openPlacement(null) }
             if (!chosen.isEmpty && edit.timeline.links.any { link -> link.members.any { it in chosen.ids } }) tool("Unlink") { unlink() }
@@ -402,6 +403,77 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         panel.removeAllViews()
         // A control released outside its track may have left a draft on screen.
         project?.let { if (it.deferredHistory == null) editor.show(it.edit) }
+    }
+
+    /// A picture over the video, timed and placed like a title. A new one is
+    /// picked from the phone, kept in the project folder, and starts at the playhead.
+    private fun openImage(chosen: UUID?) {
+        val project = project ?: return
+        editor.pause()
+        val edit = project.edit
+        val id = chosen ?: TimelineEditing.imagesAt(editor.playhead, edit).lastOrNull()?.id
+        if (id == null) {
+            if (TimelineEditing.pictureAt(editor.playhead, edit) == null) return say("Move the playhead onto a video to add an image.")
+            val at = editor.playhead; val projectID = project.id
+            navigation.pickMedia("image/*") { uri ->
+                if (uri == null) return@pickMedia
+                say("Adding image…")
+                store.importOverlayImage(uri, projectID) { filename, failure ->
+                    if (filename == null) return@importOverlayImage say(failure ?: "The image could not be added.")
+                    val now = this.project ?: return@importOverlayImage
+                    val (added, created) = TimelineEditing.addingImage(ImageOverlay(filename = filename), at, 3.0, now.edit)
+                    if (created == null) return@importOverlayImage say("Move the playhead onto a video to add an image.")
+                    commit(added, "Image added"); openImage(created)
+                }
+            }
+            return
+        }
+        val owner = edit.timeline.video.firstOrNull { item -> item.content.images?.any { it.id == id } == true } ?: return closePanel()
+        var image = owner.content.images!!.first { it.id == id }
+        val length = project.sources.firstOrNull { it.id == owner.content.sourceID }?.duration ?: owner.content.end
+        fun preview() { this.project?.let { editor.show(TimelineEditing.updatingImage(image, it.edit)) } }
+        fun save(message: String, reopen: Boolean = false) {
+            val now = this.project ?: return
+            val changed = TimelineEditing.updatingImage(image, now.edit)
+            if (changed != now.edit) commit(changed, message)
+            if (reopen) openImage(id)
+        }
+        val content = Design.column(context, Design.label(context, "Image", 15f, bold = true), spacing = 4f)
+        fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val values = List(4) { Design.label(context, "", 14f, mono = true) }
+        fun describe() {
+            values[0].text = String.format("%.0f%%", image.width * 100); values[1].text = String.format("%.0f%%", image.x * 100)
+            values[2].text = String.format("%.0f%%", image.y * 100); values[3].text = String.format("%.0f%%", image.opacity * 100)
+        }
+        fun bar(max: Int, start: Int, update: (Int) -> Unit) = SeekBar(context).apply {
+            this.max = max; progress = start.coerceIn(0, max)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(b: SeekBar, value: Int, user: Boolean) { if (user) { update(value); describe(); preview() } }
+                override fun onStartTrackingTouch(b: SeekBar) { }
+                override fun onStopTrackingTouch(b: SeekBar) { save("Image changed") }
+            })
+        }
+        describe()
+        // Size from 3% to 300% of the shorter side of the frame.
+        add(labelled("Size", bar(297, Math.round(image.width * 100).toInt() - 3) { image = image.copy(width = (it + 3) / 100.0) }, values[0]))
+        add(labelled("Across", bar(100, Math.round(image.x * 100).toInt()) { image = image.copy(x = it / 100.0) }, values[1]))
+        add(labelled("Down", bar(100, Math.round(image.y * 100).toInt()) { image = image.copy(y = it / 100.0) }, values[2]))
+        add(labelled("Opacity", bar(100, Math.round(image.opacity * 100).toInt()) { image = image.copy(opacity = it / 100.0) }, values[3]))
+        val rate = owner.content.rate
+        val lasting = (image.end - image.start) / rate
+        add(choices(*EditorDurationPresets.wholeSeconds.filter { image.start + it * rate <= length + 0.001 || it == 1.0 }.map { seconds ->
+            val on = Math.abs(lasting - seconds) < 0.02
+            Design.button(context, ZoomTransition.number(seconds) + " s", if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) {
+                image = image.copy(end = minOf(length, image.start + seconds * rate)); save("Image duration", reopen = true)
+            }.apply { contentDescription = "Image on screen for " + ZoomTransition.number(seconds) + " seconds" + if (on) ", selected" else "" }
+        }.toTypedArray()))
+        add(Design.row(context,
+            Design.button(context, "Remove", Design.recording, size = 13f) {
+                val now = this.project ?: return@button
+                commit(TimelineEditing.removingImage(id, now.edit), "Image removed"); closePanel()
+            }.apply { contentDescription = "Remove image" },
+            Design.button(context, "Done", Design.accent) { save("Image changed"); closePanel() }.apply { contentDescription = "Done with image" }, spacing = 6f).apply { setPadding(0, Design.dp(context, 6f), 0, 0) })
+        showPanel(content)
     }
 
     /// Replace the marked sound with a tone: the selected sound parts, or all

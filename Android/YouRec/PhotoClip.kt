@@ -24,7 +24,7 @@ object PhotoClip {
     private const val longest = 3840
 
     /// The picture upright, at most 3840 pixels on its longer side.
-    fun decode(context: Context, uri: Uri): Bitmap {
+    fun decode(context: Context, uri: Uri, longest: Int = PhotoClip.longest): Bitmap {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw ProjectError.InvalidMedia()

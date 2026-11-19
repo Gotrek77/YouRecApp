@@ -245,6 +245,22 @@ class ProjectStore(private val context: Context) {
             }
         }
     }
+    /// Keep a picked picture in the project folder for an image overlay: upright,
+    /// at most 4096 pixels, as PNG. The completion gets its file name, or why not.
+    fun importOverlayImage(uri: Uri, into: UUID, completion: (String?, String?) -> Unit) {
+        val project = projects.firstOrNull { it.id == into } ?: return completion(null, null)
+        val target = File(folder(project), "image-" + UUID.randomUUID().text + ".png")
+        worker.execute {
+            var failure: String? = null
+            val partial = File(target.parentFile, "." + target.name + ".importing")
+            try {
+                val picture = PhotoClip.decode(context, uri, 4096)
+                java.io.FileOutputStream(partial).use { picture.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it); it.fd.sync() }
+                RecoveryFile.move(partial, target)
+            } catch (e: Exception) { partial.delete(); failure = "This image could not be added. " + (e.message ?: "") }
+            main.post { completion(if (failure == null) target.name else null, failure) }
+        }
+    }
     /// Run a long project operation off the main thread, with progress on the list.
     private fun operation(label: String, work: ((Double) -> Unit) -> Project?, completed: (Project?) -> Unit = {}) {
         if (importing) return

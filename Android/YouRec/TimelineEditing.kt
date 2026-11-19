@@ -119,6 +119,34 @@ object TimelineEditing {
             .associate { it.id to it.content.copy(texts = it.content.texts!!.map { old -> if (old.id == text.id) text else old }) })
         return result
     }
+    fun imagesAt(time: Double, state: EditState): List<ImageOverlay> {
+        val item = pictureAt(time, state) ?: return emptyList()
+        val source = item.mapping.source(EditTime.seconds(time) - item.start) ?: return emptyList()
+        return item.content.visibleImages(source)
+    }
+    /// Put an image on the picture under `time`, as a title is placed.
+    fun addingImage(image: ImageOverlay, time: Double, seconds: Double, state: EditState): Pair<EditState, UUID?> {
+        val item = pictureAt(time, state) ?: return state to null
+        val start = item.mapping.source(EditTime.seconds(time) - item.start) ?: return state to null
+        val end = minOf(item.content.end, start + seconds * item.content.rate)
+        if (end - start < frame * item.content.rate) return state to null
+        val placed = image.copy(start = start, end = end)
+        val result = state.copy()
+        result.timeline.replaceContents(mapOf(item.id to item.content.copy(images = (item.content.images ?: emptyList()) + placed)))
+        return result to placed.id
+    }
+    fun updatingImage(image: ImageOverlay, state: EditState): EditState {
+        val result = state.copy()
+        result.timeline.replaceContents(result.timeline.video.filter { item -> item.content.images?.any { it.id == image.id } == true }
+            .associate { it.id to it.content.copy(images = it.content.images!!.map { old -> if (old.id == image.id) image else old }) })
+        return result
+    }
+    fun removingImage(id: UUID, state: EditState): EditState {
+        val result = state.copy()
+        result.timeline.replaceContents(result.timeline.video.filter { item -> item.content.images?.any { it.id == id } == true }
+            .associate { it.id to it.content.copy(images = it.content.images!!.filter { old -> old.id != id }.ifEmpty { null }) })
+        return result
+    }
     fun removingText(id: UUID, state: EditState): EditState {
         val result = state.copy()
         result.timeline.replaceContents(result.timeline.video.filter { item -> item.content.texts?.any { it.id == id } == true }

@@ -107,6 +107,23 @@ data class TextOverlay(val id: UUID = UUID.randomUUID(), val text: String = star
 }
 object EditorDurationPresets { val wholeSeconds: List<Double> = (1..10).map { it.toDouble() } + listOf(15.0, 30.0, 60.0) }
 
+/// A picture placed over the video, timed in source seconds like a title.
+/// `width` is a fraction of the shorter canvas edge; the image keeps its aspect.
+data class ImageOverlay(val id: UUID = UUID.randomUUID(), val filename: String, val start: Double = 0.0, val end: Double = 3.0,
+                        val x: Double = 0.5, val y: Double = 0.5, val width: Double = 0.4, val opacity: Double = 1.0) {
+    /// Where the image goes on the canvas, in pixels with y down.
+    fun rect(imageWidth: Double, imageHeight: Double, canvas: CanvasSize): Rectangle {
+        val w = minOf(canvas.width, canvas.height) * width; val h = w * imageHeight / maxOf(1.0, imageWidth)
+        return Rectangle(canvas.width * x - w / 2, canvas.height * y - h / 2, w, h)
+    }
+    fun valid(sourceDuration: Double) = start.isFinite() && end.isFinite() && start >= 0 && end > start && end <= sourceDuration + 0.001
+        && x.isFinite() && y.isFinite() && x in 0.0..1.0 && y in 0.0..1.0 && width.isFinite() && width in 0.03..3.0 && opacity.isFinite() && opacity in 0.0..1.0
+    companion object {
+        fun validFilename(name: String) = name.startsWith("image-") && name == java.io.File(name).name && !name.contains("\\")
+            && name.substringAfterLast('.', "").lowercase() in setOf("png", "jpg", "jpeg", "heic")
+    }
+}
+
 data class SpeedSettings(val id: UUID = UUID.randomUUID(), val rate: Double = 1.0)
 
 enum class OutputShape(val title: String, val aspect: Double?) {
