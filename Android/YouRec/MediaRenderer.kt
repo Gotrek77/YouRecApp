@@ -136,8 +136,8 @@ class MovieExport(project: Project, private val folder: File, private val export
                 if (picture != null && reader != null) {
                     // A take that yields no picture must not become a black movie.
                     if (!reader.show(picture.sourceTime)) throw ProjectError.InvalidMedia()
-                    val fit = RenderPlan.fit(reader.video.displayWidth, reader.video.displayHeight, width, height)
-                    program.draw(reader.texture, reader.matrix, fit.scaleX, fit.scaleY)
+                    val source = CanvasSize(reader.video.displayWidth.toDouble(), reader.video.displayHeight.toDouble()); val frame = CanvasSize(width.toDouble(), height.toDouble())
+                    program.draw(reader.texture, reader.matrix, picture.clip.pictureTransform(source, frame), source, frame)
                 }
                 val t1 = System.nanoTime()
                 egl.setPresentationTime(window, n * 1_000_000_000L / fps)

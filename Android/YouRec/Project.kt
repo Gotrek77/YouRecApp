@@ -28,8 +28,11 @@ data class SourceMedia(val id: UUID = UUID.randomUUID(), val filename: String, v
                        val events: List<CaptureEvent>? = null, val sha256: String? = null, val audioOnly: Boolean? = null,
                        val isStillPhoto: Boolean? = null, val originalName: String? = null)
 
-data class TimelineClip(val id: UUID = UUID.randomUUID(), val sourceID: UUID, val start: Double, val end: Double) {
-    val duration: Double get() = end - start
+data class TimelineClip(val id: UUID = UUID.randomUUID(), val sourceID: UUID, val start: Double, val end: Double,
+                        val speed: SpeedSettings? = null, val crop: CropSettings? = null, val mirror: MirrorSettings? = null) {
+    /// Source seconds played per timeline second.
+    val rate: Double get() = (speed?.rate ?: 1.0).coerceIn(0.125, 6.0)
+    val duration: Double get() = (end - start) / rate
 }
 
 data class CanvasSize(val width: Double, val height: Double)
@@ -195,6 +198,8 @@ class Project(var title: String) {
             for (clip in state.clips) {
                 val source = sources.firstOrNull { it.id == clip.sourceID }
                 require(source != null && clip.start.isFinite() && clip.end.isFinite() && clip.start >= 0 && clip.end > clip.start && clip.end <= source.duration + 0.001)
+                require(clip.speed?.let { it.rate.isFinite() && it.rate in 0.25..4.0 } ?: true)
+                require(clip.crop?.valid ?: true)
             }
         }
     }

@@ -174,6 +174,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if ((a != null && b != null) || !chosen.isEmpty) tool("Delete", Design.recording) { delete() }
             if (!chosen.isEmpty) tool("Move") { beginMove() }
             tool("Volume") { openVolume() }
+            if (edit.timeline.video.isNotEmpty()) { tool("Speed") { openSpeed() }; tool("Crop") { openCrop() }; tool("Mirror") { openMirror() } }
             if (!chosen.isEmpty && edit.timeline.links.any { link -> link.members.any { it in chosen.ids } }) tool("Unlink") { unlink() }
             else if (chosen.ids.size >= 2) tool("Link") { link(false) }
             if (edit.timeline.gap(EditTime.seconds(editor.playhead)) != null) tool("Close gap") { closeGap() }
@@ -329,7 +330,11 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         content.background = Design.rounded(Design.surface, Design.dp(context, 16f).toFloat())
         panel.addView(content, Design.frame(height = ViewGroup.LayoutParams.WRAP_CONTENT))
     }
-    private fun closePanel() { panel.removeAllViews() }
+    private fun closePanel() {
+        panel.removeAllViews()
+        // A control released outside its track may have left a draft on screen.
+        project?.let { if (it.deferredHistory == null) editor.show(it.edit) }
+    }
 
     /// Volume and fades for the selected sound, or for all sound when nothing is selected.
     /// Each completed slider gesture is one undo step.
@@ -384,6 +389,122 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         content.addView(fade(AudioFadeEdge.FadeIn), LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         content.addView(fade(AudioFadeEdge.FadeOut), LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         content.addView(Design.row(context, mute, Design.button(context, "Done", Design.accent) { closePanel() }))
+        showPanel(content)
+    }
+
+    /// The pictures a clip tool will change: the selected ones, or all of them.
+    private fun targets(edit: EditState) = edit.timeline.video.filter { it.id in selected }.ifEmpty { edit.timeline.video }
+    private fun scopeTitle(edit: EditState) = if (edit.timeline.video.any { it.id in selected }) "selected clips" else "whole project"
+    private fun labelled(title: String, bar: SeekBar, value: TextView) = LinearLayout(context).apply {
+        orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+        addView(Design.label(context, title, 14f), LayoutParams(Design.dp(context, 72f), ViewGroup.LayoutParams.WRAP_CONTENT))
+        addView(bar, Design.weighted(1f, Design.dp(context, 44f))); addView(value, LayoutParams(Design.dp(context, 56f), ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+    private fun choices(vararg items: View) = HorizontalScrollView(context).apply {
+        isHorizontalScrollBarEnabled = false
+        addView(LinearLayout(context).apply { for (item in items) addView(item, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = Design.dp(context, 6f) }) })
+    }
+
+    /// 0.25× to 4×, pitch preserved. Everything linked after a retimed clip follows it.
+    private fun openSpeed() {
+        val project = project ?: return
+        editor.pause()
+        val current = targets(project.edit).map { it.content.rate }.distinct().singleOrNull()
+        val rates = listOf(0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0)
+        val buttons = rates.map { rate ->
+            val chosen = current == rate
+            Design.button(context, ZoomTransition.number(rate) + "×", if (chosen) Design.background else Design.text, if (chosen) Design.accent else Design.raised) {
+                val now = this.project ?: return@button
+                val edit = TimelineEditing.settingSpeed(rate, selection(now.edit), now.edit)
+                if (edit != now.edit) commit(edit, "Speed " + ZoomTransition.number(rate) + "×")
+                openSpeed()
+            }.apply { contentDescription = "Speed " + ZoomTransition.number(rate) + " times" + if (chosen) ", selected" else "" }
+        }
+        val content = Design.column(context, Design.label(context, "Speed · " + scopeTitle(project.edit), 15f, bold = true),
+            Design.label(context, "Sound keeps its pitch. Clips after a retimed one move with it.", 13f, Design.secondary), spacing = 6f)
+        content.addView(choices(*buttons.toTypedArray()), LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = Design.dp(context, 8f) })
+        content.addView(Design.button(context, "Done", Design.accent) { closePanel() })
+        showPanel(content)
+    }
+
+    /// Flip the finished frame. Titles and overlays added later stay readable.
+    private fun openMirror() {
+        val project = project ?: return
+        val first = targets(project.edit).firstOrNull()?.content?.mirror
+        fun toggle(horizontal: Boolean) {
+            val now = this.project ?: return
+            val mirror = targets(now.edit).firstOrNull()?.content?.mirror
+            val h = (mirror?.horizontal ?: false) != horizontal; val v = (mirror?.vertical ?: false) != !horizontal
+            commit(TimelineEditing.settingMirror(h, v, selection(now.edit), now.edit), "Mirror changed")
+            openMirror()
+        }
+        fun option(title: String, on: Boolean, horizontal: Boolean) = Design.button(context, title, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised) { toggle(horizontal) }
+            .apply { contentDescription = title + if (on) ", on" else ", off" }
+        showPanel(Design.column(context, Design.label(context, "Mirror · " + scopeTitle(project.edit), 15f, bold = true),
+            Design.row(context, option("Flip left–right", first?.horizontal == true, true), option("Flip top–bottom", first?.vertical == true, false)),
+            Design.button(context, "Done", Design.accent) { closePanel() }))
+    }
+
+    /// Framing inside the project shape. Dragging a control previews the draft;
+    /// releasing it commits one undo step. The shape itself belongs to the whole project.
+    private fun openCrop() {
+        val project = project ?: return
+        editor.pause()
+        val target = targets(project.edit).firstOrNull()?.content ?: return
+        val file = project.sources.firstOrNull { it.id == target.sourceID }?.let { store.mediaFile(project, it) }
+        val video = file?.let { MediaFiles.video(it) }
+        val source = video?.let { CanvasSize(it.displayWidth.toDouble(), it.displayHeight.toDouble()) } ?: editor.canvas
+        var crop = (target.crop ?: CropSettings()).clamped(source, editor.canvas)
+        val values = List(4) { Design.label(context, "", 14f, mono = true) }
+        fun describe() {
+            values[0].text = String.format("%.2f×", crop.zoom); values[1].text = String.format("%.0f%%", crop.x * 100)
+            values[2].text = String.format("%.0f%%", crop.y * 100); values[3].text = String.format("%.0f°", crop.rotation)
+        }
+        fun draft(now: Project) = TimelineEditing.settingCrop(if (crop.isFullFrame(source, editor.canvas)) null else crop, selection(now.edit), now.edit)
+        fun bar(max: Int, start: Int, change: (Int) -> Unit) = SeekBar(context).apply {
+            this.max = max; progress = start
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(b: SeekBar, value: Int, user: Boolean) {
+                    if (!user) return
+                    change(value); crop = crop.clamped(source, editor.canvas); describe()
+                    this@EditorView.project?.let { editor.show(draft(it)) }
+                }
+                override fun onStartTrackingTouch(b: SeekBar) { }
+                override fun onStopTrackingTouch(b: SeekBar) {
+                    val now = this@EditorView.project ?: return
+                    val edit = draft(now)
+                    if (edit != now.edit) commit(edit, "Crop changed")
+                }
+            })
+        }
+        describe()
+        val content = Design.column(context, Design.label(context, "Crop · " + scopeTitle(project.edit), 15f, bold = true), spacing = 2f)
+        fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        // Zoom 1–8 in hundredths; position in thousandths; rotation in whole degrees.
+        add(labelled("Zoom", bar(700, Math.round((crop.zoom - 1) * 100).toInt()) { crop = crop.copy(zoom = 1 + it / 100.0) }, values[0]))
+        add(labelled("Across", bar(1000, Math.round(crop.x * 1000).toInt()) { crop = crop.copy(x = it / 1000.0) }, values[1]))
+        add(labelled("Down", bar(1000, Math.round(crop.y * 1000).toInt()) { crop = crop.copy(y = it / 1000.0) }, values[2]))
+        add(labelled("Rotate", bar(360, Math.round(crop.rotation + 180).toInt()) { crop = crop.copy(rotation = it - 180.0) }, values[3]))
+        val shapes = OutputShape.values().map { shape ->
+            val reference = project.edit.copy().also { it.outputSize = null }
+            val natural = RenderSources(project, store.folder(project)).canvas(reference)
+            val size = if (shape == OutputShape.Original) null else OutputShape.canvas(natural, shape.aspect)
+            val chosen = project.edit.outputSize == size
+            Design.button(context, shape.title, if (chosen) Design.background else Design.text, if (chosen) Design.accent else Design.raised, 13f) {
+                val now = this.project ?: return@button
+                val edit = TimelineEditing.settingShape(size, now.edit)
+                if (edit != now.edit) commit(edit, "Video shape " + shape.title)
+                openCrop()
+            }.apply { contentDescription = "Video shape " + shape.title + if (chosen) ", selected" else "" }
+        }
+        add(Design.label(context, "Video shape · whole project", 13f, Design.secondary).apply { setPadding(0, Design.dp(context, 6f), 0, Design.dp(context, 4f)) })
+        add(choices(*shapes.toTypedArray()))
+        add(Design.row(context, Design.button(context, "Reset crop") {
+            val now = this.project ?: return@button
+            val edit = TimelineEditing.settingCrop(null, selection(now.edit), now.edit)
+            if (edit != now.edit) commit(edit, "Crop removed")
+            openCrop()
+        }, Design.button(context, "Done", Design.accent) { closePanel() }).apply { setPadding(0, Design.dp(context, 8f), 0, 0) })
         showPanel(content)
     }
 

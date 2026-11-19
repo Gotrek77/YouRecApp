@@ -15,15 +15,27 @@ internal object ProjectCoding {
     private fun present(value: Any?) = when (value) { null -> false; is List<*> -> value.isNotEmpty(); else -> true }
 
     // TimelineClip
-    private val clipTools = mapOf("stabilization" to "Stabilization", "speed" to "Speed", "color" to "Color", "texts" to "Text", "pauses" to "Pause cuts",
-        "crop" to "Crop", "mirror" to "Mirror", "images" to "Image overlays", "openingTransition" to "Transitions", "transition" to "Transitions",
+    private val clipTools = mapOf("stabilization" to "Stabilization", "color" to "Color", "texts" to "Text", "pauses" to "Pause cuts",
+        "images" to "Image overlays", "openingTransition" to "Transitions", "transition" to "Transitions",
         "videoEffects" to "Video effects", "frozenFrame" to "Freeze frame", "colorRegions" to "Color",
         "effectWindows" to "effects limited to a range", "framingVariants" to "Crop, Mirror or Stabilization on a range")
     fun clip(value: Fields): TimelineClip {
         for ((key, tool) in clipTools) if (present(value.raw(key))) unsupported(tool)
-        return TimelineClip(value.uuid("id"), value.uuid("sourceID"), value.double("start"), value.double("end"))
+        // The tools themselves are edited here; their animated and ranged forms are not yet.
+        fun plain(tool: Fields, name: String): Fields {
+            if (present(tool.raw("motion"))) unsupported("animated $name")
+            if (present(tool.raw("activeRange"))) unsupported("$name on a range")
+            return tool
+        }
+        val speed = value.fieldsOrNull("speed")?.let { SpeedSettings(it.uuid("id"), it.double("rate")) }
+        val crop = value.fieldsOrNull("crop")?.let { plain(it, "Crop") }?.let { CropSettings(it.uuid("id"), it.double("x"), it.double("y"), it.double("zoom"), it.doubleOrNull("rotation") ?: 0.0) }
+        val mirror = value.fieldsOrNull("mirror")?.let { plain(it, "Mirror") }?.let { MirrorSettings(it.uuid("id"), it.bool("horizontal"), it.bool("vertical")) }
+        return TimelineClip(value.uuid("id"), value.uuid("sourceID"), value.double("start"), value.double("end"), speed, crop, mirror)
     }
-    fun encode(clip: TimelineClip) = jsonObject("id" to clip.id.text, "sourceID" to clip.sourceID.text, "start" to clip.start, "end" to clip.end)
+    fun encode(clip: TimelineClip) = jsonObject("id" to clip.id.text, "sourceID" to clip.sourceID.text, "start" to clip.start, "end" to clip.end,
+        "speed" to clip.speed?.let { jsonObject("id" to it.id.text, "rate" to it.rate) },
+        "crop" to clip.crop?.let { jsonObject("id" to it.id.text, "x" to it.x, "y" to it.y, "zoom" to it.zoom, "rotation" to it.rotation) },
+        "mirror" to clip.mirror?.let { jsonObject("id" to it.id.text, "horizontal" to it.horizontal, "vertical" to it.vertical) })
 
     private fun map(value: Fields) = SourcePlaybackMap(list(value.list("runs")) {
         PlaybackRun(time(it.fields("duration")), it.double("sourceStart"), it.double("sourceEnd"), it.bool("silent"))

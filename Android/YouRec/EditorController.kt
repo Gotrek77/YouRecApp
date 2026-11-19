@@ -74,6 +74,13 @@ class EditorController {
     private var audioPlan: RenderPlan? = null
     private fun audioThreadRelease(old: RenderSources) { Thread { old.releaseSound() }.start() }
 
+    /// Show a draft's pictures without committing it: tool panels preview through
+    /// this while a control is being dragged. Sound keeps playing the saved edit.
+    fun show(draft: EditState) {
+        val next = RenderPlan(draft)
+        render.post { plan = next }
+        requestDraw()
+    }
     /// The preview surface appeared or changed size.
     fun attach(surface: SurfaceTexture) {
         render.post {
@@ -156,8 +163,8 @@ class EditorController {
             val reader = picture?.let { sources?.frames(it.source) }
             try {
                 if (picture != null && reader != null && reader.show(picture.sourceTime)) {
-                    val fit = RenderPlan.fit(reader.video.displayWidth, reader.video.displayHeight, width, height)
-                    shader.draw(reader.texture, reader.matrix, fit.scaleX, fit.scaleY)
+                    val source = CanvasSize(reader.video.displayWidth.toDouble(), reader.video.displayHeight.toDouble()); val frame = CanvasSize(width.toDouble(), height.toDouble())
+                    shader.draw(reader.texture, reader.matrix, picture.clip.pictureTransform(source, frame), source, frame)
                 }
             } catch (e: Exception) {
                 // The system can reclaim a decoder at any time. Close this one; the next frame opens a new one.

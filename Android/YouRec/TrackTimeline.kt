@@ -95,6 +95,13 @@ data class AudioEdgeFade(val seconds: Double, val elapsed: Double = 0.0) {
         val part = copy(elapsed = (EditTime.seconds(elapsed) + amount).seconds)
         return if (part.elapsed < seconds) part else null
     }
+    /// A part that became shorter than its fade keeps the fade's shape, compressed.
+    fun fitted(oldLength: EditTime, newLength: EditTime): AudioEdgeFade {
+        val visible = remaining(oldLength.seconds)
+        if (newLength <= EditTime.zero || newLength.seconds >= visible) return this
+        val scale = newLength.seconds / visible
+        return AudioEdgeFade(seconds * scale, elapsed * scale)
+    }
     fun gain(distanceFromEdge: Double) = ((elapsed + distanceFromEdge) / seconds).coerceIn(0.0, 1.0)
 }
 enum class AudioFadeEdge(val title: String) {
@@ -624,10 +631,45 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
     fun synchronizeFollowers() {
         audio = audio.map { sound ->
             val item = sound.followsVideo?.let { id -> video.firstOrNull { it.id == id } } ?: return@map sound
-            sound.copy(start = item.start, mapping = item.mapping)
+            if (sound.mapping == item.mapping) return@map sound.copy(start = item.start)
+            sound.copy(start = item.start, mapping = item.mapping, fadeIn = sound.fadeIn?.fitted(sound.mapping.duration, item.mapping.duration),
+                       fadeOut = sound.fadeOut?.fitted(sound.mapping.duration, item.mapping.duration))
         }
     }
-
+    /// Change what pictures show without choosing where they sit: a tool edits
+    /// the clip, and when that changes its length (Speed) everything linked
+    /// after it follows, keeping every cut closed. A picture laid over another
+    /// is not downstream of it and stays where it is.
+    fun replaceContents(changes: Map<UUID, TimelineClip>) {
+        val previousItems = video
+        val retimed = HashSet<UUID>()
+        for ((id, content) in changes) {
+            val before = video.firstOrNull { it.id == id } ?: continue
+            if (content == before.content) continue
+            val derived = SourcePlaybackMap(content)
+            val timingChanged = derived != SourcePlaybackMap(before.content)
+            val after = before.copy(content = content, mapping = if (timingChanged) derived else before.mapping)
+            video = video.map { if (it.id == id) after else it }
+            val delta = after.end - before.end
+            if (delta == EditTime.zero) continue
+            retimed.add(id)
+            val group = links.firstOrNull { id in it.members } ?: continue
+            val soundIDs = audio.map { it.id }.toSet(); val pictureIDs = video.map { it.id }.toSet()
+            val downstream = if (group.members.none { it in soundIDs }) group.members
+                else links.filter { link -> link.members.any { it in soundIDs } && link.members.any { it in pictureIDs } }.flatMap { it.members }.toSet()
+            val isOverlay = previousItems.any { it.id != id && it.layer < before.layer && before.start in it.interval }
+            if (isOverlay) continue
+            val moving = video.filter { it.id != id && it.id in downstream && it.start >= before.end }.map { it.id }.toSet()
+            video = video.map { if (it.id in moving) it.copy(start = it.start + delta) else it }
+            audio = audio.map { sound ->
+                val follows = sound.followsVideo
+                if (sound.id in downstream && follows != id && (if (follows != null) follows in moving else sound.start >= before.end)) sound.copy(start = sound.start + delta) else sound
+            }
+        }
+        promoteNewOverlaps(retimed, previousItems)
+        synchronizeFollowers()
+        pruneRelations()
+    }
     private fun snapPoints(excluding: Set<UUID>, extra: List<Double>): List<EditTime> {
         val stationaryMarks = resolvedBookmarks.filter { resolved ->
             val owner: UUID? = when (val anchor = resolved.bookmark.anchor) {

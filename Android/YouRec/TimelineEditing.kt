@@ -66,6 +66,27 @@ object TimelineEditing {
         return result
     }
 
+    /// Apply a clip tool to the selected pictures, or to every picture when none
+    /// is selected. Parts split from one take share a tool's identity, as on iPhone.
+    fun applying(selection: TimelineSelection, state: EditState, change: (TimelineClip) -> TimelineClip): EditState {
+        val result = state.copy()
+        val targets = result.timeline.expanded(selection).video.ifEmpty { result.timeline.video.map { it.id }.toSet() }
+        result.timeline.replaceContents(result.timeline.video.filter { it.id in targets }.associate { it.id to change(it.content) })
+        return result
+    }
+    fun settingSpeed(rate: Double, selection: TimelineSelection, state: EditState): EditState {
+        val bounded = rate.coerceIn(0.25, 4.0)
+        return applying(selection, state) { clip -> clip.copy(speed = if (bounded == 1.0) null else SpeedSettings(clip.speed?.id ?: java.util.UUID.randomUUID(), bounded)) }
+    }
+    fun settingMirror(horizontal: Boolean, vertical: Boolean, selection: TimelineSelection, state: EditState) = applying(selection, state) { clip ->
+        clip.copy(mirror = if (horizontal || vertical) MirrorSettings(clip.mirror?.id ?: java.util.UUID.randomUUID(), horizontal, vertical) else null)
+    }
+    fun settingCrop(crop: CropSettings?, selection: TimelineSelection, state: EditState) = applying(selection, state) { clip ->
+        clip.copy(crop = crop?.copy(id = clip.crop?.id ?: java.util.UUID.randomUUID()))
+    }
+    /// A project-wide picture shape. Null returns to the shape of the reference take.
+    fun settingShape(size: CanvasSize?, state: EditState): EditState = state.copy().also { it.outputSize = size }
+
     /// One trim-handle gesture. Dragging outward reveals original material;
     /// dragging inward removes it from this occurrence, never from another lane.
     fun trimming(id: UUID, left: Boolean, delta: Double, state: EditState, sources: List<SourceMedia>, playhead: EditTime? = null): Pair<EditState, EditTime?> {

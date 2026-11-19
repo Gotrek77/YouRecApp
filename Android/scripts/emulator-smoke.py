@@ -58,8 +58,8 @@ def nodes(tries=6):
             found.append((name, text, node.get("enabled") == "true", ((x1 + x2) // 2, (y1 + y2) // 2)))
     return found
 
-def find(label, last=False):
-    matches = [n for n in nodes() if n[0].startswith(label) or n[1].startswith(label)]
+def find(label, last=False, exact=False):
+    matches = [n for n in nodes() if (n[0] == label or n[1] == label if exact else n[0].startswith(label) or n[1].startswith(label))]
     return (matches[-1] if last else matches[0]) if matches else None
 
 def wait(label, seconds=20, enabled=True):
@@ -82,6 +82,21 @@ def tap(label, seconds=20, last=False):
     note("tap  " + label)
     time.sleep(0.8)
     return True
+
+def tool(label):
+    """Tap a tool in the editor's row, which scrolls sideways when it does not fit."""
+    for attempt in range(4):
+        node = find(label, exact=True)
+        if node and node[2]:
+            adb("shell", "input", "tap", str(node[3][0]), str(node[3][1]))
+            note("tap  " + label); time.sleep(1); return True
+        anchor = find("Split", exact=True) or find("Record", exact=True)
+        if not anchor:
+            break
+        adb("shell", "input", "swipe", "900", str(anchor[3][1]), "200", str(anchor[3][1]), "300")
+        time.sleep(1)
+    fail("the '%s' tool was not found. On screen: %s" % (label, describe()))
+    return False
 
 def describe():
     return " | ".join(sorted({(n[0] or n[1]).replace("\n", " ") for n in nodes()}))
@@ -228,6 +243,20 @@ def main():
     shot("editor-after-split")
     if crashed(): return
 
+    # Clip tools: the whole project at double speed, flipped, in a square frame.
+    expected, shape = recorded, None
+    if tool("Speed") and tap("Speed 2 times", 10):
+        time.sleep(1); tap("Done", 10)
+        note("after Speed: " + describe())
+        expected = recorded / 2
+    if tool("Mirror") and tap("Flip left", 10):
+        time.sleep(1); tap("Done", 10)
+    if tool("Crop") and tap("Video shape 1:1", 10):
+        time.sleep(1); tap("Done", 10)
+        shape = "width=1080|height=1080"
+    shot("editor-after-tools")
+    if crashed(): return
+
     # Export.
     tap("Export")
     wait("Export movie", 10)
@@ -245,8 +274,10 @@ def main():
         note("     middle frame: " + brightness(movie, duration / 2))
         if "codec_type=video" not in out or "codec_type=audio" not in out:
             fail("the export lacks a video or an audio track")
-        if abs(duration - recorded) > 0.25:
-            fail("the export lasts %.2f s but the takes total %.2f s" % (duration, recorded))
+        if abs(duration - expected) > 0.25:
+            fail("the export lasts %.2f s but the edit should last %.2f s" % (duration, expected))
+        if shape and shape not in out:
+            fail("the export is not in the chosen 1:1 shape")
     crashed()
     interrupted(len(takes))
 

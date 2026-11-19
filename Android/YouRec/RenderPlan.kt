@@ -10,11 +10,11 @@ class RenderPlan(edit: EditState) {
     val duration: EditTime = timeline.duration
     private val pictures = timeline.video.sortedWith(TrackTimeline.backToFront)
 
-    data class Picture(val item: UUID, val source: UUID, val sourceTime: Double, val interval: EditInterval)
+    data class Picture(val item: UUID, val source: UUID, val sourceTime: Double, val interval: EditInterval, val clip: TimelineClip)
     /// The front picture covers the frame. No picture means black, never a held frame.
     fun picture(time: EditTime): Picture? {
         val item = pictures.lastOrNull { time in it.interval } ?: return null
-        return Picture(item.id, item.content.sourceID, item.mapping.source(time - item.start) ?: return null, item.interval)
+        return Picture(item.id, item.content.sourceID, item.mapping.source(time - item.start) ?: return null, item.interval, item.content)
     }
     /// What stays on screen once playback has reached the end: the last frame
     /// of the last picture, or nothing when the movie ends on sound alone.
@@ -57,6 +57,7 @@ class AudioMix(private val timeline: TrackTimeline, private val open: (UUID) -> 
         fun frame(time: EditTime): Long = Math.floorDiv(time.ticks * sampleRate, EditTime.scale)
     }
     private val scratch = FloatArray(4096 * channels)
+    private val stretchers = HashMap<Triple<UUID, Long, Double>, TimeStretch>()
     var peak = 0f
         private set
 
@@ -74,7 +75,13 @@ class AudioMix(private val timeline: TrackTimeline, private val open: (UUID) -> 
                 val a = maxOf(start, runStart); val b = minOf(start + frames, runEnd)
                 if (b > a && !run.silent && !run.isHold) {
                     val source = open(item.sourceID)
-                    if (source != null) add(item, source, a, (b - a).toInt(), sourceStart + (a - runStart), first, out, ((a - start) * channels).toInt())
+                    val rate = (run.sourceEnd - run.sourceStart) / run.duration.seconds
+                    if (source != null && Math.abs(rate - 1) < 1e-6) add(item, source, a, (b - a).toInt(), sourceStart + (a - runStart), first, out, ((a - start) * channels).toInt())
+                    else if (source != null) {
+                        // A retimed part plays through a stretcher: its own length changes, its pitch does not.
+                        val stretched = stretchers.getOrPut(Triple(item.id, runStart, rate)) { TimeStretch(source, sourceStart, rate) }
+                        add(item, stretched, a, (b - a).toInt(), a - runStart, first, out, ((a - start) * channels).toInt())
+                    }
                 }
                 runStart = runEnd; local += run.duration
             }
@@ -96,6 +103,78 @@ class AudioMix(private val timeline: TrackTimeline, private val open: (UUID) -> 
                 out[o + 1] += scratch[i * channels + 1] * gain
             }
             done += count
+        }
+    }
+}
+
+/// Plays a recording faster or slower at its own pitch (waveform-similarity
+/// overlap-add). Output is built from 40 ms windows taken from the source at
+/// the new pace; each window is nudged by up to 10 ms to where it best continues
+/// the one before, which is what keeps a voice from sounding rough. Position 0
+/// is the source frame `origin`. Reading on from where the last read ended
+/// continues the same chain of windows; a jump starts a new one.
+class TimeStretch(private val source: PCMSource, private val origin: Long, private val rate: Double) : PCMSource {
+    private companion object { const val window = 1920; const val hop = window / 2; const val reach = 480 }
+    private val shape = FloatArray(window) { (0.5 - 0.5 * Math.cos(2 * Math.PI * it / window)).toFloat() }
+    private val current = FloatArray(window * 2)      // window `block`; `following` is the next one
+    private val following = FloatArray(window * 2)
+    private val candidates = FloatArray((window + 2 * reach) * 2)
+    private var block = Long.MIN_VALUE                // index of `current`
+    private var followingStart = 0L                   // source frame where `following` was taken
+
+    // Window j is centred on output frame j * hop, and on the source frame that belongs there.
+    private fun nominal(index: Long) = origin + Math.round(index * hop * rate) - hop
+    private fun take(start: Long, into: FloatArray) { source.read(start, into, 0, window) }
+    /// Choose the start of block `index` near its nominal place so that it lines up with `target`, the natural continuation.
+    private fun aligned(index: Long, target: Long): Long {
+        val base = nominal(index) - reach
+        source.read(base, candidates, 0, window + 2 * reach)
+        source.read(target, following, 0, window)
+        fun score(shift: Int): Double {
+            var sum = 0.0; var i = 0
+            while (i < window) { sum += (candidates[(shift + i) * 2] + candidates[(shift + i) * 2 + 1]) * (following[i * 2] + following[i * 2 + 1]); i += 4 }
+            return sum
+        }
+        // The nominal place wins unless another is clearly better: a steady
+        // sound has many equally good matches, and wandering between them drifts.
+        var best = reach; var bestScore = score(reach)
+        val needed = Math.abs(bestScore) * 0.02 + 1e-9
+        // A coarse search over a mono mix is enough to find the matching phase.
+        var shift = 0
+        while (shift <= 2 * reach) {
+            val value = score(shift)
+            if (value > bestScore + needed) { bestScore = value; best = shift }
+            shift += 2
+        }
+        return base + best
+    }
+    private fun seek(index: Long) {
+        // A chain restarts on its nominal grid, so a restart at the same place always sounds the same.
+        val start = nominal(index)
+        take(start, current)
+        followingStart = aligned(index + 1, start + hop)
+        take(followingStart, following)
+        block = index
+    }
+    private fun advance() {
+        System.arraycopy(following, 0, current, 0, window * 2)
+        val start = followingStart
+        block += 1
+        followingStart = aligned(block + 1, start + hop)
+        take(followingStart, following)
+    }
+
+    override fun read(position: Long, into: FloatArray, offset: Int, frames: Int) {
+        for (n in 0 until frames) {
+            val p = position + n
+            if (p < 0) { into[offset + n * 2] = 0f; into[offset + n * 2 + 1] = 0f; continue }
+            val index = p / hop
+            if (index != block) { if (index == block + 1 && block != Long.MIN_VALUE) advance() else seek(index) }
+            // Each output frame is the fading end of one window plus the rising start of the next.
+            val inside = (p - index * hop).toInt()
+            val falling = shape[inside + hop]; val rising = shape[inside]
+            into[offset + n * 2] = current[(inside + hop) * 2] * falling + following[inside * 2] * rising
+            into[offset + n * 2 + 1] = current[(inside + hop) * 2 + 1] * falling + following[inside * 2 + 1] * rising
         }
     }
 }

@@ -111,6 +111,9 @@ class FrameProgram {
             val corner = corners[order[i]]
             quad[i * 2] = corner[0] * scaleX * (if (mirror) -1f else 1f); quad[i * 2 + 1] = corner[1] * scaleY
         }
+        present(textureID, matrix)
+    }
+    private fun present(textureID: Int, matrix: FloatArray) {
         quadBuffer.position(0); quadBuffer.put(quad); quadBuffer.position(0)
         GLES20.glUseProgram(program)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
@@ -124,6 +127,18 @@ class FrameProgram {
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         GLES20.glDisableVertexAttribArray(position); GLES20.glDisableVertexAttribArray(coordinate)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, 0)
+    }
+    /// Draw a source picture placed by an affine map from its own pixels to canvas
+    /// pixels (both with y down). Whatever falls outside the canvas is clipped by
+    /// the viewport, which is how a crop, a mirror or a rotation is drawn.
+    fun draw(textureID: Int, matrix: FloatArray, placement: Affine, source: CanvasSize, canvas: CanvasSize) {
+        // Texture corners in strip order (bottom-left, bottom-right, top-left, top-right) as source pixels.
+        val px = doubleArrayOf(0.0, source.width, 0.0, source.width); val py = doubleArrayOf(source.height, source.height, 0.0, 0.0)
+        for (i in 0 until 4) {
+            quad[i * 2] = (placement.x(px[i], py[i]) * 2 / canvas.width - 1).toFloat()
+            quad[i * 2 + 1] = (1 - placement.y(px[i], py[i]) * 2 / canvas.height).toFloat()
+        }
+        present(textureID, matrix)
     }
     fun release() { GLES20.glDeleteProgram(program) }
 
