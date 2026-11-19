@@ -327,9 +327,41 @@ def main():
         if shape and shape not in out:
             fail("the export is not in the chosen 1:1 shape")
     crashed()
+    cover()
+    if crashed(): return
     clipboard()
     if crashed(): return
     interrupted(len(takes))
+
+def cover():
+    """Open Select cover, pick a frame, and share it: a JPEG of the project size appears."""
+    if find("Close"):
+        tap("Close")
+    if not tool("Cover") or not tap("Frame at ", 20):
+        return
+    deadline = time.time() + 30
+    while time.time() < deadline and not find("Cover image, "):
+        time.sleep(1)
+    image = find("Cover image, ")
+    note("cover: " + (image[0] if image else "no frame"))
+    if not image:
+        fail("the cover frame did not load. On screen: " + describe()); return
+    shot("cover")
+    tap("Share JPEG", 10); time.sleep(4)
+    adb("shell", "input", "keyevent", "KEYCODE_BACK"); time.sleep(1)
+    pull()
+    local = os.path.join(OUT, "files")
+    jpegs = [os.path.join(r, n) for r, _, ns in os.walk(local) for n in ns if n.endswith(".jpg")]
+    if len(jpegs) != 1:
+        fail("expected one cover JPEG, found %d" % len(jpegs)); return
+    out = subprocess.run(("ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", jpegs[0]), capture_output=True, text=True).stdout.strip()
+    note("cover JPEG: %s %s, %s" % (os.path.basename(jpegs[0]), out, brightness(jpegs[0])))
+    if out != "1080,1080":
+        fail("the cover JPEG is %s, not the 1080 x 1080 project picture" % out)
+    if find("‹ Frames"):
+        tap("‹ Frames"); time.sleep(1)
+    if find("Done"):
+        tap("Done")
 
 def clipboard():
     """Mark a range between two cuts, copy it and paste it: the edit grows by its length."""

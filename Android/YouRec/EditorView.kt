@@ -178,6 +178,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             tool("Volume") { openVolume() }
             if (edit.timeline.video.isNotEmpty()) { tool("Speed") { openSpeed() }; tool("Crop") { openCrop() }; tool("Mirror") { openMirror() }; tool("Color") { openColor() } }
             if (edit.timeline.video.isNotEmpty()) tool("Text") { openText(null) }
+            if (edit.timeline.video.isNotEmpty()) tool("Cover") { openCover() }
             if (edit.timeline.compile().any { it.video.size > 1 }) tool("Placement") { openPlacement(null) }
             if (!chosen.isEmpty && edit.timeline.links.any { link -> link.members.any { it in chosen.ids } }) tool("Unlink") { unlink() }
             else if (chosen.ids.size >= 2) tool("Link") { link(false) }
@@ -374,15 +375,126 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
 
     // Panels sit below the timeline, inside the editor: no dialog covers the preview.
     private fun showPanel(content: View) {
+        releaseCover()
         panel.removeAllViews()
         content.setPadding(Design.dp(context, 16f), Design.dp(context, 12f), Design.dp(context, 16f), Design.dp(context, 16f))
         content.background = Design.rounded(Design.surface, Design.dp(context, 16f).toFloat())
         panel.addView(content, Design.frame(height = ViewGroup.LayoutParams.WRAP_CONTENT))
     }
     private fun closePanel() {
+        releaseCover()
         panel.removeAllViews()
         // A control released outside its track may have left a draft on screen.
         project?.let { if (it.deferredHistory == null) editor.show(it.edit) }
+    }
+
+    // Select cover: frames of the finished edit from the marked range, the
+    // selected clips or the whole project. Nothing is stored in the project.
+    private var coverFrames: EditFrames? = null
+    private fun releaseCover() { coverFrames?.release(); coverFrames = null }
+    private fun showCoverPanel(content: View) {
+        panel.removeAllViews()
+        content.setPadding(Design.dp(context, 16f), Design.dp(context, 12f), Design.dp(context, 16f), Design.dp(context, 16f))
+        content.background = Design.rounded(Design.surface, Design.dp(context, 16f).toFloat())
+        panel.addView(content, Design.frame(height = ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+    private class CoverScope(val pool: CoverFramePool, val label: String, val range: String, val title: String)
+    private fun openCover() {
+        val project = project ?: return
+        // The cover frames need decoders of their own: the preview gives its up.
+        editor.suspend()
+        val timeline = project.edit.timeline
+        val selected = scope(project.edit)
+        val (ranges, label) = when {
+            selected?.range != null -> listOf(selected.range) to "Selected range"
+            selected != null -> (timeline.video.filter { it.id in selected.video }.map { it.interval } + timeline.audio.filter { it.id in selected.audio }.map { it.interval }) to "Selected clips"
+            else -> listOf(EditInterval(EditTime.zero, timeline.duration)) to "Whole project"
+        }
+        val range = EditFrames.timestamp(ranges.minOfOrNull { it.start } ?: EditTime.zero) + " – " + EditFrames.timestamp(ranges.maxOfOrNull { it.end } ?: EditTime.zero)
+        releaseCover()
+        val frames = EditFrames(project, store.folder(project))
+        val scope = CoverScope(CoverFramePool(timeline.video.map { it.interval }, ranges), label, range, project.title)
+        coverGrid(frames, scope, emptyList())
+        coverFrames = frames
+    }
+    private fun coverGrid(frames: EditFrames, scope: CoverScope, previous: List<Int>) {
+        val picks = scope.pool.picks(previous)
+        val aspect = frames.canvas.width / frames.canvas.height
+        val content = Design.column(context, spacing = 6f)
+        val update = Design.button(context, "Update", Design.text, Design.raised, 13f) { coverGrid(frames, scope, picks) }
+            .apply { isEnabled = scope.pool.count > 9; alpha = if (isEnabled) 1f else 0.4f; contentDescription = "Update. Show other frames from the same range." }
+        content.addView(Design.row(context, Design.column(context, Design.label(context, "Select cover · " + scope.label, 15f, bold = true),
+            Design.label(context, scope.range, 12f, Design.secondary, mono = true), spacing = 2f).apply { layoutParams = LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) }, update))
+        if (picks.isEmpty()) content.addView(Design.label(context, "No video in this range. Select a range that contains video.", 14f, Design.secondary))
+        val columns = 3
+        val cell = (resources.displayMetrics.widthPixels - Design.dp(context, 32f + 12f)) / columns
+        for (rowStart in picks.indices step columns) {
+            val row = LinearLayout(context).apply { orientation = HORIZONTAL }
+            for (pick in picks.subList(rowStart, minOf(picks.size, rowStart + columns))) {
+                val stamp = EditFrames.timestamp(scope.pool.time(pick))
+                val image = android.widget.ImageView(context).apply { scaleType = android.widget.ImageView.ScaleType.FIT_CENTER; setBackgroundColor(0xFF171717.toInt()) }
+                val box = Design.column(context, image, Design.label(context, stamp, 11f, Design.secondary, mono = true), spacing = 2f).apply {
+                    isClickable = true; contentDescription = "Frame at $stamp"
+                    setOnClickListener { coverDetail(frames, scope, pick, picks) }
+                }
+                image.layoutParams = LayoutParams(cell - Design.dp(context, 6f), ((cell - Design.dp(context, 6f)) / aspect).toInt().coerceAtMost(cell * 2))
+                row.addView(box, LayoutParams(cell, ViewGroup.LayoutParams.WRAP_CONTENT))
+                frames.grab(scope.pool.time(pick), 512) { picture -> if (picture != null) image.setImageBitmap(picture) else image.contentDescription = "Frame could not be loaded" }
+            }
+            content.addView(row)
+        }
+        content.addView(Design.button(context, "Done", Design.accent) { closePanel() })
+        showCoverPanel(android.widget.ScrollView(context).apply { addView(content) })
+    }
+    private fun coverDetail(frames: EditFrames, scope: CoverScope, start: Int, picks: List<Int>) {
+        var pick = start
+        var shown: Pair<Int, android.graphics.Bitmap>? = null
+        val image = android.widget.ImageView(context).apply { scaleType = android.widget.ImageView.ScaleType.FIT_CENTER; setBackgroundColor(0xFF121212.toInt()); contentDescription = "Cover image" }
+        val title = Design.label(context, "", 15f, bold = true, mono = true)
+        val share = Design.button(context, "Share JPEG", Design.background, Design.accent) {
+            val (at, picture) = shown?.takeIf { it.first == pick } ?: return@button
+            val project = project ?: return@button
+            try { navigation.share(EditFrames.jpeg(picture, scope.title, scope.pool.time(at), store.exportsFolder(project))) }
+            catch (e: Exception) { say("Couldn’t write the JPEG. " + (e.message ?: "")) }
+        }
+        fun show(index: Int) {
+            pick = index.coerceIn(0, maxOf(0, scope.pool.count - 1))
+            val time = scope.pool.time(pick)
+            title.text = EditFrames.timestamp(time)
+            share.isEnabled = false; share.alpha = 0.4f
+            frames.grab(time, 4096, latest = true) { picture ->
+                if (picture == null) { say("Couldn’t load this frame."); return@grab }
+                shown = pick to picture; image.setImageBitmap(picture)
+                image.contentDescription = "Cover image, ${picture.width} × ${picture.height} pixels"
+                share.isEnabled = true; share.alpha = 1f
+            }
+        }
+        // Swiping left reveals later frames, a fixed distance per frame, no momentum.
+        var origin = 0; var downX = 0f
+        image.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> { origin = pick; downX = event.x; true }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val next = origin - ((event.x - downX) / Design.dp(context, 24f)).toInt()
+                    if (next.coerceIn(0, scope.pool.count - 1) != pick) show(next)
+                    true
+                }
+                else -> { view.performClick(); true }
+            }
+        }
+        val aspect = frames.canvas.width / frames.canvas.height
+        val width = resources.displayMetrics.widthPixels - Design.dp(context, 32f)
+        val height = minOf((width / aspect).toInt(), (resources.displayMetrics.heightPixels * 0.45).toInt())
+        val content = Design.column(context, Design.row(context, Design.button(context, "‹ Frames", Design.text, Design.raised, 13f) { coverGrid(frames, scope, picks) }, title), spacing = 8f)
+        content.addView(image, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, height))
+        content.addView(Design.label(context, "Swipe left for later frames, right for earlier ones.", 12f, Design.secondary))
+        content.addView(Design.row(context,
+            Design.button(context, "‹", Design.text, Design.raised) { show(pick - 1) }.apply { contentDescription = "Previous frame" },
+            Design.button(context, "›", Design.text, Design.raised) { show(pick + 1) }.apply { contentDescription = "Next frame" },
+            Design.button(context, "Another", Design.text, Design.raised, 13f) { show(scope.pool.randomAlternative(pick)) }.apply { contentDescription = "Another random frame from the same range" },
+            share))
+        showCoverPanel(content)
+        show(pick)
     }
 
     /// Volume and fades for the selected sound, or for all sound when nothing is selected.

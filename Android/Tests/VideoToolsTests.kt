@@ -21,6 +21,36 @@ fun videoToolsTests() {
     placementTests()
     textTests()
     colorTests()
+    coverSamplingTests()
+}
+
+/// Ported from the iPhone app's coverSamplingTests.
+private fun coverSamplingTests() {
+    fun i(a: Double, b: Double) = EditInterval(EditTime.seconds(a), EditTime.seconds(b))
+    val footage = listOf(i(0.0, 1.0), i(0.5, 2.0), i(20.0, 21.0))
+    val pool = CoverFramePool(footage, listOf(i(1.0, 2.0), i(12.0, 20.5)))
+    require(pool.count == 45, "Overlapping video layers count once and gaps are skipped")
+    var previous = emptyList<Int>()
+    repeat(100) {
+        val picks = pool.picks(previous)
+        require(picks.size == 9 && picks.zipWithNext().all { (a, b) -> a < b }, "Nine ordered cover choices")
+        require(previous.zip(picks).all { (a, b) -> a != b }, "Update replaces every choice with an alternative")
+        for ((band, pick) in picks.withIndex()) {
+            val time = pool.time(pick).seconds
+            require(pick in band * 5 until (band + 1) * 5, "Sample the whole available span")
+            require(time >= 1 && time < 2 || time >= 20 && time < 20.5, "Only sample selected visible video, before the end boundary")
+        }
+        previous = picks
+    }
+    val short = CoverFramePool(footage, listOf(i(0.0, 0.2)))
+    require(short.picks(emptyList()) == (0 until 6).toList(), "Six-frame range shows six distinct frames")
+    for (pick in 0 until short.count) { val next = short.randomAlternative(pick); require(next in 0 until short.count && next != pick, "Update in detail must choose another eligible frame") }
+    val faster = CoverFramePool(footage, listOf(i(0.0, 0.1), i(20.0, 20.05)), EditTime.seconds(1.0 / 60))
+    require(faster.count == 9 && faster.time(1) == EditTime.seconds(1.0 / 60) && faster.time(6) == EditTime.seconds(20.0), "Fine scrubbing follows the composition clock and skips gaps")
+    val subframe = CoverFramePool(footage, listOf(i(0.040, 0.045)))
+    require(subframe.count == 1 && subframe.time(0) == EditTime.seconds(0.040), "Subframe selection stays inside its range")
+    require(subframe.randomAlternative(0) == 0, "One-frame range keeps its only frame")
+    require(CoverFramePool(footage, listOf(i(5.0, 7.0))).picks(emptyList()).isEmpty(), "A gap has no cover candidates")
 }
 
 private fun colorTests() {
