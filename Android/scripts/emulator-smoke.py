@@ -113,8 +113,10 @@ def readout():
     """The editor's 'position / duration' text as two numbers of seconds."""
     text = next((n[1] for n in nodes() if " / " in n[1]), "")
     def seconds(part):
+        # Editor time is minutes, seconds and frames at 30 per second: 0:07.12.
         minutes, rest = part.strip().split(":")
-        return int(minutes) * 60 + float(rest)
+        whole, frames = rest.split(".")
+        return int(minutes) * 60 + int(whole) + int(frames) / 30.0
     try:
         position, total = text.split(" / ")
         return seconds(position), seconds(total)
@@ -508,10 +510,7 @@ def clipboard():
         fail("Copy changed the edit's length")
     if abs(after[1] - (before[1] + length)) > 0.1:
         fail("after pasting %.2f s the edit lasts %.2f s instead of %.2f s" % (length, after[1], before[1] + length))
-        time.sleep(1)
-        for line in open(os.path.join(OUT, "app.log"), errors="replace"):
-            if "paste:" in line:
-                note(line.strip()[:3000])
+
     shot("editor-after-paste")
 
 def interrupted(before):
@@ -537,7 +536,7 @@ def interrupted(before):
     takes = []
     while time.time() < deadline:
         time.sleep(5)
-        takes = [m for m in pull() if "/Exports/" not in m and "/Recovery/" not in m]
+        takes = [m for m in pull() if "/Exports/" not in m and "/Recovery/" not in m and not os.path.basename(m).startswith("photos-import-")]
         manifests = [os.path.join(r, n) for r, _, ns in os.walk(local) for n in ns if n == "project.json"]
         if manifests and all(os.path.basename(t) in open(manifests[0]).read() for t in takes) and len(takes) == before + 1:
             break

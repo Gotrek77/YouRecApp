@@ -64,6 +64,16 @@ private fun pauseTests() {
     val pauseSplit = TimelineEditing.split(state, 0.5)
     require(Math.abs(pauseSplit.duration - pauseClip.duration) < 0.000001, "Splitting at a removed pause preserves output duration")
     require(clip.copy(pauses = null).duration == 2.0 && pauseClip.copy(pauses = null).texts == pauseClip.texts, "Removing Pauses restores media and retains other effects")
+    val pauseItem = state.timeline.video[0].id
+    val (trimmed, _) = TimelineEditing.trimming(pauseItem, true, 0.5, state, listOf(source))
+    val kept = trimmed.timeline.video[0]
+    require(kept.content.start == 2.0 && Math.abs(kept.interval.duration.seconds - 1.0) < 1e-6, "Trim handles follow timeline distance through speed and skipped pauses (${kept.content.start}, ${kept.interval.duration.seconds})")
+    val (minimal, _) = TimelineEditing.trimming(pauseItem, false, -100.0, state, listOf(source))
+    require(minimal.timeline.video.all { it.interval.duration.seconds >= TimelineEditing.frame - 0.000001 }, "Trim never produces a fully skipped, invalid clip")
+    val (shortened, _) = TimelineEditing.trimming(pauseItem, false, -0.5, state, listOf(source))
+    val (lengthened, _) = TimelineEditing.trimming(shortened.timeline.video[0].id, false, 0.25, shortened, listOf(source))
+    require(Math.abs(shortened.duration - 1.0) < 1e-6 && Math.abs(lengthened.duration - 1.25) < 1e-6 && lengthened.timeline.video[0].content.end == 3.5,
+        "Extending a trimmed edge reveals footage again (${shortened.duration}, ${lengthened.duration}, ${lengthened.timeline.video[0].content.end})")
     val levels = SourceLevels(4.0, FloatArray(400) { if (it in 100 until 250) 0.001f else 0.2f })
     val settings = PauseSettings(thresholdDB = -40.0, minimum = 0.6, before = 0.1, after = 0.2, levelMode = null)
     val plain = TimelineClip(sourceID = source.id, start = 0.0, end = 4.0)

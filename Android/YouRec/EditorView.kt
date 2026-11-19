@@ -270,10 +270,6 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             return
         }
         val (edit, added) = TimelineClipboardEditing.pasting(clipboard, project.edit, playhead, if (chosen) target else sites.firstOrNull()) ?: return
-        fun items(t: TrackTimeline) = "video " + t.video.sortedBy { it.start }.joinToString(" ") { String.format("[%.3f %.3f]", it.start.seconds, it.end.seconds) } +
-            " audio " + t.audio.sortedBy { it.start }.joinToString(" ") { String.format("[%.3f %.3f%s]", it.start.seconds, it.end.seconds, if (it.followsVideo == null) " free" else "") }
-        android.util.Log.d("YouRec", String.format("paste: %.3f s at %.3f, target %s; before %s; clipboard %s; after %s", clipboard.timeline.duration.seconds, playhead.seconds,
-            (if (chosen) target else sites.firstOrNull())?.let { it.kind.name + " " + it.anchor.javaClass.simpleName }, items(project.edit.timeline), items(clipboard.timeline), items(edit.timeline)))
         timeline.rangeStart = null; timeline.rangeEnd = null
         commit(edit, "Pasted", edit.timeline.interval(added)?.start?.seconds)
         select(added.ids); timeline.invalidate()
@@ -528,6 +524,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             val now = this.project ?: return@button
             val edit = now.edit.copy()
             AudioCensor.censor(edit.timeline, settings, target, existing?.id ?: UUID.randomUUID())
+            timeline.rangeStart = null; timeline.rangeEnd = null
             closePanel()
             if (edit != now.edit) commit(edit, "Censored")
         }.apply { contentDescription = "Apply censor" })
@@ -535,6 +532,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             val now = this.project ?: return@button
             val edit = now.edit.copy()
             AudioCensor.censor(edit.timeline, null, target)
+            timeline.rangeStart = null; timeline.rangeEnd = null
             closePanel()
             if (edit != now.edit) commit(edit, "Censor removed")
         }, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = Design.dp(context, 8f) })

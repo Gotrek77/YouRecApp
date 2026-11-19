@@ -97,9 +97,11 @@ object PhotoClip {
             val fit = Affine(a = width / size.width, d = height / size.height)
             var track = -1; val info = MediaCodec.BufferInfo()
             fun drain(end: Boolean) {
+                // An encoder that never finishes must not hold the store's worker for ever.
+                val deadline = System.nanoTime() + 10_000_000_000L
                 while (true) {
                     val index = encoder.dequeueOutputBuffer(info, if (end) 10_000 else 0)
-                    if (index == MediaCodec.INFO_TRY_AGAIN_LATER) { if (!end) return else continue }
+                    if (index == MediaCodec.INFO_TRY_AGAIN_LATER) { if (!end) return else if (System.nanoTime() > deadline) throw ProjectError.InvalidMedia() else continue }
                     if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) { track = muxer!!.addTrack(encoder.outputFormat); muxer!!.start(); continue }
                     if (index < 0) continue
                     val buffer = encoder.getOutputBuffer(index)!!

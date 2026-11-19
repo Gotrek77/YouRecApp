@@ -84,8 +84,9 @@ capture, recording controls, the cut editor, export.
   framing.
 - **Projects**: Duplicate (an independent copy with the same history), Back up
   (a `.zip` in the iPhone app's archive format, shared from the phone) and Open
-  project backup, also for backups made on iPhone. The OpenTimelineIO file of
-  an iPhone backup is ignored.
+  project backup, in the iPhone app's archive format (not yet tried with a
+  backup made on a real iPhone). The OpenTimelineIO file of an iPhone backup
+  is ignored.
 - **Export** to a new MP4 (H.264 or H.265, project size/720p/1080p/4K, 24–60
   fps, AAC), with a receipt naming the edit revision and source checksums. An
   unchanged edit offers its existing movie. Share, or save to the gallery.
