@@ -199,6 +199,11 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         val id = projectID ?: return
         position?.let { editor.seek(it) }
         if (store.commit(id, edit)) say("$message · Undo available")
+        else {
+            // A refused edit must say so where it was made, not only in the project list.
+            android.util.Log.w("YouRec", "edit not saved ($message): ${store.error}")
+            say(store.error ?: "The change could not be saved.")
+        }
     }
     private fun history(redo: Boolean) {
         val project = project ?: return

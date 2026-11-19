@@ -341,7 +341,7 @@ def main():
         if censored:
             # A -18 dBFS sine has an RMS of about -21 dBFS; nothing else in the range.
             a, b = censored[0] + 0.05, censored[1] - 0.05
-            stats = subprocess.run(("ffmpeg", "-v", "error", "-ss", "%.3f" % a, "-t", "%.3f" % (b - a), "-i", movie, "-map", "0:a", "-af", "astats=measure_overall=RMS_level:measure_perchannel=none", "-f", "null", "-"),
+            stats = subprocess.run(("ffmpeg", "-hide_banner", "-nostats", "-ss", "%.3f" % a, "-t", "%.3f" % (b - a), "-i", movie, "-map", "0:a", "-af", "astats=measure_overall=RMS_level:measure_perchannel=none", "-f", "null", "-"),
                                    capture_output=True, text=True).stderr
             level = re.findall(r"RMS level dB: (-?[0-9.]+|-inf)", stats)
             note("censored range %.2f-%.2f s: RMS %s dB" % (a, b, level))
@@ -494,7 +494,7 @@ def pauses():
     saved = float(re.search(r"· ([0-9.]+) s shorter", summary).group(1))
     tap("Apply pause cuts", 10); time.sleep(2)
     after = readout()
-    note("pauses: before %s, after %s, saved %.1f s" % (before, after, saved))
+    note("pauses: before %s, after %s, saved %.1f s | %s" % (before, after, saved, describe()))
     if not after or abs((before[1] - after[1]) - saved) > 0.15:
         fail("pause cuts changed the edit by %s s, not the %.1f s reported" % (None if not after else round(before[1] - after[1], 2), saved))
     shot("editor-after-pauses")
@@ -510,6 +510,10 @@ def clipboard():
         return
     tap("Previous cut", 10); time.sleep(0.8)
     marked = readout()
+    if marked and before and abs(marked[0] - before[0]) < 0.1:
+        # Already at the first cut: mark forward instead.
+        tap("Next cut", 10); time.sleep(0.8)
+        marked = readout()
     if not tool("End") or not tool("Copy"):
         return
     after_copy = readout()
