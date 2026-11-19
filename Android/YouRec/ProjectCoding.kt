@@ -15,7 +15,7 @@ internal object ProjectCoding {
     private fun present(value: Any?) = when (value) { null -> false; is List<*> -> value.isNotEmpty(); else -> true }
 
     // TimelineClip
-    private val clipTools = mapOf("stabilization" to "Stabilization", "pauses" to "Pause cuts",
+    private val clipTools = mapOf("stabilization" to "Stabilization",
         "images" to "Image overlays", "openingTransition" to "Transitions", "transition" to "Transitions",
         "videoEffects" to "Video effects", "frozenFrame" to "Freeze frame", "colorRegions" to "Color",
         "effectWindows" to "effects limited to a range", "framingVariants" to "Crop, Mirror or Stabilization on a range")
@@ -48,7 +48,14 @@ internal object ProjectCoding {
             ColorSettings(grade.uuid("id"), ColorLook.values().firstOrNull { it.raw == grade.string("look") } ?: throw ProjectError.InvalidDocument(), grade.double("amount"), lut,
                 grade.doubleOrNull("exposure"), grade.doubleOrNull("warmth"), grade.doubleOrNull("tint"))
         }
-        return TimelineClip(value.uuid("id"), value.uuid("sourceID"), value.double("start"), value.double("end"), speed, crop, mirror, texts, color)
+        val pauses = value.fieldsOrNull("pauses")?.let { p ->
+            fun interval(v: Any?) = Fields.of(v).let { SourceInterval(it.double("start"), it.double("end")) }
+            PauseSettings(p.uuid("id"), p.double("thresholdDB"), p.double("minimum"), p.double("before"), p.double("after"), p.list("cuts").map(::interval),
+                p.listOrNull("candidates")?.map { c -> Fields.of(c).let { DetectedPause(interval(it.raw("raw")), it.boolOrNull("enabled") ?: true) } },
+                p.raw("analyzed")?.let(::interval),
+                p.stringOrNull("levelMode")?.let { mode -> PauseLevelMode.values().firstOrNull { it.raw == mode } ?: throw ProjectError.InvalidDocument() })
+        }
+        return TimelineClip(value.uuid("id"), value.uuid("sourceID"), value.double("start"), value.double("end"), speed, crop, mirror, texts, color, pauses)
     }
     fun encode(clip: TimelineClip) = jsonObject("id" to clip.id.text, "sourceID" to clip.sourceID.text, "start" to clip.start, "end" to clip.end,
         "speed" to clip.speed?.let { jsonObject("id" to it.id.text, "rate" to it.rate) },
@@ -57,6 +64,11 @@ internal object ProjectCoding {
         "color" to clip.color?.let { jsonObject("id" to it.id.text, "look" to it.look.raw, "amount" to it.amount,
             "imported" to it.imported?.let { lut -> jsonObject("filename" to lut.filename, "name" to lut.name, "input" to "rec709") },
             "exposure" to it.exposure, "warmth" to it.warmth, "tint" to it.tint) },
+        "pauses" to clip.pauses?.let { p ->
+            fun encode(i: SourceInterval) = jsonObject("start" to i.start, "end" to i.end)
+            jsonObject("id" to p.id.text, "thresholdDB" to p.thresholdDB, "minimum" to p.minimum, "before" to p.before, "after" to p.after,
+                "cuts" to p.cuts.map(::encode), "candidates" to p.candidates?.map { jsonObject("raw" to encode(it.raw), "enabled" to it.enabled) },
+                "analyzed" to p.analyzed?.let(::encode), "levelMode" to p.levelMode?.raw) },
         "texts" to clip.texts?.map { jsonObject("id" to it.id.text, "text" to it.text, "start" to it.start, "end" to it.end, "x" to it.x, "y" to it.y,
             "size" to it.size, "style" to it.style.name.lowercase(), "color" to it.color.name.lowercase()) })
 

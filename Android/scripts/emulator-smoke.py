@@ -342,6 +342,8 @@ def main():
     if crashed(): return
     clipboard()
     if crashed(): return
+    pauses()
+    if crashed(): return
     interrupted(len(takes))
 
 def censor():
@@ -429,6 +431,35 @@ def cover():
         tap("‹ Frames"); time.sleep(1)
     if find("Done"):
         tap("Done")
+
+def pauses():
+    """Find pauses in the whole project, apply them, and check the edit shrinks
+    by the reported amount; then undo."""
+    if find("Close"):
+        tap("Close")
+    before = readout()
+    if not before or not tool("Pauses") or not tap("Find pauses", 10):
+        return
+    deadline = time.time() + 120
+    summary = None
+    while time.time() < deadline:
+        summary = next((n[1] for n in nodes() if " pauses cut · " in n[1] or n[1].startswith("No pauses found")), None)
+        if summary:
+            break
+        time.sleep(2)
+    note("pauses: %s" % summary)
+    if not summary:
+        fail("pause detection did not finish. On screen: " + describe()); return
+    if summary.startswith("No pauses"):
+        tap("Cancel", 5); return
+    saved = float(re.search(r"· ([0-9.]+) s shorter", summary).group(1))
+    tap("Apply pause cuts", 10); time.sleep(2)
+    after = readout()
+    note("pauses: before %s, after %s, saved %.1f s" % (before, after, saved))
+    if not after or abs((before[1] - after[1]) - saved) > 0.15:
+        fail("pause cuts changed the edit by %s s, not the %.1f s reported" % (None if not after else round(before[1] - after[1], 2), saved))
+    shot("editor-after-pauses")
+    tap("Undo", 10); time.sleep(1)
 
 def clipboard():
     """Mark a range between two cuts, copy it and paste it: the edit grows by its length."""

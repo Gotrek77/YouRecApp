@@ -177,6 +177,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if (store.clipboards[project.id]?.isEmpty == false) tool("Paste") { paste(null) }
             tool("Volume") { openVolume() }
             if (a != null && b != null && edit.timeline.audio.isNotEmpty()) tool("Censor") { openCensor() }
+            if (edit.timeline.video.any { item -> project.sources.firstOrNull { it.id == item.content.sourceID }?.isStillPhoto != true }) tool("Pauses") { openPauses() }
             if (edit.timeline.video.isNotEmpty()) { tool("Speed") { openSpeed() }; tool("Crop") { openCrop() }; tool("Mirror") { openMirror() }; tool("Color") { openColor() } }
             if (edit.timeline.video.isNotEmpty()) tool("Text") { openText(null) }
             if (edit.timeline.video.isNotEmpty()) tool("Cover") { openCover() }
@@ -467,6 +468,99 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         }, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = Design.dp(context, 8f) })
         actions.addView(Design.button(context, "Cancel") { closePanel() }, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = Design.dp(context, 8f) })
         add(actions.apply { setPadding(0, Design.dp(context, 8f), 0, 0) })
+        showPanel(content)
+    }
+
+    /// Find silence in the selected clips, or in all, and shorten it. Each pause
+    /// found can be kept or cut; Apply is one undo step and Remove restores the media.
+    private var pauseLevels = HashMap<UUID, SourceLevels>()
+    private fun openPauses(settings: PauseSettings? = null, found: Map<UUID, List<DetectedPause>>? = null) {
+        val project = project ?: return
+        editor.pause()
+        val clips = targets(project.edit).filter { item -> project.sources.firstOrNull { it.id == item.content.sourceID }?.isStillPhoto != true }
+        if (clips.isEmpty()) return
+        var current = settings ?: clips.firstNotNullOfOrNull { it.content.pauses }?.copy(cuts = emptyList(), candidates = null) ?: PauseSettings()
+        val values = List(4) { Design.label(context, "", 14f, mono = true) }
+        fun describe() {
+            values[0].text = if (current.levelMode == PauseLevelMode.Automatic) "Auto" else String.format("%.0f dB", current.thresholdDB)
+            values[1].text = String.format("%.1f s", current.minimum); values[2].text = String.format("%.2f s", current.before); values[3].text = String.format("%.2f s", current.after)
+        }
+        fun bar(max: Int, start: Int, change: (Int) -> Unit) = SeekBar(context).apply {
+            this.max = max; progress = start
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(b: SeekBar, value: Int, user: Boolean) { if (user) { change(value); describe() } }
+                override fun onStartTrackingTouch(b: SeekBar) { }
+                override fun onStopTrackingTouch(b: SeekBar) { }
+            })
+        }
+        describe()
+        val content = Design.column(context, Design.label(context, "Pauses · " + scopeTitle(project.edit), 15f, bold = true), spacing = 2f)
+        fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val automatic = current.levelMode == PauseLevelMode.Automatic
+        add(Design.row(context, Design.button(context, if (automatic) "Level: automatic" else "Level: manual", if (automatic) Design.background else Design.text, if (automatic) Design.accent else Design.raised, 13f) {
+            openPauses(current.copy(levelMode = if (automatic) PauseLevelMode.Manual else PauseLevelMode.Automatic), null)
+        }.apply { contentDescription = "Silence level " + if (automatic) "automatic" else "manual" }))
+        // Level −60 to −20 dB; pause 0.2–3 s in tenths; padding 0–0.5 s in hundredths.
+        if (!automatic) add(labelled("Silence", bar(40, Math.round(current.thresholdDB + 60).toInt()) { current = current.copy(thresholdDB = it - 60.0) }, values[0]))
+        add(labelled("Longer than", bar(28, Math.round(current.minimum * 10 - 2).toInt()) { current = current.copy(minimum = (it + 2) / 10.0) }, values[1]))
+        add(labelled("Keep before", bar(50, Math.round(current.before * 100).toInt()) { current = current.copy(before = it / 100.0) }, values[2]))
+        add(labelled("Keep after", bar(50, Math.round(current.after * 100).toInt()) { current = current.copy(after = it / 100.0) }, values[3]))
+        val actions = Design.row(context)
+        if (found == null) {
+            actions.addView(Design.button(context, "Find pauses", Design.background, Design.accent) {
+                say("Listening for pauses…")
+                val chosen = current
+                val files = clips.associate { it.content.sourceID to project.sources.first { s -> s.id == it.content.sourceID }.let { store.mediaFile(project, it) } }
+                Thread {
+                    val results = HashMap<UUID, List<DetectedPause>>()
+                    var failure: String? = null
+                    try {
+                        for (item in clips) {
+                            val levels = synchronized(pauseLevels) { pauseLevels[item.content.sourceID] } ?: SourceMediaCache.levels(files[item.content.sourceID]!!).also { synchronized(pauseLevels) { pauseLevels[item.content.sourceID] = it } }
+                            results[item.id] = PauseDetector.raw(levels, item.content.copy(pauses = null), chosen).map { DetectedPause(it) }
+                        }
+                    } catch (e: Exception) { failure = "The sound could not be read. " + (e.message ?: "") }
+                    post { if (failure != null) say(failure!!) else { say(""); openPauses(chosen, results) } }
+                }.start()
+            })
+        } else {
+            val total = clips.sumOf { item -> PauseDetector.effectiveCuts(found[item.id] ?: emptyList(), item.content.copy(pauses = null), current).sumOf { it.duration } / item.content.rate }
+            val count = found.values.sumOf { list -> list.count { it.enabled } }
+            add(Design.label(context, if (found.values.all { it.isEmpty() }) "No pauses found. Try a longer silence level or a shorter pause." else
+                String.format("%d of %d pauses cut · %.1f s shorter. Tap a pause to keep it.", count, found.values.sumOf { it.size }, total), 13f, Design.secondary))
+            val list = LinearLayout(context).apply { orientation = VERTICAL }
+            for (item in clips) for ((index, pause) in (found[item.id] ?: emptyList()).withIndex()) {
+                val at = item.start.seconds + item.content.copy(pauses = null).timelineTime(pause.raw.start)
+                val label = EditFrames.timestamp(EditTime.seconds(at)) + String.format(" · %.1f s", pause.raw.duration / item.content.rate) + if (pause.enabled) " · cut" else " · kept"
+                list.addView(Design.button(context, label, if (pause.enabled) Design.text else Design.secondary, Design.raised, 13f) {
+                    val toggled = found.toMutableMap(); toggled[item.id] = found[item.id]!!.mapIndexed { i, p -> if (i == index) p.copy(enabled = !p.enabled) else p }
+                    openPauses(current, toggled)
+                }.apply { contentDescription = "Pause at " + label }, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = Design.dp(context, 4f) })
+            }
+            if (list.childCount > 0) add(android.widget.ScrollView(context).apply { addView(list) }.also { it.layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Design.dp(context, 160f)) })
+            actions.addView(Design.button(context, "Apply", Design.background, Design.accent) {
+                val now = this.project ?: return@button
+                val edit = now.edit.copy()
+                edit.timeline.replaceContents(clips.filter { item -> edit.timeline.video.any { it.id == item.id } }.associate { item ->
+                    val plain = item.content.copy(pauses = null)
+                    val candidates = found[item.id] ?: emptyList()
+                    item.id to item.content.copy(pauses = current.copy(cuts = PauseDetector.effectiveCuts(candidates, plain, current), candidates = candidates,
+                        analyzed = SourceInterval(plain.start, plain.end)))
+                })
+                closePanel()
+                if (edit != now.edit) commit(edit, "Pauses cut")
+            }.apply { contentDescription = "Apply pause cuts" })
+            actions.addView(Design.button(context, "Find again") { openPauses(current, null) }, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = Design.dp(context, 8f) })
+        }
+        if (clips.any { it.content.pauses != null }) actions.addView(Design.button(context, "Remove", Design.recording) {
+            val now = this.project ?: return@button
+            val edit = now.edit.copy()
+            edit.timeline.replaceContents(clips.filter { item -> edit.timeline.video.any { it.id == item.id } }.associate { it.id to it.content.copy(pauses = null) })
+            closePanel()
+            if (edit != now.edit) commit(edit, "Pauses restored")
+        }.apply { contentDescription = "Remove pause cuts" }, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = Design.dp(context, 8f) })
+        actions.addView(Design.button(context, "Cancel") { closePanel() }, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = Design.dp(context, 8f) })
+        add(android.widget.HorizontalScrollView(context).apply { addView(actions); setPadding(0, Design.dp(context, 8f), 0, 0) })
         showPanel(content)
     }
 

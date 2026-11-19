@@ -23,6 +23,44 @@ fun videoToolsTests() {
     colorTests()
     coverSamplingTests()
     photoTests()
+    pauseTests()
+}
+
+/// Ported from the iPhone app's tool checks for Pauses.
+private fun pauseTests() {
+    val source = SourceMedia(filename = "source.mp4", duration = 4.0)
+    val clip = TimelineClip(sourceID = source.id, start = 0.0, end = 4.0, speed = SpeedSettings(rate = 2.0), texts = listOf(TextOverlay(text = "Hello", start = 1.0, end = 3.0)))
+    val pauseClip = clip.copy(pauses = PauseSettings(cuts = listOf(SourceInterval(1.0, 2.0))))
+    require(pauseClip.duration == 1.5 && pauseClip.sourceTime(0.5) == 2.0 && pauseClip.timelineTime(3.0) == 1.0, "Pauses and speed compose without drifting timing")
+    val state = EditState(listOf(pauseClip))
+    require(state.timeline.video[0].mapping.runs.size == 2 && state.duration == 1.5 && state.timeline.audio[0].mapping == state.timeline.video[0].mapping,
+        "A clip with a pause plays as two runs, picture and sound alike")
+    val pauseSplit = TimelineEditing.split(state, 0.5)
+    require(Math.abs(pauseSplit.duration - pauseClip.duration) < 0.000001, "Splitting at a removed pause preserves output duration")
+    require(clip.copy(pauses = null).duration == 2.0 && pauseClip.copy(pauses = null).texts == pauseClip.texts, "Removing Pauses restores media and retains other effects")
+    val levels = SourceLevels(4.0, FloatArray(400) { if (it in 100 until 250) 0.001f else 0.2f })
+    val settings = PauseSettings(thresholdDB = -40.0, minimum = 0.6, before = 0.1, after = 0.2, levelMode = null)
+    val plain = TimelineClip(sourceID = source.id, start = 0.0, end = 4.0)
+    val cuts = PauseDetector.detect(levels, plain, settings)
+    require(cuts.size == 1 && Math.abs(cuts[0].start - 1.1) < 0.001 && Math.abs(cuts[0].end - 2.3) < 0.001, "Pause detector retains independent pre/post speech padding")
+    val raw = PauseDetector.raw(levels, plain, settings)
+    val effective = PauseDetector.effectiveCuts(raw.map { DetectedPause(it) }, plain, settings)
+    require(raw.size == 1 && effective == cuts, "Padding applied to raw detections gives the same cuts")
+    require(PauseDetector.effectiveCuts(listOf(DetectedPause(SourceInterval(0.0, 4.0))), plain, settings.copy(before = 0.0, after = 0.0)).sumOf { it.duration } <= 4.0 - TimelineEditing.frame + 1e-9,
+        "A silent clip keeps one frame")
+    require(PauseDetector.levelDB(SourceLevels(4.0, FloatArray(400) { if (it % 4 == 0) 0.002f else 0.3f }), PauseSettings()) in -56.0..-27.0, "The measured threshold stays in its bounds")
+
+    val project = Project("Pauses"); project.addRecording(source)
+    val withPauses = project.edit.copy()
+    withPauses.timeline.replaceContents(mapOf(withPauses.timeline.video[0].id to withPauses.timeline.video[0].content.copy(pauses = settings.copy(cuts = cuts, candidates = raw.map { DetectedPause(it) }, analyzed = SourceInterval(0.0, 4.0)))))
+    project.commit(withPauses)
+    require(project.edit.duration < 4.0 - 1.1 && project.edit.timeline.audio[0].mapping == project.edit.timeline.video[0].mapping, "Committing pauses shortens picture and sound together")
+    val coded = ProjectCoding.editState(Fields.of(JSON.parse(JSON.write(ProjectCoding.encode(project.edit)))))
+    require(coded == project.edit, "Pause settings round-trip in the iPhone app's form")
+    project.commit(TimelineEditing.split(project.edit, 0.5))
+    require(project.edit.clips.all { c -> (c.pauses?.candidates ?: emptyList()).all { it.raw.start < c.end && it.raw.end > c.start } && c.pauses?.cuts?.all { it.start < c.end && it.end > c.start } != false },
+        "Split pieces keep only their own pause metadata")
+    project.validate()
 }
 
 private fun photoTests() {

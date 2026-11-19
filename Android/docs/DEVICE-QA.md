@@ -132,6 +132,7 @@ device to confirm:
 | Copy, Cut, Paste | A marked range or selected clips paste at the playhead with their titles, crop and fades; at a cut where picture and sound meet, the choice offered matches what is pasted; one Undo removes the paste |
 | Add photo, Import photo | A portrait phone photo appears upright, unstretched and sharp for three seconds; a 48-megapixel photo is added without running out of memory |
 | Censor | The word under the marked range is gone in preview and export with no click at either edge; the tone's pitch and level follow the controls; music on another track keeps playing when only the voice is selected |
+| Pauses | On a spoken take, Find pauses lists the real gaps between sentences and not quiet syllables; after Apply speech is not clipped at either side of a cut; Remove brings every second back |
 | Cover | The nine frames come from the chosen range and show grade, crop and titles as the export does; swiping steps one frame per finger-width; the shared JPEG has the project size |
 | Volume and fades | Audible change matches the waveform; a fade survives a split through it |
 | Timeline | Thumbnails and waveforms load without stalling the interface on a long project; pinch zooms from whole-project fit to frame level |

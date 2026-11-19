@@ -46,7 +46,19 @@ data class PlaybackRun(val duration: EditTime, val sourceStart: Double, val sour
     }
 }
 data class SourcePlaybackMap(val runs: List<PlaybackRun>) {
-    constructor(clip: TimelineClip) : this(listOf(PlaybackRun(EditTime.seconds(clip.duration), clip.start, clip.end)).filter { it.duration > EditTime.zero })
+    constructor(clip: TimelineClip) : this(runs(clip))
+    companion object {
+        // Round cumulative boundaries, not each run's length, to carry the
+        // rounding residual across a long sequence of pause cuts.
+        private fun runs(clip: TimelineClip): List<PlaybackRun> {
+            var total = 0.0; var prior = EditTime.zero
+            return clip.playbackSpans.map { span ->
+                total += span.duration
+                val boundary = EditTime.seconds(total); val run = PlaybackRun(boundary - prior, span.start, span.end)
+                prior = boundary; run
+            }.filter { it.duration > EditTime.zero }
+        }
+    }
     val duration: EditTime get() = EditTime.ticks(runs.sumOf { it.duration.ticks })
     fun source(local: EditTime): Double? {
         var cursor = EditTime.zero

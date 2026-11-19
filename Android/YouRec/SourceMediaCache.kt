@@ -351,6 +351,25 @@ object SourceMediaCache {
     }
     private const val bucketsPerSecond = 100
 
+    /// Loudness in 10 ms bins for finding pauses. Blocking: call off the main thread.
+    fun levels(file: File): SourceLevels {
+        val duration = MediaFiles.duration(file, needsVideo = false)
+        val bin = AudioMix.sampleRate / PauseDetector.binsPerSecond
+        val count = (duration * PauseDetector.binsPerSecond).toInt()
+        val rms = FloatArray(count)
+        val audio = DecodedAudio(file)
+        try {
+            val block = FloatArray(bin * 2)
+            for (i in 0 until count) {
+                audio.read(i.toLong() * bin, block, 0, bin)
+                var sum = 0.0
+                for (f in 0 until bin) { val mono = (block[f * 2] + block[f * 2 + 1]) * 0.5; sum += mono * mono }
+                rms[i] = Math.sqrt(sum / bin).toFloat()
+            }
+        } finally { audio.release() }
+        return SourceLevels(count.toDouble() / PauseDetector.binsPerSecond, rms)
+    }
+
     /// Drop decoders held for a project that is no longer on screen.
     fun close() {
         pictures.execute { for (retriever in retrievers.values) try { retriever.release() } catch (e: Exception) { }; retrievers.clear() }

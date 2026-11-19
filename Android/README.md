@@ -73,6 +73,10 @@ capture, recording controls, the cut editor, export.
   **Censor** replaces the sound in a marked range with a tone (sine, triangle
   or square; short, soft or pulsed; pitch and level), on the selected sound or
   all sound there; overlapping tracks share one tone.
+  **Pauses** finds silence in the selected clips (by loudness, at a measured
+  or chosen level; the iPhone app also asks RNNoise whether a quiet stretch is
+  speech), lists each pause to keep or cut, and shortens picture and sound
+  together; Remove restores the media.
   **Placement** arranges videos that overlap: Full, Side by side, Stacked and
   Inset presets, front/back order, Fit or Fill, and each picture's window and
   framing.
@@ -103,7 +107,7 @@ Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export 
 shaders · Transitions · Dragging and pinching a placed picture in the preview,
 and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
 animated Crop and Placement · Image overlays · Stabilization · Enhance audio (RNNoise, DeepFilterNet3, LavaSR,
-VoiceFixer) · Pause cuts · Original
+VoiceFixer) and the RNNoise voice check in Pauses · Original
 recordings browser · OpenTimelineIO export · Dual-camera
 layouts, live effects, face follow, front light, horizon level, focus peaking ·
 Record-here insertion ·

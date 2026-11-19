@@ -30,12 +30,37 @@ data class SourceMedia(val id: UUID = UUID.randomUUID(), val filename: String, v
 
 data class TimelineClip(val id: UUID = UUID.randomUUID(), val sourceID: UUID, val start: Double, val end: Double,
                         val speed: SpeedSettings? = null, val crop: CropSettings? = null, val mirror: MirrorSettings? = null,
-                        val texts: List<TextOverlay>? = null, val color: ColorSettings? = null) {
+                        val texts: List<TextOverlay>? = null, val color: ColorSettings? = null, val pauses: PauseSettings? = null) {
     /// The titles to draw while this clip shows one source time.
     fun visibleTexts(sourceTime: Double) = texts?.filter { it.hasText && it.start <= sourceTime && sourceTime < it.end } ?: emptyList()
     /// Source seconds played per timeline second.
     val rate: Double get() = (speed?.rate ?: 1.0).coerceIn(0.125, 6.0)
-    val duration: Double get() = (end - start) / rate
+    val duration: Double get() = playbackSpans.sumOf { it.duration }
+    /// The source this clip plays: its range less any pause cuts.
+    val keptIntervals: List<SourceInterval> get() {
+        val result = ArrayList<SourceInterval>(); var cursor = start
+        for (cut in (pauses?.cuts ?: emptyList()).sortedBy { it.start }) {
+            val a = maxOf(start, cut.start); val b = minOf(end, cut.end)
+            if (b <= a) continue
+            if (a > cursor) result.add(SourceInterval(cursor, a))
+            cursor = maxOf(cursor, b)
+        }
+        if (cursor < end) result.add(SourceInterval(cursor, end))
+        return result
+    }
+    val playbackSpans: List<PlaybackSpan> get() = keptIntervals.map { PlaybackSpan(it.start, it.end, rate) }
+    /// Source seconds at a time into the clip.
+    fun sourceTime(offset: Double): Double {
+        val spans = playbackSpans
+        var remaining = maxOf(0.0, offset)
+        for ((index, span) in spans.withIndex()) {
+            if (remaining < span.duration - 0.000001 || index == spans.size - 1) return minOf(span.end, span.start + remaining * span.rate)
+            remaining -= span.duration
+        }
+        return end
+    }
+    /// Time into the clip at which a source second plays (or would, if it were not cut).
+    fun timelineTime(source: Double) = playbackSpans.sumOf { maxOf(0.0, minOf(it.end, source) - it.start) / it.rate }
 }
 
 data class CanvasSize(val width: Double, val height: Double)
@@ -141,6 +166,9 @@ class Project(var title: String) {
     fun commit(requested: EditState) {
         val previous = edit
         val state = requested.copy()
+        // Pause cuts and their detections are kept only inside each clip's own range.
+        if (state.timeline.video.any { it.content.pauses != null }) state.timeline.replaceContents(state.timeline.video.filter { it.content.pauses != null }
+            .associate { it.id to it.content.copy(pauses = it.content.pauses!!.limited(it.content.start, it.content.end)) })
         state.retainCanvasReference(previous)
         if (state == previous) return
         // An older reader would pick the first timeline picture and silently reframe the movie.
@@ -215,6 +243,7 @@ class Project(var title: String) {
                 require(clip.speed?.let { it.rate.isFinite() && it.rate in 0.25..4.0 } ?: true)
                 require(clip.crop?.valid ?: true)
                 require(clip.color?.valid ?: true)
+                require(clip.pauses?.valid(source!!.duration) ?: true)
                 require(clip.texts?.let { texts -> texts.map { it.id }.toSet().size == texts.size && texts.all { it.valid(source!!.duration) } } ?: true)
             }
         }
