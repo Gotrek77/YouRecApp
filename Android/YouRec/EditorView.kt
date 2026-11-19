@@ -267,6 +267,10 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             return
         }
         val (edit, added) = TimelineClipboardEditing.pasting(clipboard, project.edit, playhead, if (chosen) target else sites.firstOrNull()) ?: return
+        fun items(t: TrackTimeline) = "video " + t.video.sortedBy { it.start }.joinToString(" ") { String.format("[%.3f %.3f]", it.start.seconds, it.end.seconds) } +
+            " audio " + t.audio.sortedBy { it.start }.joinToString(" ") { String.format("[%.3f %.3f%s]", it.start.seconds, it.end.seconds, if (it.followsVideo == null) " free" else "") }
+        android.util.Log.d("YouRec", String.format("paste: %.3f s at %.3f, target %s; before %s; clipboard %s; after %s", clipboard.timeline.duration.seconds, playhead.seconds,
+            (if (chosen) target else sites.firstOrNull())?.let { it.kind.name + " " + it.anchor.javaClass.simpleName }, items(project.edit.timeline), items(clipboard.timeline), items(edit.timeline)))
         timeline.rangeStart = null; timeline.rangeEnd = null
         commit(edit, "Pasted", edit.timeline.interval(added)?.start?.seconds)
         select(added.ids); timeline.invalidate()

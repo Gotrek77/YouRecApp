@@ -429,6 +429,10 @@ def clipboard():
         fail("Copy changed the edit's length")
     if abs(after[1] - (before[1] + length)) > 0.1:
         fail("after pasting %.2f s the edit lasts %.2f s instead of %.2f s" % (length, after[1], before[1] + length))
+        time.sleep(1)
+        for line in open(os.path.join(OUT, "app.log"), errors="replace"):
+            if "paste:" in line:
+                note(line.strip()[:3000])
     shot("editor-after-paste")
 
 def interrupted(before):
