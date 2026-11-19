@@ -90,7 +90,8 @@ def tool(label):
         if node and node[2]:
             adb("shell", "input", "tap", str(node[3][0]), str(node[3][1]))
             note("tap  " + label); time.sleep(1); return True
-        anchor = find("Split", exact=True) or find("Record", exact=True)
+        # Any tool still on screen marks the row; it may already be scrolled past Split.
+        anchor = next((n for n in (find(t, exact=True) for t in ("Split", "Volume", "Speed", "Crop", "Mirror", "Color", "Text", "Record", "Add video")) if n), None)
         if not anchor:
             break
         adb("shell", "input", "swipe", "900", str(anchor[3][1]), "200", str(anchor[3][1]), "300")
