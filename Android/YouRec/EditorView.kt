@@ -173,6 +173,8 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if (a != null) tool("Clear") { timeline.rangeStart = null; timeline.rangeEnd = null; rebuildTools(); timeline.invalidate(); say("") }
             if ((a != null && b != null) || !chosen.isEmpty) tool("Delete", Design.recording) { delete() }
             if (!chosen.isEmpty) tool("Move") { beginMove() }
+            if ((a != null && b != null) || !chosen.isEmpty) { tool("Copy") { copyOrCut(false) }; tool("Cut") { copyOrCut(true) } }
+            if (store.clipboards[project.id]?.isEmpty == false) tool("Paste") { paste(null) }
             tool("Volume") { openVolume() }
             if (edit.timeline.video.isNotEmpty()) { tool("Speed") { openSpeed() }; tool("Crop") { openCrop() }; tool("Mirror") { openMirror() }; tool("Color") { openColor() } }
             if (edit.timeline.video.isNotEmpty()) tool("Text") { openText(null) }
@@ -209,7 +211,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         val start = timeline.rangeStart
         if (start == null) { timeline.rangeStart = now; timeline.rangeEnd = null; say("Start marked. Move the playhead and tap End.") }
         else if (abs(now - start) < TimelineEditing.frame) return say("Move the playhead away from Start, then tap End.")
-        else { timeline.rangeStart = minOf(start, now); timeline.rangeEnd = maxOf(start, now); say("Range marked. Delete removes it; Clear keeps the footage.") }
+        else { timeline.rangeStart = minOf(start, now); timeline.rangeEnd = maxOf(start, now); say("Range marked. Delete removes it, Copy or Cut take it; Clear keeps the footage.") }
         rebuildTools(); timeline.invalidate()
     }
     private fun delete() {
@@ -221,6 +223,51 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         if (edit == project.edit) return
         timeline.rangeStart = null; timeline.rangeEnd = null; selected = emptySet()
         commit(edit, "Deleted", position?.seconds)
+    }
+    /// What Copy, Cut and Delete act on: the marked range, or else the selected parts.
+    private fun scope(edit: EditState): TimelineSelection? {
+        val a = timeline.rangeStart; val b = timeline.rangeEnd
+        if (a != null && b != null) return TimelineEditing.rangeSelection(minOf(a, b), maxOf(a, b), edit)
+        return selection(edit).takeIf { !it.isEmpty }
+    }
+    private fun copyOrCut(cut: Boolean) {
+        val project = project ?: return
+        val scope = scope(project.edit) ?: return
+        if (cut) {
+            val (edit, clipboard, position) = TimelineClipboardEditing.cutting(scope, project.edit, EditTime.seconds(editor.playhead)) ?: return
+            timeline.rangeStart = null; timeline.rangeEnd = null; selected = emptySet()
+            store.clipboards[project.id] = clipboard
+            commit(edit, "Cut to clipboard", position.seconds)
+        } else {
+            val clipboard = TimelineClipboardEditing.copying(scope, project.edit) ?: return
+            editor.pause()
+            store.clipboards[project.id] = clipboard
+            timeline.rangeStart = null; timeline.rangeEnd = null; selected = emptySet()
+            timeline.invalidate(); rebuildTools()
+            say("Copied to clipboard")
+        }
+    }
+    /// Paste at the playhead. Where a picture cut and a sound cut meet, or at an
+    /// edge of a project with music beyond its pictures, the user picks one.
+    private fun paste(target: TimelinePasteTarget?, chosen: Boolean = false) {
+        val project = project ?: return
+        val clipboard = store.clipboards[project.id] ?: return
+        editor.pause()
+        val playhead = EditTime.seconds(editor.playhead)
+        val sites = TimelineClipboardEditing.targets(project.edit, playhead)
+        if (!chosen && sites.size > 1) {
+            val buttons = sites.map { choice -> Design.button(context, choice.label(project.edit.timeline), Design.text, Design.raised, 13f) { closePanel(); paste(choice, true) }
+                .apply { contentDescription = "Paste at " + choice.label(project.edit.timeline) } }
+            val content = Design.column(context, Design.label(context, "Paste where?", 15f, bold = true), spacing = 6f)
+            content.addView(choices(*buttons.toTypedArray()), LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            content.addView(Design.button(context, "Cancel") { closePanel() })
+            showPanel(content)
+            return
+        }
+        val (edit, added) = TimelineClipboardEditing.pasting(clipboard, project.edit, playhead, if (chosen) target else sites.firstOrNull()) ?: return
+        timeline.rangeStart = null; timeline.rangeEnd = null
+        commit(edit, "Pasted", edit.timeline.interval(added)?.start?.seconds)
+        select(added.ids); timeline.invalidate()
     }
     private fun trim(id: UUID, left: Boolean, delta: Double) {
         val project = project ?: return

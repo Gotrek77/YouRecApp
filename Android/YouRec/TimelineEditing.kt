@@ -27,16 +27,22 @@ object TimelineEditing {
 
     // Use exactly the same clip-relative boundaries for Cut and Delete.
     // Absolute quantization corrupts selections at non-frame-aligned take joins.
-    fun removing(start: Double, end: Double, state: EditState, preserving: EditTime? = null): Pair<EditState, EditTime?> {
-        if (end - start < frame - 0.00001) return state to preserving
+    /// A marked range as a selection of everything inside it. Ends within a
+    /// frame of a cut snap to that cut, so no sliver is left behind.
+    fun rangeSelection(start: Double, end: Double, state: EditState): TimelineSelection? {
+        if (end - start < frame - 0.00001) return null
         val boundaries = (state.timeline.video.flatMap { listOf(it.start.seconds, it.end.seconds) } + state.timeline.audio.flatMap { listOf(it.start.seconds, it.end.seconds) }).toSet()
         fun aligned(time: Double): Double {
             val nearest = boundaries.minByOrNull { abs(it - time) } ?: return time
             return if (abs(nearest - time) < frame) nearest else time
         }
         val a = aligned(start); val b = aligned(end)
-        if (b <= a) return state to preserving
-        val (timeline, selection) = state.timeline.scoped(state.timeline.entireSelection(EditInterval(a, b)))
+        if (b <= a) return null
+        return state.timeline.entireSelection(EditInterval(a, b))
+    }
+    fun removing(start: Double, end: Double, state: EditState, preserving: EditTime? = null): Pair<EditState, EditTime?> {
+        val range = rangeSelection(start, end, state) ?: return state to preserving
+        val (timeline, selection) = state.timeline.scoped(range)
         val position = timeline.remove(selection, preserving)
         return EditState(timeline, state.outputSize).also { it.canvasReference = state.canvasReference } to position
     }

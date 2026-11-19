@@ -83,21 +83,43 @@ def tap(label, seconds=20, last=False):
     time.sleep(0.8)
     return True
 
+TOOL_ROW = None   # the y of the editor's tool row, learnt from the first tool seen
+
 def tool(label):
-    """Tap a tool in the editor's row, which scrolls sideways when it does not fit."""
-    for attempt in range(4):
+    """Tap a tool in the editor's row, which scrolls sideways when it does not fit.
+    The row is swept back to its start, then forward, so its position does not matter."""
+    global TOOL_ROW
+    for attempt in range(10):
         node = find(label, exact=True)
         if node and node[2]:
+            TOOL_ROW = TOOL_ROW or node[3][1]
             adb("shell", "input", "tap", str(node[3][0]), str(node[3][1]))
             note("tap  " + label); time.sleep(1); return True
-        # Any tool still on screen marks the row; it may already be scrolled past Split.
-        anchor = next((n for n in (find(t, exact=True) for t in ("Split", "Volume", "Speed", "Crop", "Mirror", "Color", "Text", "Record", "Add video")) if n), None)
-        if not anchor:
-            break
-        adb("shell", "input", "swipe", "900", str(anchor[3][1]), "200", str(anchor[3][1]), "300")
-        time.sleep(1)
+        if TOOL_ROW is None:
+            anchor = next((n for n in (find(t, exact=True) for t in ("Split", "Volume", "Speed", "Record", "Add video")) if n), None)
+            if not anchor:
+                break
+            TOOL_ROW = anchor[3][1]
+        y = str(TOOL_ROW)
+        if attempt < 3:
+            adb("shell", "input", "swipe", "200", y, "1000", y, "200")   # towards the start
+        else:
+            adb("shell", "input", "swipe", "900", y, "300", y, "300")    # then forward, one step at a time
+        time.sleep(0.8)
     fail("the '%s' tool was not found. On screen: %s" % (label, describe()))
     return False
+
+def readout():
+    """The editor's 'position / duration' text as two numbers of seconds."""
+    text = next((n[1] for n in nodes() if " / " in n[1]), "")
+    def seconds(part):
+        minutes, rest = part.strip().split(":")
+        return int(minutes) * 60 + float(rest)
+    try:
+        position, total = text.split(" / ")
+        return seconds(position), seconds(total)
+    except ValueError:
+        return None
 
 def option(label, family):
     """Tap a choice in a panel's row of choices, which scrolls sideways like the tools."""
@@ -305,7 +327,41 @@ def main():
         if shape and shape not in out:
             fail("the export is not in the chosen 1:1 shape")
     crashed()
+    clipboard()
+    if crashed(): return
     interrupted(len(takes))
+
+def clipboard():
+    """Mark a range between two cuts, copy it and paste it: the edit grows by its length."""
+    if find("Close"):
+        tap("Close")
+    tap("Previous cut", 10); time.sleep(0.8)
+    before = readout()
+    if not before or not tool("Start"):
+        return
+    tap("Previous cut", 10); time.sleep(0.8)
+    marked = readout()
+    if not tool("End") or not tool("Copy"):
+        return
+    after_copy = readout()
+    if not tool("Paste"):
+        return
+    time.sleep(1)
+    choice = find("Paste at ")
+    if choice:
+        tap("Paste at ")
+    time.sleep(1)
+    after = readout()
+    note("clipboard: before %s, marked to %s, after paste %s | %s" % (before, marked, after, describe()))
+    if not before or not marked or not after:
+        fail("the timeline readout could not be read around Copy and Paste")
+        return
+    length = abs(before[0] - marked[0])
+    if after_copy and after_copy[1] != before[1]:
+        fail("Copy changed the edit's length")
+    if abs(after[1] - (before[1] + length)) > 0.1:
+        fail("after pasting %.2f s the edit lasts %.2f s instead of %.2f s" % (length, after[1], before[1] + length))
+    shot("editor-after-paste")
 
 def interrupted(before):
     """Kill the app in the middle of a take, as a crash or a dead battery would,

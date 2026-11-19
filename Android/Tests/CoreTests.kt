@@ -23,6 +23,7 @@ fun main(arguments: Array<String>) {
     mixTests()
     journalTests(File(root, "Journal"))
     videoToolsTests()
+    clipboardTests()
     println("PASS: YouRec Android core")
 }
 

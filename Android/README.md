@@ -53,7 +53,9 @@ capture, recording controls, the cut editor, export.
   handles (shorten, or reveal trimmed material), **Move** with snapping and
   Done/Cancel, **Unlink**/**Link** for independent picture and sound lanes,
   **Close gap**, **Volume** with mute, **Fade in** and **Fade out**, bookmarks,
-  cut navigation, **Add video**, **Add audio**, persistent Undo/Redo.
+  cut navigation, **Add video**, **Add audio**, persistent Undo/Redo,
+  **Copy**, **Cut** and **Paste** of selected parts or a marked range (at a
+  cut where picture and sound sequences meet, Paste asks which one).
   **Speed** from 0.25× to 4× with the pitch of the sound preserved, **Crop**
   with zoom, position, rotation and the project shapes (Original, 16:9, 9:16,
   1:1, 4:5), and **Mirror**, on the selected clips or the whole project.
@@ -91,7 +93,7 @@ shaders · Transitions · Dragging and pinching a placed picture in the preview,
 and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
 animated Crop and Placement · Image overlays · Photos
 as clips · Stabilization · Enhance audio (RNNoise, DeepFilterNet3, LavaSR,
-VoiceFixer) · Censor audio · Pause cuts · Copy/paste · Cover picker · Original
+VoiceFixer) · Censor audio · Pause cuts · Cover picker · Original
 recordings browser · Duplicate, Zip project and OpenTimelineIO · Dual-camera
 layouts, live effects, face follow, front light, horizon level, focus peaking ·
 Record-here insertion ·

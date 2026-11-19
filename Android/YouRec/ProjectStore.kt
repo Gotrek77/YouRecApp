@@ -27,6 +27,8 @@ class ProjectStore(private val context: Context) {
     var selectedID: UUID? = null; private set
     var error: String? = null
         set(value) { field = value; changed() }
+    /// Copy and Cut, per project, for this run of the app only.
+    val clipboards = HashMap<UUID, TimelineClipboard>()
     var importing = false; private set
     var operationLabel = ""; private set
     var operationProgress = 0.0; private set

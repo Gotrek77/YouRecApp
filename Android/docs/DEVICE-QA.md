@@ -128,6 +128,7 @@ device to confirm:
 | Split, range Delete, trims | The cut heard and seen in preview is at the marked frame; Undo restores it |
 | Trim handles | Both edges of a short clip can be grabbed; dragging inward shortens, outward reveals; one Undo per gesture |
 | Move, Unlink, Link, Close gap | Parts snap to cuts; detached sound stays put when its picture moves; Cancel leaves no history entry |
+| Copy, Cut, Paste | A marked range or selected clips paste at the playhead with their titles, crop and fades; at a cut where picture and sound meet, the choice offered matches what is pasted; one Undo removes the paste |
 | Volume and fades | Audible change matches the waveform; a fade survives a split through it |
 | Timeline | Thumbnails and waveforms load without stalling the interface on a long project; pinch zooms from whole-project fit to frame level |
 | TalkBack | Every control announces a name; tools remain reachable |
