@@ -191,19 +191,85 @@ sealed class BookmarkAnchor {
 data class TimelineBookmark(val id: UUID = UUID.randomUUID(), val label: String = "", val anchor: BookmarkAnchor)
 data class ResolvedBookmark(val bookmark: TimelineBookmark, val time: EditTime) { val id: UUID get() = bookmark.id }
 
-data class CompiledTimelineInterval(val interval: EditInterval, val video: List<UUID>, val audio: List<UUID>)
+data class PlacementEdgeCrop(val left: Double = 0.0, val right: Double = 0.0, val top: Double = 0.0, val bottom: Double = 0.0) {
+    companion object { const val minimumSpan = 0.02 }
+    val isEmpty: Boolean get() = left == 0.0 && right == 0.0 && top == 0.0 && bottom == 0.0
+    val valid: Boolean get() = listOf(left, right, top, bottom).all { it.isFinite() && it >= 0 }
+        && left + right <= 1 - minimumSpan + 0.0000001 && top + bottom <= 1 - minimumSpan + 0.0000001
+}
+/// Where the part of a picture chosen by `framing` sits on the canvas while it
+/// shares the frame with others. All values are fractions of the canvas.
+data class PlacementFraming(val x: Double = 0.5, val y: Double = 0.5, val zoom: Double = 1.0) {
+    fun crop(source: CanvasSize, viewport: CanvasSize) = CropSettings(x = x, y = y, zoom = zoom).rect(source, viewport)
+}
+data class VideoPlacement(val x: Double = 0.5, val y: Double = 0.5, val width: Double = 1.0, val height: Double = 1.0,
+                          val framing: PlacementFraming = PlacementFraming(), val fill: Boolean = true, val order: Int = 0,
+                          // Independent clipping after framing/placement. It never takes
+                          // part in Fit/Fill or recentres the picture.
+                          val edgeCrop: PlacementEdgeCrop? = null) {
+    val valid: Boolean get() = listOf(x, y, width, height, framing.x, framing.y, framing.zoom).all { it.isFinite() }
+        && x in -2.0..3.0 && y in -2.0..3.0 && width in 0.01..3.0 && height in 0.01..3.0
+        && framing.x in 0.0..1.0 && framing.y in 0.0..1.0 && framing.zoom in 1.0..8.0 && (edgeCrop?.valid ?: true)
+    fun window(canvas: CanvasSize) = Rectangle((x - width / 2) * canvas.width, (y - height / 2) * canvas.height, width * canvas.width, height * canvas.height)
+    /// Fit can leave empty space inside the window; the picture itself is smaller.
+    fun pictureWindow(canvas: CanvasSize): Rectangle {
+        val full = window(canvas)
+        if (fill) return full
+        val scale = minOf(width, height)
+        return Rectangle(full.midX - canvas.width * scale / 2, full.midY - canvas.height * scale / 2, canvas.width * scale, canvas.height * scale)
+    }
+    fun visibleWindow(canvas: CanvasSize): Rectangle {
+        val full = pictureWindow(canvas); val crop = edgeCrop ?: PlacementEdgeCrop()
+        return Rectangle(full.x + crop.left * full.width, full.y + crop.top * full.height, full.width * (1 - crop.left - crop.right), full.height * (1 - crop.top - crop.bottom))
+    }
+    /// From the finished frame of one clip to its place among the others.
+    fun transform(canvas: CanvasSize): Affine {
+        val window = window(canvas)
+        val crop = framing.crop(canvas, if (fill) CanvasSize(window.width, window.height) else canvas)
+        if (crop.width <= 0 || crop.height <= 0) return Affine()
+        val scale = if (fill) maxOf(window.width / crop.width, window.height / crop.height) else minOf(window.width / crop.width, window.height / crop.height)
+        return Affine.translation(-crop.midX, -crop.midY).then(Affine.scale(scale, scale)).then(Affine.translation(window.midX, window.midY))
+    }
+    companion object {
+        /// The arrangements offered as presets: 0 full frame, 1 side by side, 2 stacked, 3 the first full with the others inset.
+        fun layout(kind: Int, index: Int, count: Int): VideoPlacement {
+            var value = VideoPlacement(order = index)
+            if (kind == 1) { val w = 1.0 / maxOf(1, count); value = value.copy(width = w, x = (index + 0.5) * w) }
+            if (kind == 2) { val h = 1.0 / maxOf(1, count); value = value.copy(height = h, y = (index + 0.5) * h) }
+            if (kind == 3 && index > 0) {
+                val total = maxOf(1, count - 1); val columns = if (total <= 3) 1 else Math.ceil(Math.sqrt(total.toDouble())).toInt()
+                val rows = Math.ceil(total.toDouble() / columns).toInt(); val gap = 0.02
+                val side = minOf(0.32, (0.9 - (maxOf(columns, rows) - 1) * gap) / maxOf(columns, rows))
+                value = value.copy(width = side, height = side, x = 0.94 - side / 2 - ((index - 1) % columns) * (side + gap), y = 0.94 - side / 2 - ((index - 1) / columns) * (side + gap))
+            }
+            return value
+        }
+        /// One stable order for the compositor, the inspector and hit testing.
+        fun ordered(ids: List<UUID>, settings: Map<UUID, VideoPlacement>): List<UUID> {
+            val fallback = ids.withIndex().associate { it.value to it.index }
+            return ids.sortedWith { p, q ->
+                val a = settings[p]?.order ?: fallback[p]!!; val b = settings[q]?.order ?: fallback[q]!!
+                if (a == b) fallback[p]!!.compareTo(fallback[q]!!) else a.compareTo(b)
+            }
+        }
+    }
+}
+data class VideoPlacementRegion(val id: UUID = UUID.randomUUID(), val participants: Set<UUID>, val videos: Map<UUID, VideoPlacement>)
+
+data class CompiledTimelineInterval(val interval: EditInterval, val video: List<UUID>, val audio: List<UUID>, val placementID: UUID? = null)
 
 /// Canonical independent-item edit. There is no inferred magnetic track: ripple
 /// is an explicit edit command and a link records selection membership only.
 /// Items are immutable values; a timeline is copied before it is changed.
 class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio: List<AudioTimelineItem> = emptyList(),
-                    var links: List<TimelineLink> = emptyList(), var bookmarks: List<TimelineBookmark> = emptyList()) {
+                    var links: List<TimelineLink> = emptyList(), var bookmarks: List<TimelineBookmark> = emptyList(),
+                    var placements: List<VideoPlacementRegion> = emptyList()) {
     // Transient provenance follows tool drafts; it is not rendering data.
     var captureBase: Int? = null
 
-    override fun equals(other: Any?) = other is TrackTimeline && video == other.video && audio == other.audio && links == other.links && bookmarks == other.bookmarks
+    override fun equals(other: Any?) = other is TrackTimeline && video == other.video && audio == other.audio && links == other.links && bookmarks == other.bookmarks && placements == other.placements
     override fun hashCode() = video.hashCode() * 31 + audio.hashCode()
-    fun copy() = TrackTimeline(video, audio, links, bookmarks).also { it.captureBase = captureBase }
+    fun copy() = TrackTimeline(video, audio, links, bookmarks, placements).also { it.captureBase = captureBase }
 
     val duration: EditTime get() = maxOf(video.maxOfOrNull { it.end } ?: EditTime.zero, audio.maxOfOrNull { it.end } ?: EditTime.zero)
     val allIDs: Set<UUID> get() = (video.map { it.id } + audio.map { it.id }).toSet()
@@ -374,6 +440,7 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
         video = video.map { if (it.id in selection.video) it.copy(start = it.start + amount) else it }
         promoteNewOverlaps(selection.video, previous)
         audio = audio.map { if (it.id in selection.audio) it.copy(start = it.start + amount) else it }
+        retainPlacementAcrossNewOverlaps(selection.video)
         pruneRelations()
     }
     /// A newly dropped overlay comes forward. Adjusting an existing overlap
@@ -445,8 +512,60 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
         // (unlinked picture/sound), the existing gap and clock stay unchanged.
         return minOf(duration, maxOf(EditTime.zero, mapped ?: (position - removedTime)))
     }
+    /// A newly overlapping third video must not reset the existing windows.
+    /// Geometry follows shared items; new items keep their normal layer slot.
+    fun placementSeed(participants: Set<UUID>, near: EditTime, moving: Set<UUID> = emptySet()): VideoPlacementRegion {
+        placements.firstOrNull { it.participants == participants }?.let { return it }
+        val members = video.filter { it.id in participants }.sortedWith(backToFront)
+        fun distance(region: VideoPlacementRegion): Double {
+            val items = video.filter { it.id in region.participants }
+            val lower = items.maxOfOrNull { it.start } ?: EditTime.zero; val upper = items.minOfOrNull { it.end } ?: EditTime.zero
+            return maxOf(0.0, lower.seconds - near.seconds, near.seconds - upper.seconds)
+        }
+        fun shared(region: VideoPlacementRegion) = region.participants.count { it in participants }
+        val candidates = placements.filter { shared(it) > 0 }.sortedWith { p, q ->
+            if (shared(p) != shared(q)) shared(q).compareTo(shared(p))
+            else if (distance(p) == distance(q)) p.id.text.compareTo(q.id.text) else distance(p).compareTo(distance(q))
+        }
+        val values = members.associate { item ->
+            item.id to (candidates.firstOrNull { region -> region.videos[item.id] != null && (item.id in moving || shared(region) > 1 || distance(region) < 0.00001) }?.videos?.get(item.id) ?: VideoPlacement())
+        }.toMutableMap()
+        val order = members.map { it.id }.toMutableList()
+        for (region in candidates.reversed()) {
+            val slots = order.indices.filter { order[it] in region.participants }
+            for ((slot, id) in slots.zip(VideoPlacement.ordered(slots.map { order[it] }, region.videos))) order[slot] = id
+        }
+        for ((rank, id) in order.withIndex()) values[id] = values[id]!!.copy(order = rank)
+        return VideoPlacementRegion(participants = participants, videos = values)
+    }
+    private fun retainPlacementAcrossNewOverlaps(moving: Set<UUID>) {
+        if (placements.isEmpty() || moving.isEmpty()) return
+        val original = copy()
+        val seen = placements.map { it.participants }.toMutableSet()
+        for (interval in compile()) {
+            if (interval.video.size < 2 || interval.video.none { it in moving }) continue
+            val ids = interval.video.toSet()
+            if (!seen.add(ids)) continue
+            val seed = original.placementSeed(ids, interval.interval.start, moving)
+            val defaults = interval.video.withIndex().associate { it.value to VideoPlacement(order = it.index) }
+            if (seed.videos != defaults) placements = placements + seed
+        }
+    }
+    /// Store an arrangement for exactly these pictures; the plain stack needs no record.
+    fun setPlacement(region: VideoPlacementRegion) {
+        val members = video.filter { it.id in region.participants }.sortedWith(backToFront)
+        val defaults = members.withIndex().associate { it.value.id to VideoPlacement(order = it.index) }
+        placements = placements.filter { it.participants != region.participants } + (if (region.videos == defaults) emptyList() else listOf(region))
+        pruneRelations()
+    }
+
     fun pruneRelations() {
         val ids = allIDs
+        // An arrangement lives only while all its pictures still share some time.
+        placements = placements.filter { region ->
+            val members = video.filter { it.id in region.participants }
+            members.size == region.participants.size && members.size > 1 && members.maxOf { it.start } < members.minOf { it.end }
+        }
         links = links.mapNotNull { link -> val members = link.members.intersect(ids); if (members.size >= 2) link.copy(members = members) else null }
         audio = audio.map { sound ->
             val id = sound.followsVideo
@@ -473,8 +592,9 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
         for (item in audio) { edges.add(item.start); edges.add(item.end) }
         val marks = edges.filter { it >= EditTime.zero && it <= duration }
         return marks.zip(marks.drop(1)).mapNotNull { (a, b) ->
-            if (b <= a) null else CompiledTimelineInterval(EditInterval(a, b),
-                video.filter { a in it.interval }.sortedWith(backToFront).map { it.id }, audio.filter { a in it.interval }.map { it.id })
+            val pictures = video.filter { a in it.interval }.sortedWith(backToFront).map { it.id }
+            if (b <= a) null else CompiledTimelineInterval(EditInterval(a, b), pictures, audio.filter { a in it.interval }.map { it.id },
+                pictures.toSet().let { ids -> placements.firstOrNull { it.participants == ids }?.id })
         }
     }
 
@@ -525,6 +645,13 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
             if (right.size >= 2) newLinks.add(TimelineLink(if (left.isEmpty()) group.id else UUID.randomUUID(), right))
         }
         links = newLinks
+        // Every child starts at the same cut. An arrangement can survive on
+        // either side, but a mix of left and right children never overlaps.
+        placements = placements + placements.mapNotNull { region ->
+            val divided = region.participants.filter { children[it] != null }
+            if (divided.isEmpty()) null else VideoPlacementRegion(participants = region.participants.map { children[it] ?: it }.toSet(),
+                videos = region.videos.mapKeys { children[it.key] ?: it.key })
+        }
         pruneRelations()
         return children
     }
@@ -604,7 +731,11 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
             require(link.members.size >= 2 && ids.containsAll(link.members) && link.members.none { it in linked })
             linked.addAll(link.members)
         }
-        require(links.map { it.id }.toSet().size == links.size && bookmarks.map { it.id }.toSet().size == bookmarks.size)
+        require(links.map { it.id }.toSet().size == links.size && bookmarks.map { it.id }.toSet().size == bookmarks.size
+            && placements.map { it.id }.toSet().size == placements.size)
+        val pictures = video.map { it.id }.toSet()
+        for (placement in placements) require(placement.participants.size > 1 && pictures.containsAll(placement.participants)
+            && placement.videos.keys == placement.participants && placement.videos.values.all { it.valid })
         for (bookmark in bookmarks) {
             require(bookmark.label.length <= 500)
             when (val anchor = bookmark.anchor) {
@@ -668,6 +799,7 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
         }
         promoteNewOverlaps(retimed, previousItems)
         synchronizeFollowers()
+        retainPlacementAcrossNewOverlaps(retimed)
         pruneRelations()
     }
     private fun snapPoints(excluding: Set<UUID>, extra: List<Double>): List<EditTime> {
@@ -790,6 +922,7 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
         }
         synchronizeFollowers()
         promoteNewOverlaps(target.video, previous)
+        retainPlacementAcrossNewOverlaps(target.video)
         pruneRelations()
     }
 }

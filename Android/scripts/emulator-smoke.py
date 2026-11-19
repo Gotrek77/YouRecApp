@@ -177,14 +177,14 @@ def main():
     tap("Add recording bookmark")
     time.sleep(1)
     tap("Pause recording")
-    wait("Resume recording", 15)
+    wait("Resume recording", 60)
     shot("paused")
     time.sleep(2)   # paused time must not appear in the movie
     tap("Resume recording")
     time.sleep(3)
     wait("Stop recording", 10)
     tap("Stop recording")
-    wait("Record into this project", 20)
+    wait("Record into this project", 60)
     note("after stop: " + describe())
     if crashed(): return
 

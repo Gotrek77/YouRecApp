@@ -19,29 +19,57 @@ import java.util.UUID
 /// reused across cuts, closed together.
 class RenderSources(private val project: Project, private val folder: File, private val strict: Boolean = false) {
     private val failed = HashSet<UUID>()
-    private val frames = LinkedHashMap<UUID, FrameReader>(4, 0.75f, true)
+    private val frames = LinkedHashMap<Pair<UUID, Int>, FrameReader>(4, 0.75f, true)
     private val sound = HashMap<UUID, DecodedAudio>()
     /// Two edits of the same originals can share open decoders.
     val key: Any = folder.path to project.sources.map { it.id to it.filename }
     fun file(source: UUID): File? = project.sources.firstOrNull { it.id == source }?.let { File(folder, it.filename) }
     /// GL thread. In the preview a source that cannot be decoded shows black; an
     /// export (strict) fails instead of publishing a movie with missing pictures.
-    fun frames(source: UUID): FrameReader? {
-        frames[source]?.let { return it }
+    fun frames(source: UUID, slot: Int = 0): FrameReader? {
+        val key = source to slot
+        frames[key]?.let { return it }
         if (source in failed) return null
         val file = file(source) ?: return null
-        // Hardware decoders are a scarce system resource: keep three at most.
-        while (frames.size >= 3) { val oldest = frames.keys.first(); frames.remove(oldest)?.release() }
+        // Hardware decoders are a scarce system resource: keep four at most.
+        while (frames.size >= 4) { val oldest = frames.keys.first(); frames.remove(oldest)?.release() }
         val reader = try { FrameReader(file) } catch (e: Exception) {
             if (strict) throw ProjectError.InvalidMedia()
             // Remember the failure: retrying on every frame would stall the preview.
             failed.add(source); return null
         }
-        frames[source] = reader
+        frames[key] = reader
         return reader
     }
-    /// Close one reader whose decoder failed or was reclaimed; the next frame reopens it.
-    fun drop(source: UUID) { try { frames.remove(source)?.release() } catch (e: Exception) { } }
+    /// Close the readers of a source whose decoder failed or was reclaimed; the next frame reopens them.
+    fun drop(source: UUID) { for (key in frames.keys.filter { it.first == source }) try { frames.remove(key)?.release() } catch (e: Exception) { } }
+    /// Draw one moment of the edit into the current surface, already cleared to
+    /// black. Preview and export both come through here. False if a picture
+    /// that should be there could not be shown.
+    fun draw(layers: List<RenderPlan.Layer>, program: FrameProgram, width: Int, height: Int): Boolean {
+        var complete = true
+        val frame = CanvasSize(width.toDouble(), height.toDouble())
+        for (layer in layers) {
+            val reader = frames(layer.picture.source, layer.slot)
+            if (reader == null || !reader.show(layer.picture.sourceTime)) { complete = false; continue }
+            val source = CanvasSize(reader.video.displayWidth.toDouble(), reader.video.displayHeight.toDouble())
+            var placed = layer.picture.clip.pictureTransform(source, frame)
+            val placement = layer.placement
+            if (placement == null) { program.draw(reader.texture, reader.matrix, placed, source, frame); continue }
+            // Within its window a picture is a small frame of its own: black behind it, nothing outside it.
+            val visible = placement.visibleWindow(frame)
+            val left = Math.round(maxOf(0.0, visible.x)).toInt(); val right = Math.round(minOf(frame.width, visible.x + visible.width)).toInt()
+            val top = Math.round(maxOf(0.0, visible.y)).toInt(); val bottom = Math.round(minOf(frame.height, visible.y + visible.height)).toInt()
+            if (right <= left || bottom <= top) continue
+            placed = placed.then(placement.transform(frame))
+            android.opengl.GLES20.glEnable(android.opengl.GLES20.GL_SCISSOR_TEST)
+            android.opengl.GLES20.glScissor(left, height - bottom, right - left, bottom - top)
+            android.opengl.GLES20.glClearColor(0f, 0f, 0f, 1f); android.opengl.GLES20.glClear(android.opengl.GLES20.GL_COLOR_BUFFER_BIT)
+            program.draw(reader.texture, reader.matrix, placed, source, frame)
+            android.opengl.GLES20.glDisable(android.opengl.GLES20.GL_SCISSOR_TEST)
+        }
+        return complete
+    }
     /// Audio thread.
     fun sound(source: UUID): PCMSource? = sound.getOrPut(source) { DecodedAudio(file(source) ?: return null) }
     fun releaseFrames() { for (reader in frames.values) try { reader.release() } catch (e: Exception) { }; frames.clear(); failed.clear() }
@@ -131,14 +159,8 @@ class MovieExport(project: Project, private val folder: File, private val export
                 val time = EditTime.seconds(n.toDouble() / fps)
                 val t0 = System.nanoTime()
                 FrameProgram.clear(width, height)
-                val picture = plan.picture(time)
-                val reader = picture?.let { sources.frames(it.source) }
-                if (picture != null && reader != null) {
-                    // A take that yields no picture must not become a black movie.
-                    if (!reader.show(picture.sourceTime)) throw ProjectError.InvalidMedia()
-                    val source = CanvasSize(reader.video.displayWidth.toDouble(), reader.video.displayHeight.toDouble()); val frame = CanvasSize(width.toDouble(), height.toDouble())
-                    program.draw(reader.texture, reader.matrix, picture.clip.pictureTransform(source, frame), source, frame)
-                }
+                // A take that yields no picture must not become a black movie.
+                if (!sources.draw(plan.layers(time), program, width, height)) throw ProjectError.InvalidMedia()
                 val t1 = System.nanoTime()
                 egl.setPresentationTime(window, n * 1_000_000_000L / fps)
                 egl.swap(window)

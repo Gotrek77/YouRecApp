@@ -18,6 +18,67 @@ fun videoToolsTests() {
     framingTests()
     speedTests()
     stretchTests()
+    placementTests()
+}
+
+private fun placementTests() {
+    val hd = CanvasSize(1920.0, 1080.0)
+    val a = SourceMedia(filename = "a.mp4", duration = 6.0); val b = SourceMedia(filename = "b.mp4", duration = 6.0)
+    val edit = EditState(listOf(TimelineClip(sourceID = a.id, start = 0.0, end = 6.0), TimelineClip(sourceID = b.id, start = 0.0, end = 4.0)))
+    val under = edit.timeline.video[0].id; val over = edit.timeline.video[1].id
+    edit.timeline.unlink(edit.timeline.entireSelection())
+    edit.timeline.move(TimelineSelection(video = setOf(over)), EditTime.seconds(-5.0))     // b now covers 1…5 over a
+    val both = setOf(under, over)
+    require(RenderPlan(edit).layers(EditTime.seconds(2.0)).map { it.picture.item } == listOf(over), "Without an arrangement the front picture covers the frame")
+    val seed = edit.timeline.placementSeed(both, EditTime.seconds(2.0))
+    require(seed.videos[under] == VideoPlacement(order = 0) && seed.videos[over] == VideoPlacement(order = 1), "A new arrangement starts from the plain stack")
+    val plain = edit.copy(); plain.timeline.setPlacement(seed)
+    require(plain.timeline.placements.isEmpty(), "The plain stack is not stored")
+
+    val side = edit.copy()
+    side.timeline.setPlacement(seed.copy(videos = mapOf(under to VideoPlacement.layout(1, 0, 2), over to VideoPlacement.layout(1, 1, 2))))
+    side.timeline.validate(listOf(a, b))
+    val layers = RenderPlan(side).layers(EditTime.seconds(2.0))
+    require(layers.map { it.picture.item } == listOf(under, over) && layers.all { it.placement != null } && layers.map { it.picture.sourceTime } == listOf(2.0, 1.0),
+        "Arranged pictures are all drawn, back to front, each at its own source time")
+    require(RenderPlan(side).layers(EditTime.seconds(0.5)).single().placement == null && RenderPlan(side).layers(EditTime.seconds(5.5)).single().picture.item == under,
+        "Outside the overlap a picture has the whole frame again")
+    val left = side.timeline.placements[0].videos[under]!!; val right = side.timeline.placements[0].videos[over]!!
+    require(left.window(hd) == Rectangle(0.0, 0.0, 960.0, 1080.0) && right.window(hd) == Rectangle(960.0, 0.0, 960.0, 1080.0), "Side by side splits the frame in two")
+    val fill = left.transform(hd)
+    require(near(fill.x(960.0, 540.0), 480.0) && near(fill.y(960.0, 540.0), 540.0) && near(fill.a, 1.0), "Fill shows the middle of the picture at full size inside its half")
+    val fit = left.copy(fill = false)
+    require(near(fit.transform(hd).a, 0.5) && fit.pictureWindow(hd) == Rectangle(0.0, 270.0, 960.0, 540.0), "Fit shows the whole picture, smaller, inside its half")
+    val cropped = left.copy(edgeCrop = PlacementEdgeCrop(left = 0.25, bottom = 0.5))
+    require(cropped.visibleWindow(hd) == Rectangle(240.0, 0.0, 720.0, 540.0) && cropped.transform(hd) == left.transform(hd), "An edge crop hides part of the window without moving the picture")
+    val corner = VideoPlacement.layout(3, 1, 2)
+    require(near(corner.width, 0.32) && near(corner.x, 0.78) && near(corner.y, 0.78) && VideoPlacement.layout(3, 0, 2) == VideoPlacement(order = 0), "The inset preset puts the second picture in the lower right corner")
+    require(VideoPlacement.ordered(listOf(under, over), mapOf(under to VideoPlacement(order = 1), over to VideoPlacement(order = 0))) == listOf(over, under), "Order in an arrangement decides which picture is in front")
+    val swapped = side.copy()
+    swapped.timeline.setPlacement(side.timeline.placements[0].let { it.copy(videos = it.videos.mapValues { (id, value) -> value.copy(order = if (id == under) 1 else 0) }) })
+    require(RenderPlan(swapped).layers(EditTime.seconds(2.0)).map { it.picture.item } == listOf(over, under), "Bring to front changes the drawing order only")
+
+    require(ProjectCoding.editState(Fields.of(JSON.parse(JSON.write(ProjectCoding.encode(side))))) == side, "Arrangements round-trip in the document")
+    val json = String(JSON.write(ProjectCoding.encode(side.timeline)))
+    require(json.contains("\"videos\":[\"") && json.contains("\"framing\":{"), "An arrangement is written as the iPhone app writes a dictionary keyed by identity")
+    val cut = TimelineEditing.split(side, 3.0)
+    require(cut.timeline.placements.size == 2 && RenderPlan(cut).layers(EditTime.seconds(2.0)).size == 2 && RenderPlan(cut).layers(EditTime.seconds(4.0)).size == 2
+        && RenderPlan(cut).layers(EditTime.seconds(4.0)).all { it.placement != null }, "A split through an overlap keeps the arrangement on both sides")
+    cut.timeline.validate(listOf(a, b))
+    val apart = side.copy(); apart.timeline.move(TimelineSelection(video = setOf(over)), EditTime.seconds(30.0))
+    require(apart.timeline.placements.isEmpty(), "An arrangement ends when its pictures no longer overlap")
+    val gone = TimelineEditing.deleting(TimelineSelection(video = setOf(over)), side).first
+    require(gone.timeline.placements.isEmpty() && RenderPlan(gone).layers(EditTime.seconds(2.0)).single().placement == null, "Deleting one of the pictures gives the other its frame back")
+    // Two parts of the same recording on screen at once need a decoder each.
+    val twin = EditState(listOf(TimelineClip(sourceID = a.id, start = 0.0, end = 3.0), TimelineClip(sourceID = a.id, start = 3.0, end = 6.0)))
+    twin.timeline.unlink(twin.timeline.entireSelection()); twin.timeline.move(TimelineSelection(video = setOf(twin.timeline.video[1].id)), EditTime.seconds(-3.0))
+    twin.timeline.setPlacement(twin.timeline.placementSeed(twin.timeline.video.map { it.id }.toSet(), EditTime.zero).let { region ->
+        region.copy(videos = region.videos.mapValues { (_, value) -> VideoPlacement.layout(2, value.order, 2) }) })
+    require(RenderPlan(twin).layers(EditTime.seconds(1.0)).map { it.slot } == listOf(0, 1), "Two pictures from one recording are read separately")
+    val project = Project("Placement"); project.sources = listOf(a, b); project.history = listOf(edit)
+    val trimmed = side.copy(); trimmed.timeline.setPlacement(side.timeline.placements[0].let { it.copy(videos = it.videos + (under to cropped)) })
+    project.commit(trimmed)
+    require(project.schemaVersion == 7, "An edge crop raises the schema, so older readers do not drop it")
 }
 
 private fun framingTests() {

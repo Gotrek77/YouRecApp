@@ -11,14 +11,29 @@ class RenderPlan(edit: EditState) {
     private val pictures = timeline.video.sortedWith(TrackTimeline.backToFront)
 
     data class Picture(val item: UUID, val source: UUID, val sourceTime: Double, val interval: EditInterval, val clip: TimelineClip)
-    /// The front picture covers the frame. No picture means black, never a held frame.
-    fun picture(time: EditTime): Picture? {
-        val item = pictures.lastOrNull { time in it.interval } ?: return null
-        return Picture(item.id, item.content.sourceID, item.mapping.source(time - item.start) ?: return null, item.interval, item.content)
+    /// One picture to draw. `slot` tells apart two pictures on screen at once from the same recording.
+    data class Layer(val picture: Picture, val placement: VideoPlacement?, val slot: Int)
+    /// What to draw at one time, back to front. Pictures that share the frame
+    /// through an arrangement are all drawn; without one the front picture
+    /// covers the frame. Nothing at all means black, never a held frame.
+    fun layers(time: EditTime): List<Layer> {
+        val active = pictures.filter { time in it.interval }
+        if (active.isEmpty()) return emptyList()
+        fun picture(item: VideoTimelineItem) = item.mapping.source(time - item.start)?.let { Picture(item.id, item.content.sourceID, it, item.interval, item.content) }
+        val ids = active.map { it.id }
+        val region = if (active.size > 1) timeline.placements.firstOrNull { it.participants == ids.toSet() } else null
+        if (region == null) return listOfNotNull(picture(active.last())?.let { Layer(it, null, 0) })
+        val result = ArrayList<Layer>()
+        for (id in VideoPlacement.ordered(ids, region.videos)) {
+            val shown = picture(active.first { it.id == id }) ?: continue
+            result.add(Layer(shown, region.videos[id], result.count { it.picture.source == shown.source }))
+        }
+        return result
     }
+    fun picture(time: EditTime): Picture? = layers(time).lastOrNull()?.picture
     /// What stays on screen once playback has reached the end: the last frame
-    /// of the last picture, or nothing when the movie ends on sound alone.
-    val ending: Picture? get() = if (duration > EditTime.zero) picture(duration - EditTime.ticks(EditTime.scale / 60)) else null
+    /// of the last pictures, or nothing when the movie ends on sound alone.
+    val ending: List<Layer> get() = if (duration > EditTime.zero) layers(duration - EditTime.ticks(EditTime.scale / 60)) else emptyList()
     /// The next time at which a different picture, or none, takes over.
     fun pictureChange(after: EditTime): EditTime =
         (pictures.flatMap { listOf(it.start, it.end) }.filter { it > after }.minOrNull() ?: duration)

@@ -159,16 +159,11 @@ class EditorController {
             val width = core.width(window); val height = core.height(window)
             FrameProgram.clear(width, height)
             // The last frame stays on screen at the very end, as a player would leave it.
-            val picture = if (time >= duration && duration > 0) plan?.ending else plan?.picture(EditTime.seconds(time))
-            val reader = picture?.let { sources?.frames(it.source) }
-            try {
-                if (picture != null && reader != null && reader.show(picture.sourceTime)) {
-                    val source = CanvasSize(reader.video.displayWidth.toDouble(), reader.video.displayHeight.toDouble()); val frame = CanvasSize(width.toDouble(), height.toDouble())
-                    shader.draw(reader.texture, reader.matrix, picture.clip.pictureTransform(source, frame), source, frame)
-                }
-            } catch (e: Exception) {
-                // The system can reclaim a decoder at any time. Close this one; the next frame opens a new one.
-                picture?.let { sources?.drop(it.source) }
+            val layers = (if (time >= duration && duration > 0) plan?.ending else plan?.layers(EditTime.seconds(time))) ?: emptyList()
+            try { sources?.draw(layers, shader, width, height) }
+            catch (e: Exception) {
+                // The system can reclaim a decoder at any time. Close them; the next frame opens new ones.
+                for (layer in layers) sources?.drop(layer.picture.source)
             }
             core.swap(window)
         } catch (e: Exception) {

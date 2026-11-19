@@ -59,7 +59,6 @@ internal object ProjectCoding {
     }
 
     fun timeline(value: Fields): TrackTimeline {
-        if (present(value.raw("placements"))) unsupported("Placement")
         if (present(value.raw("transitions")) || present(value.raw("generated"))) unsupported("Transitions")
         if (present(value.raw("subtitles"))) unsupported("Subtitles")
         val video = list(value.list("video")) {
@@ -76,8 +75,25 @@ internal object ProjectCoding {
         }
         val links = list(value.list("links")) { link -> TimelineLink(link.uuid("id"), link.list("members").map { Fields.uuid(it) }.toSet()) }
         val bookmarks = list(value.list("bookmarks")) { TimelineBookmark(it.uuid("id"), it.string("label"), anchor(it.fields("anchor"))) }
-        return TrackTimeline(video, audio, links, bookmarks)
+        val placements = list(value.list("placements")) { region ->
+            // Swift writes a dictionary keyed by identity as a flat list: key, value, key, value.
+            val pairs = region.list("videos")
+            if (pairs.size % 2 != 0) throw ProjectError.InvalidDocument()
+            VideoPlacementRegion(region.uuid("id"), region.list("participants").map { Fields.uuid(it) }.toSet(),
+                (0 until pairs.size / 2).associate { Fields.uuid(pairs[it * 2]) to placement(Fields.of(pairs[it * 2 + 1])) })
+        }
+        return TrackTimeline(video, audio, links, bookmarks, placements)
     }
+    private fun placement(value: Fields): VideoPlacement {
+        if (present(value.raw("motion"))) unsupported("animated Placement")
+        val framing = value.fields("framing"); val crop = value.fieldsOrNull("edgeCrop")
+        return VideoPlacement(value.double("x"), value.double("y"), value.double("width"), value.double("height"),
+            PlacementFraming(framing.double("x"), framing.double("y"), framing.double("zoom")), value.bool("fill"), value.int("order"),
+            crop?.let { PlacementEdgeCrop(it.double("left"), it.double("right"), it.double("top"), it.double("bottom")) })
+    }
+    private fun encode(value: VideoPlacement) = jsonObject("x" to value.x, "y" to value.y, "width" to value.width, "height" to value.height,
+        "framing" to jsonObject("x" to value.framing.x, "y" to value.framing.y, "zoom" to value.framing.zoom), "fill" to value.fill, "order" to value.order,
+        "edgeCrop" to value.edgeCrop?.let { jsonObject("left" to it.left, "right" to it.right, "top" to it.top, "bottom" to it.bottom) })
     fun encode(timeline: TrackTimeline) = jsonObject(
         "video" to timeline.video.map {
             jsonObject("occurrenceID" to it.occurrenceID.text, "start" to encode(it.start), "content" to encode(it.content), "layer" to it.layer,
@@ -91,7 +107,11 @@ internal object ProjectCoding {
         // Sets are sorted so that an unchanged edit keeps its content hash.
         "links" to timeline.links.map { link -> jsonObject("id" to link.id.text, "members" to link.members.map { it.text }.sorted()) },
         "bookmarks" to timeline.bookmarks.map { jsonObject("id" to it.id.text, "label" to it.label, "anchor" to encode(it.anchor)) },
-        "placements" to emptyList<Any?>(), "transitions" to emptyList<Any?>(), "generated" to emptyList<Any?>())
+        "placements" to timeline.placements.map { region ->
+            jsonObject("id" to region.id.text, "participants" to region.participants.map { it.text }.sorted(),
+                "videos" to region.videos.entries.sortedBy { it.key.text }.flatMap { listOf(it.key.text, encode(it.value)) })
+        },
+        "transitions" to emptyList<Any?>(), "generated" to emptyList<Any?>())
 
     fun editState(value: Fields): EditState {
         // The sequential "clips" form predates the first public release.

@@ -57,6 +57,9 @@ capture, recording controls, the cut editor, export.
   **Speed** from 0.25× to 4× with the pitch of the sound preserved, **Crop**
   with zoom, position, rotation and the project shapes (Original, 16:9, 9:16,
   1:1, 4:5), and **Mirror**, on the selected clips or the whole project.
+  **Placement** arranges videos that overlap: Full, Side by side, Stacked and
+  Inset presets, front/back order, Fit or Fill, and each picture's window and
+  framing.
 - **Export** to a new MP4 (H.264 or H.265, project size/720p/1080p/4K, 24–60
   fps, AAC), with a receipt naming the edit revision and source checksums. An
   unchanged edit offers its existing movie. Share, or save to the gallery.
@@ -76,8 +79,9 @@ policy older iPhone builds apply to newer projects.
 
 Subtitles and the Qwen3-ASR model · Text and title design, imported fonts ·
 Color LUTs, Log, HDR capture and export · Video effects and their Metal
-shaders · Transitions · Placement of overlapping videos
-(an overlap currently shows only the front picture) · animated Crop · Image overlays · Photos
+shaders · Transitions · Dragging and pinching a placed picture in the preview,
+and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
+animated Crop and Placement · Image overlays · Photos
 as clips · Stabilization · Enhance audio (RNNoise, DeepFilterNet3, LavaSR,
 VoiceFixer) · Censor audio · Pause cuts · Copy/paste · Cover picker · Original
 recordings browser · Duplicate, Zip project and OpenTimelineIO · Dual-camera

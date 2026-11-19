@@ -140,6 +140,8 @@ class Project(var title: String) {
         if (state == previous) return
         // An older reader would pick the first timeline picture and silently reframe the movie.
         if (state.canvasReference != null) schemaVersion = maxOf(schemaVersion, 10)
+        // Older readers must not silently discard independent placement crops.
+        if (state.timeline.placements.any { region -> region.videos.values.any { it.edgeCrop != null } }) schemaVersion = maxOf(schemaVersion, 7)
         if (state.timeline.audio.any { it.fadeIn != null || it.fadeOut != null }) schemaVersion = maxOf(schemaVersion, 11)
         if (sources.any { it.audioOnly == true }) schemaVersion = maxOf(schemaVersion, 9)
         val base = state.timeline.captureBase ?: captureLedger.size

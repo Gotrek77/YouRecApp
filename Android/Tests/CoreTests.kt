@@ -98,17 +98,17 @@ private fun persistenceTests(root: File) {
         change((copy["state"] as MutableMap<String, Any?>)["timeline"] as MutableMap<String, Any?>)
         return JSON.write(copy)
     }
+    @Suppress("UNCHECKED_CAST")
+    fun firstOf(timeline: MutableMap<String, Any?>, lane: String) = (timeline[lane] as MutableList<Any?>)[0] as MutableMap<String, Any?>
     require(snapshot.fields("state").fields("timeline").list("transitions").isEmpty(), "Unused relations are written as empty lists")
     for ((tool, change) in listOf<Pair<String, (MutableMap<String, Any?>) -> Unit>>(
         "Transitions" to { it["transitions"] = listOf(mapOf("x" to 1)) },
         "Subtitles" to { it["subtitles"] = mapOf("x" to 1) },
-        "Placement" to { it["placements"] = listOf(mapOf("x" to 1)) })) {
+        "Enhance audio" to { firstOf(it, "audio")["enhancements"] = listOf(mapOf("x" to 1)) })) {
         try { EditSnapshot.decode(tampered(change)); require(false, "$tool must be refused") }
         catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains(tool), "The refusal names $tool") }
     }
     // Fields added by later iPhone versions are recognised too, down to one clip or one sound part.
-    @Suppress("UNCHECKED_CAST")
-    fun firstOf(timeline: MutableMap<String, Any?>, lane: String) = (timeline[lane] as MutableList<Any?>)[0] as MutableMap<String, Any?>
     @Suppress("UNCHECKED_CAST")
     for ((words, change) in listOf<Pair<String, (MutableMap<String, Any?>) -> Unit>>(
         "Color" to { (firstOf(it, "video")["content"] as MutableMap<String, Any?>)["colorRegions"] = listOf(mapOf("start" to 0)) },

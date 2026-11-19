@@ -175,6 +175,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if (!chosen.isEmpty) tool("Move") { beginMove() }
             tool("Volume") { openVolume() }
             if (edit.timeline.video.isNotEmpty()) { tool("Speed") { openSpeed() }; tool("Crop") { openCrop() }; tool("Mirror") { openMirror() } }
+            if (edit.timeline.compile().any { it.video.size > 1 }) tool("Placement") { openPlacement(null) }
             if (!chosen.isEmpty && edit.timeline.links.any { link -> link.members.any { it in chosen.ids } }) tool("Unlink") { unlink() }
             else if (chosen.ids.size >= 2) tool("Link") { link(false) }
             if (edit.timeline.gap(EditTime.seconds(editor.playhead)) != null) tool("Close gap") { closeGap() }
@@ -505,6 +506,85 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if (edit != now.edit) commit(edit, "Crop removed")
             openCrop()
         }, Design.button(context, "Done", Design.accent) { closePanel() }).apply { setPadding(0, Design.dp(context, 8f), 0, 0) })
+        showPanel(content)
+    }
+
+    /// Arrange the videos that overlap under the playhead: presets, front/back
+    /// order, Fit or Fill, and each picture's window and framing.
+    private fun openPlacement(chosen: UUID?) {
+        val project = project ?: return
+        editor.pause()
+        val at = EditTime.seconds(editor.playhead)
+        val edit = project.edit
+        val active = edit.timeline.video.filter { at in it.interval }.sortedWith(TrackTimeline.backToFront)
+        if (active.size < 2) { closePanel(); return say("Move the playhead to where two videos overlap, then tap Placement.") }
+        val ids = active.map { it.id }.toSet()
+        var region = edit.timeline.placementSeed(ids, at)
+        val ordered = VideoPlacement.ordered(active.map { it.id }, region.videos)
+        val focus = chosen?.takeIf { it in ids } ?: ordered.last()
+        fun draft(now: Project) = now.edit.also { it.timeline.setPlacement(region) }
+        fun apply(message: String, next: VideoPlacementRegion, reopen: Boolean = true) {
+            region = next
+            val now = this.project ?: return
+            val changed = draft(now)
+            if (changed != now.edit) commit(changed, message)
+            if (reopen) openPlacement(focus)
+        }
+        fun change(update: (VideoPlacement) -> VideoPlacement) { region = region.copy(videos = region.videos + (focus to update(region.videos[focus] ?: VideoPlacement()))) }
+
+        val content = Design.column(context, Design.label(context, "Placement · ${active.size} videos", 15f, bold = true), spacing = 4f)
+        fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val presets = listOf("Full" to 0, "Side by side" to 1, "Stacked" to 2, "Inset" to 3).map { (name, kind) ->
+            Design.button(context, name, size = 13f) {
+                apply("Placement: $name", region.copy(videos = ordered.withIndex().associate { it.value to VideoPlacement.layout(kind, it.index, ordered.size) }))
+            }.apply { contentDescription = "Arrange $name" }
+        }
+        add(choices(*presets.toTypedArray()))
+        // Which picture the controls below act on, named by its number on the timeline.
+        val numbers = edit.timeline.video.withIndex().associate { it.value.id to it.index + 1 }
+        val pickers = ordered.map { id ->
+            val on = id == focus
+            Design.button(context, "Video ${numbers[id]}", if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) { openPlacement(id) }
+                .apply { contentDescription = "Adjust video ${numbers[id]}" + if (on) ", selected" else "" }
+        }
+        add(choices(*pickers.toTypedArray()).apply { setPadding(0, Design.dp(context, 6f), 0, 0) })
+        val current = region.videos[focus] ?: VideoPlacement()
+        val values = List(4) { Design.label(context, "", 14f, mono = true) }
+        fun describe() {
+            val now = region.videos[focus] ?: VideoPlacement()
+            values[0].text = String.format("%.0f%%", now.width * 100); values[1].text = String.format("%.0f%%", now.x * 100)
+            values[2].text = String.format("%.0f%%", now.y * 100); values[3].text = String.format("%.2f×", now.framing.zoom)
+        }
+        fun bar(max: Int, start: Int, update: (VideoPlacement, Int) -> VideoPlacement) = SeekBar(context).apply {
+            this.max = max; progress = start.coerceIn(0, max)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(b: SeekBar, value: Int, user: Boolean) {
+                    if (!user) return
+                    change { update(it, value) }; describe()
+                    this@EditorView.project?.let { editor.show(draft(it)) }
+                }
+                override fun onStartTrackingTouch(b: SeekBar) { }
+                override fun onStopTrackingTouch(b: SeekBar) { apply("Placement changed", region, reopen = false) }
+            })
+        }
+        describe()
+        // Size scales the window keeping its shape; 5% to 100% of the frame width.
+        val shape = current.height / current.width
+        add(labelled("Size", bar(95, Math.round(current.width * 100).toInt() - 5) { p, v -> p.copy(width = (v + 5) / 100.0, height = ((v + 5) / 100.0 * shape).coerceIn(0.01, 3.0)) }, values[0]))
+        add(labelled("Across", bar(100, Math.round(current.x * 100).toInt()) { p, v -> p.copy(x = v / 100.0) }, values[1]))
+        add(labelled("Down", bar(100, Math.round(current.y * 100).toInt()) { p, v -> p.copy(y = v / 100.0) }, values[2]))
+        add(labelled("Zoom", bar(700, Math.round((current.framing.zoom - 1) * 100).toInt()) { p, v -> p.copy(framing = p.framing.copy(zoom = 1 + v / 100.0)) }, values[3]))
+        add(Design.row(context,
+            Design.button(context, if (current.fill) "Fill" else "Fit", size = 13f) { change { it.copy(fill = !it.fill) }; apply(if (current.fill) "Fit" else "Fill", region) }
+                .apply { contentDescription = if (current.fill) "Filling its window. Tap to fit the whole picture." else "Fitting the whole picture. Tap to fill its window." },
+            Design.button(context, "Bring to front", size = 13f) {
+                val front = ordered.filter { it != focus } + focus
+                apply("Brought to front", region.copy(videos = region.videos.mapValues { (id, value) -> value.copy(order = front.indexOf(id)) }))
+            },
+            Design.button(context, "Reset", size = 13f) {
+                apply("Placement reset", region.copy(videos = active.withIndex().associate { it.value.id to VideoPlacement(order = it.index) }))
+            },
+            Design.button(context, "Done", Design.accent) { closePanel() }, spacing = 6f).apply { setPadding(0, Design.dp(context, 6f), 0, 0) })
         showPanel(content)
     }
 
