@@ -70,6 +70,9 @@ capture, recording controls, the cut editor, export.
   **Cover** offers nine frames of the finished edit from the marked range,
   the selected clips or the whole project; swipe through frames and share
   one as a full-size JPEG.
+  **Censor** replaces the sound in a marked range with a tone (sine, triangle
+  or square; short, soft or pulsed; pitch and level), on the selected sound or
+  all sound there; overlapping tracks share one tone.
   **Placement** arranges videos that overlap: Full, Side by side, Stacked and
   Inset presets, front/back order, Fit or Fill, and each picture's window and
   framing.
@@ -100,7 +103,7 @@ Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export 
 shaders · Transitions · Dragging and pinching a placed picture in the preview,
 and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
 animated Crop and Placement · Image overlays · Stabilization · Enhance audio (RNNoise, DeepFilterNet3, LavaSR,
-VoiceFixer) · Censor audio · Pause cuts · Original
+VoiceFixer) · Pause cuts · Original
 recordings browser · OpenTimelineIO export · Dual-camera
 layouts, live effects, face follow, front light, horizon level, focus peaking ·
 Record-here insertion ·

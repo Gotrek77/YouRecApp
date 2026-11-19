@@ -176,6 +176,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if ((a != null && b != null) || !chosen.isEmpty) { tool("Copy") { copyOrCut(false) }; tool("Cut") { copyOrCut(true) } }
             if (store.clipboards[project.id]?.isEmpty == false) tool("Paste") { paste(null) }
             tool("Volume") { openVolume() }
+            if (a != null && b != null && edit.timeline.audio.isNotEmpty()) tool("Censor") { openCensor() }
             if (edit.timeline.video.isNotEmpty()) { tool("Speed") { openSpeed() }; tool("Crop") { openCrop() }; tool("Mirror") { openMirror() }; tool("Color") { openColor() } }
             if (edit.timeline.video.isNotEmpty()) tool("Text") { openText(null) }
             if (edit.timeline.video.isNotEmpty()) tool("Cover") { openCover() }
@@ -400,6 +401,73 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         panel.removeAllViews()
         // A control released outside its track may have left a draft on screen.
         project?.let { if (it.deferredHistory == null) editor.show(it.edit) }
+    }
+
+    /// Replace the marked sound with a tone: the selected sound parts, or all
+    /// sound in the range when none is selected. Apply is one undo step.
+    private fun openCensor() {
+        val project = project ?: return
+        val a = timeline.rangeStart ?: return; val b = timeline.rangeEnd ?: return
+        editor.pause()
+        val range = TimelineEditing.rangeSelection(minOf(a, b), maxOf(a, b), project.edit)?.range ?: return
+        val chosen = selection(project.edit).audio
+        val audio = project.edit.timeline.audio.filter { (chosen.isEmpty() || it.id in chosen) && it.start < range.end && range.start < it.end }.map { it.id }.toSet()
+        if (audio.isEmpty()) return say("Move the range over sound, or select a sound part inside it.")
+        val target = TimelineSelection(audio = audio, range = range)
+        val existing = project.edit.timeline.audio.filter { it.id in audio }.flatMap { it.censors }
+            .firstOrNull { it.interval.start < range.end && range.start < it.interval.end }
+        var settings = existing?.settings ?: AudioCensorSettings()
+        val values = List(2) { Design.label(context, "", 14f, mono = true) }
+        fun describe() { values[0].text = String.format("%.0f Hz", settings.frequency); values[1].text = String.format("%.0f dB", settings.levelDB) }
+        fun bar(max: Int, start: Int, change: (Int) -> Unit) = SeekBar(context).apply {
+            this.max = max; progress = start
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(b: SeekBar, value: Int, user: Boolean) { if (user) { change(value); describe() } }
+                override fun onStartTrackingTouch(b: SeekBar) { }
+                override fun onStopTrackingTouch(b: SeekBar) { }
+            })
+        }
+        describe()
+        val content = Design.column(context, Design.label(context, "Censor audio · " + EditFrames.timestamp(range.start) + " – " + EditFrames.timestamp(range.end), 15f, bold = true),
+            Design.label(context, if (chosen.isEmpty()) "All sound in the marked range is replaced by a tone." else "The selected sound is replaced by a tone; other tracks keep playing.", 13f, Design.secondary), spacing = 4f)
+        fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        lateinit var refresh: () -> Unit
+        val waves = LinearLayout(context); val envelopes = LinearLayout(context)
+        refresh = {
+            waves.removeAllViews(); envelopes.removeAllViews()
+            for (wave in CensorWaveform.values()) {
+                val on = settings.waveform == wave; val title = wave.name
+                waves.addView(Design.button(context, title, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) { settings = settings.copy(waveform = wave); refresh() }
+                    .apply { contentDescription = "Waveform $title" + if (on) ", selected" else "" }, LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = Design.dp(context, 6f) })
+            }
+            for ((envelope, title) in listOf(CensorEnvelope.Short to "Short fade", CensorEnvelope.Soft to "Soft fade", CensorEnvelope.Pulse to "Pulsed")) {
+                val on = settings.envelope == envelope
+                envelopes.addView(Design.button(context, title, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) { settings = settings.copy(envelope = envelope); refresh() }
+                    .apply { contentDescription = "Envelope $title" + if (on) ", selected" else "" }, LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = Design.dp(context, 6f) })
+            }
+        }
+        refresh()
+        add(waves); add(envelopes)
+        // Frequency 100–4000 Hz in 25 Hz steps; level −36 to −6 dBFS.
+        add(labelled("Pitch", bar(156, Math.round((settings.frequency - 100) / 25).toInt()) { settings = settings.copy(frequency = 100.0 + it * 25) }, values[0]))
+        add(labelled("Level", bar(30, Math.round(settings.levelDB + 36).toInt()) { settings = settings.copy(levelDB = it - 36.0) }, values[1]))
+        val actions = Design.row(context, Design.button(context, "Apply", Design.background, Design.accent) {
+            val now = this.project ?: return@button
+            val edit = now.edit.copy()
+            AudioCensor.censor(edit.timeline, settings, target, existing?.id ?: UUID.randomUUID())
+            closePanel()
+            if (edit != now.edit) commit(edit, "Censored")
+        }.apply { contentDescription = "Apply censor" })
+        if (existing != null) actions.addView(Design.button(context, "Remove censor", Design.recording) {
+            val now = this.project ?: return@button
+            val edit = now.edit.copy()
+            AudioCensor.censor(edit.timeline, null, target)
+            closePanel()
+            if (edit != now.edit) commit(edit, "Censor removed")
+        }, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = Design.dp(context, 8f) })
+        actions.addView(Design.button(context, "Cancel") { closePanel() }, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = Design.dp(context, 8f) })
+        add(actions.apply { setPadding(0, Design.dp(context, 8f), 0, 0) })
+        showPanel(content)
     }
 
     // Select cover: frames of the finished edit from the marked range, the

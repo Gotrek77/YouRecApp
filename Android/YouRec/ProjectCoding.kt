@@ -90,11 +90,11 @@ internal object ProjectCoding {
         }
         val audio = list(value.list("audio")) {
             if (present(it.raw("enhancements"))) unsupported("Enhance audio")
-            if (present(it.raw("censorRegions"))) unsupported("Censor audio")
             if (present(it.raw("subtitleWords"))) unsupported("Subtitles")
             if (present(it.raw("spanningEffects"))) unsupported("effects spanning several clips")
             AudioTimelineItem(it.uuid("id"), it.uuid("occurrenceID"), it.uuid("sourceID"), time(it.fields("start")), map(it.fields("mapping")), time(it.fields("localOrigin")),
-                it.uuidOrNull("followsVideo"), it.double("volumeDB"), it.bool("muted"), fade(it.fieldsOrNull("fadeIn")), fade(it.fieldsOrNull("fadeOut")))
+                it.uuidOrNull("followsVideo"), it.double("volumeDB"), it.bool("muted"), fade(it.fieldsOrNull("fadeIn")), fade(it.fieldsOrNull("fadeOut")),
+                it.listOrNull("censorRegions")?.let { regions -> list(regions, ::censor) } ?: emptyList())
         }
         val links = list(value.list("links")) { link -> TimelineLink(link.uuid("id"), link.list("members").map { Fields.uuid(it) }.toSet()) }
         val bookmarks = list(value.list("bookmarks")) { TimelineBookmark(it.uuid("id"), it.string("label"), anchor(it.fields("anchor"))) }
@@ -107,6 +107,17 @@ internal object ProjectCoding {
         }
         return TrackTimeline(video, audio, links, bookmarks, placements)
     }
+    private fun censor(value: Fields): AudioCensorRegion {
+        val settings = value.fields("settings")
+        fun <T : Enum<T>> choice(values: Array<T>, raw: String) = values.firstOrNull { it.name.lowercase() == raw } ?: throw ProjectError.InvalidDocument()
+        return AudioCensorRegion(value.uuid("id"), interval(value.fields("interval")), time(value.fields("phaseOrigin")),
+            AudioCensorSettings(settings.double("frequency"), settings.double("levelDB"), choice(CensorWaveform.values(), settings.string("waveform")),
+                choice(CensorEnvelope.values(), settings.string("envelope"))), value.fieldsOrNull("envelopeInterval")?.let(::interval))
+    }
+    private fun encode(interval: EditInterval) = jsonObject("start" to encode(interval.start), "end" to encode(interval.end))
+    private fun encode(region: AudioCensorRegion) = jsonObject("id" to region.id.text, "interval" to encode(region.interval), "phaseOrigin" to encode(region.phaseOrigin),
+        "settings" to jsonObject("frequency" to region.settings.frequency, "levelDB" to region.settings.levelDB, "waveform" to region.settings.waveform.raw, "envelope" to region.settings.envelope.raw),
+        "envelopeInterval" to region.envelopeInterval?.let { encode(it) })
     private fun placement(value: Fields): VideoPlacement {
         if (present(value.raw("motion"))) unsupported("animated Placement")
         val framing = value.fields("framing"); val crop = value.fieldsOrNull("edgeCrop")
@@ -125,7 +136,8 @@ internal object ProjectCoding {
         "audio" to timeline.audio.map {
             jsonObject("id" to it.id.text, "occurrenceID" to it.occurrenceID.text, "sourceID" to it.sourceID.text, "start" to encode(it.start), "mapping" to encode(it.mapping),
                 "localOrigin" to encode(it.localOrigin), "followsVideo" to it.followsVideo?.text, "volumeDB" to it.volumeDB, "muted" to it.muted,
-                "fadeIn" to encode(it.fadeIn), "fadeOut" to encode(it.fadeOut), "enhancements" to emptyList<Any?>())
+                "fadeIn" to encode(it.fadeIn), "fadeOut" to encode(it.fadeOut), "enhancements" to emptyList<Any?>(),
+                "censorRegions" to it.censors.takeIf { c -> c.isNotEmpty() }?.map { region -> encode(region) })
         },
         // Sets are sorted so that an unchanged edit keeps its content hash.
         "links" to timeline.links.map { link -> jsonObject("id" to link.id.text, "members" to link.members.map { it.text }.sorted()) },

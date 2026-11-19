@@ -303,6 +303,7 @@ def main():
         option("Style Box", "Style "); option("Colour Yellow", "Colour "); tap("Done", 10)
         note("after Text: " + describe())
     expected += photo()
+    censored = censor()
     shot("editor-after-tools")
     if crashed(): return
 
@@ -327,12 +328,42 @@ def main():
             fail("the export lasts %.2f s but the edit should last %.2f s" % (duration, expected))
         if shape and shape not in out:
             fail("the export is not in the chosen 1:1 shape")
+        if censored:
+            # A -18 dBFS sine has an RMS of about -21 dBFS; nothing else in the range.
+            a, b = censored[0] + 0.05, censored[1] - 0.05
+            stats = subprocess.run(("ffmpeg", "-v", "error", "-ss", "%.3f" % a, "-t", "%.3f" % (b - a), "-i", movie, "-map", "0:a", "-af", "astats=measure_overall=RMS_level:measure_perchannel=none", "-f", "null", "-"),
+                                   capture_output=True, text=True).stderr
+            level = re.findall(r"RMS level dB: (-?[0-9.]+|-inf)", stats)
+            note("censored range %.2f-%.2f s: RMS %s dB" % (a, b, level))
+            if not level or level[-1] == "-inf" or abs(float(level[-1]) + 21) > 3:
+                fail("the censored range does not carry the -18 dBFS tone (RMS %s)" % level)
     crashed()
     cover()
     if crashed(): return
     clipboard()
     if crashed(): return
     interrupted(len(takes))
+
+def censor():
+    """Mark a range over sound and censor it. Returns the range in seconds, or None.
+    Two cuts back keeps the range off a photo added at the end, which has no sound."""
+    tap("Previous cut", 10); time.sleep(0.8)
+    tap("Previous cut", 10); time.sleep(0.8)
+    first = readout()
+    if not first or not tool("Start"):
+        return None
+    tap("Next cut", 10); time.sleep(0.8)
+    second = readout()
+    if not second or abs(second[0] - first[0]) < 0.5 or not tool("End"):
+        note("censor: no range to mark (%s, %s)" % (first, second))
+        if find("Clear", exact=True): tool("Clear")
+        return None
+    if not tool("Censor") or not tap("Apply censor", 10):
+        return None
+    if not wait("Censored", 10):
+        return None
+    note("censored %.2f-%.2f" % (min(first[0], second[0]), max(first[0], second[0])))
+    return (min(first[0], second[0]), max(first[0], second[0]))
 
 def photo():
     """Add a photo through the system picker. Returns the seconds it adds to the

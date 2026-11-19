@@ -121,7 +121,8 @@ enum class AudioFadeEdge(val title: String) {
 
 data class AudioTimelineItem(val id: UUID = UUID.randomUUID(), val occurrenceID: UUID, val sourceID: UUID, val start: EditTime,
                              val mapping: SourcePlaybackMap, val localOrigin: EditTime = EditTime.zero, val followsVideo: UUID? = null,
-                             val volumeDB: Double = 0.0, val muted: Boolean = false, val fadeIn: AudioEdgeFade? = null, val fadeOut: AudioEdgeFade? = null) {
+                             val volumeDB: Double = 0.0, val muted: Boolean = false, val fadeIn: AudioEdgeFade? = null, val fadeOut: AudioEdgeFade? = null,
+                             val censors: List<AudioCensorRegion> = emptyList()) {
     val end: EditTime get() = start + mapping.duration
     val interval: EditInterval get() = EditInterval(start, end)
     val gain: Double get() = if (muted) 0.0 else 10.0.pow(volumeDB / 20)
@@ -132,7 +133,8 @@ data class AudioTimelineItem(val id: UUID = UUID.randomUUID(), val occurrenceID:
         return if (edge == AudioFadeEdge.FadeIn) copy(fadeIn = fade) else copy(fadeOut = fade)
     }
     fun sliced(part: EditInterval, id: UUID) = copy(id = id, start = start + part.start, localOrigin = localOrigin + part.start,
-        mapping = mapping.sliced(part), fadeIn = fadeIn?.trimming(part.start), fadeOut = fadeOut?.trimming(mapping.duration - part.end))
+        mapping = mapping.sliced(part), fadeIn = fadeIn?.trimming(part.start), fadeOut = fadeOut?.trimming(mapping.duration - part.end),
+        censors = censors.mapNotNull { it.sliced(part) })
     /// The level at one local time, including both edge fades.
     fun gain(local: Double): Double {
         var level = gain
@@ -589,7 +591,10 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
     fun compile(): List<CompiledTimelineInterval> {
         val edges = sortedSetOf(EditTime.zero, duration)
         for (item in video) { edges.add(item.start); edges.add(item.end) }
-        for (item in audio) { edges.add(item.start); edges.add(item.end) }
+        for (item in audio) {
+            edges.add(item.start); edges.add(item.end)
+            for (region in item.censors) { edges.add(item.start + region.interval.start); edges.add(item.start + region.interval.end) }
+        }
         val marks = edges.filter { it >= EditTime.zero && it <= duration }
         return marks.zip(marks.drop(1)).mapNotNull { (a, b) ->
             val pictures = video.filter { a in it.interval }.sortedWith(backToFront).map { it.id }
@@ -745,6 +750,16 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
             }
         }
         for (item in audio) {
+            var censorEnd = EditTime.zero
+            for (region in item.censors.sortedBy { it.interval.start }) {
+                val envelope = region.envelopeInterval
+                require(region.interval.start >= censorEnd && region.interval.end <= item.mapping.duration && !region.interval.isEmpty && region.settings.valid
+                    && abs(region.phaseOrigin.seconds) <= 604800 && (envelope == null || (!envelope.isEmpty && envelope.start <= region.interval.start
+                    && envelope.end >= region.interval.end && abs(envelope.start.seconds) <= 604800 && abs(envelope.end.seconds) <= 604800)))
+                censorEnd = region.interval.end
+            }
+        }
+        for (item in audio) {
             val videoID = item.followsVideo ?: continue
             val picture = video.firstOrNull { it.id == videoID }
             require(picture != null && links.any { videoID in it.members && item.id in it.members }
@@ -764,7 +779,8 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
             val item = sound.followsVideo?.let { id -> video.firstOrNull { it.id == id } } ?: return@map sound
             if (sound.mapping == item.mapping) return@map sound.copy(start = item.start)
             sound.copy(start = item.start, mapping = item.mapping, fadeIn = sound.fadeIn?.fitted(sound.mapping.duration, item.mapping.duration),
-                       fadeOut = sound.fadeOut?.fitted(sound.mapping.duration, item.mapping.duration))
+                       fadeOut = sound.fadeOut?.fitted(sound.mapping.duration, item.mapping.duration),
+                       censors = if (sound.censors.isEmpty()) sound.censors else AudioCensor.remapped(sound.censors, sound.mapping, item.mapping))
         }
     }
     /// Change what pictures show without choosing where they sit: a tool edits
@@ -917,7 +933,8 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
             if (left) sound.fadeIn?.let { sound = sound.copy(fadeIn = it.copy(elapsed = maxOf(0.0, it.elapsed - amount.seconds))) }
             else sound.fadeOut?.let { sound = sound.copy(fadeOut = it.copy(elapsed = maxOf(0.0, it.elapsed - amount.seconds))) }
             if (!followsTarget(sound)) sound = sound.copy(mapping = revealed(sound.mapping))
-            if (left) sound = sound.copy(start = sound.start - amount, localOrigin = sound.localOrigin - amount)
+            if (left) sound = sound.copy(start = sound.start - amount, localOrigin = sound.localOrigin - amount,
+                censors = if (followsTarget(sound)) sound.censors else sound.censors.map { it.shifted(amount) })
             sound
         }
         synchronizeFollowers()

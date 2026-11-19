@@ -25,6 +25,7 @@ fun main(arguments: Array<String>) {
     videoToolsTests()
     clipboardTests()
     archiveTests(File(root, "Archive"))
+    censorTests()
     println("PASS: YouRec Android core")
 }
 

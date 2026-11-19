@@ -75,6 +75,8 @@ class AudioMix(private val timeline: TrackTimeline, private val open: (UUID) -> 
     private val stretchers = HashMap<Triple<UUID, Long, Double>, TimeStretch>()
     var peak = 0f
         private set
+    // Censored parts: the original falls silent and a tone replaces it.
+    private val censors = timeline.audio.associate { it.id to AudioCensor.spans(timeline, it) }.filterValues { it.isNotEmpty() }
 
     /// Fill `frames` frames starting at project frame `start`. The block is overwritten.
     fun render(start: Long, out: FloatArray, frames: Int) {
@@ -100,19 +102,35 @@ class AudioMix(private val timeline: TrackTimeline, private val open: (UUID) -> 
                 }
                 runStart = runEnd; local += run.duration
             }
+            censors[item.id]?.let { spans -> tones(item, spans, start, out, frames) }
         }
         for (i in 0 until frames * channels) { val level = abs(out[i]); if (level > peak) peak = level }
     }
 
+    private fun tones(item: AudioTimelineItem, spans: List<AudioCensorSpan>, start: Long, out: FloatArray, frames: Int) {
+        val itemStart = frame(item.start)
+        for (span in spans) {
+            if (!span.emitsTone) continue
+            val a = maxOf(start, Math.ceil(span.start * sampleRate).toLong()); val b = minOf(start + frames, Math.ceil(span.end * sampleRate).toLong())
+            for (f in a until b) {
+                val time = f.toDouble() / sampleRate
+                val value = (span.tone(time, sampleRate.toDouble()) * item.gain((f - itemStart).toDouble() / sampleRate)).toFloat()
+                val o = ((f - start) * channels).toInt()
+                out[o] += value; out[o + 1] += value
+            }
+        }
+    }
     private fun add(item: AudioTimelineItem, source: PCMSource, projectFrame: Long, frames: Int, sourceFrame: Long, itemStart: Long, out: FloatArray, outOffset: Int) {
-        val plain = item.fadeIn == null && item.fadeOut == null
+        val spans = censors[item.id]
+        val plain = item.fadeIn == null && item.fadeOut == null && spans == null
         val level = item.gain.toFloat()
         var done = 0
         while (done < frames) {
             val count = minOf(frames - done, scratch.size / channels)
             source.read(sourceFrame + done, scratch, 0, count)
             for (i in 0 until count) {
-                val gain = if (plain) level else item.gain((projectFrame + done + i - itemStart).toDouble() / sampleRate).toFloat()
+                var gain = if (plain) level else item.gain((projectFrame + done + i - itemStart).toDouble() / sampleRate).toFloat()
+                if (spans != null) { val time = (projectFrame + done + i).toDouble() / sampleRate; gain *= spans.minOf { it.originalGain(time) }.toFloat() }
                 val o = outOffset + (done + i) * channels
                 out[o] += scratch[i * channels] * gain
                 out[o + 1] += scratch[i * channels + 1] * gain

@@ -148,7 +148,7 @@ class Project(var title: String) {
         // Older readers must not silently discard independent placement crops.
         if (state.timeline.placements.any { region -> region.videos.values.any { it.edgeCrop != null } }) schemaVersion = maxOf(schemaVersion, 7)
         if (state.timeline.audio.any { it.fadeIn != null || it.fadeOut != null }) schemaVersion = maxOf(schemaVersion, 11)
-        if (sources.any { it.audioOnly == true }) schemaVersion = maxOf(schemaVersion, 9)
+        if (sources.any { it.audioOnly == true } || state.timeline.audio.any { it.censors.isNotEmpty() }) schemaVersion = maxOf(schemaVersion, 9)
         val base = state.timeline.captureBase ?: captureLedger.size
         snapshots = snapshots.take(historyCursor + 1) + EditSnapshot(state, minOf(captureLedger.size, maxOf(0, base)))
         historyCursor += 1
