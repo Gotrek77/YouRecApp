@@ -79,6 +79,22 @@ fun clipboardTests() {
     require(mix.video.any { it.occurrenceID == base.video[0].occurrenceID && it.start == t(3.0) } && mix.audio.first { it.id == score }.start == EditTime.zero,
         "Paste picture at a sound cut preserves detached music and splits dialogue in sync")
 
+    // The dissolve cases of the iPhone checks.
+    val dissolve = ClipTransition(duration = 0.5)
+    val blend = TransitionLayout.setting(EditState(base.copy()), dissolve, 2)
+    val join = TransitionLayout.joins(blend.timeline).first { it.transition?.id == dissolve.id }
+    val separated = blend.timeline.copy()
+    TimelinePaste.paste(separated, late, t(join.time), boundary(separated, join.time))
+    require(separated.transitions.isEmpty() && separated.duration == t(12.0), "Pasting picture into a dissolve recovers both source handles (${separated.duration.seconds})")
+    val both = TimelinePaste.copied(blend.timeline, blend.timeline.selection(setOf(clips[1].id, clips[2].id)))
+    val copiedBlend = base.copy(); TimelinePaste.paste(copiedBlend, both, copiedBlend.duration)
+    require(copiedBlend.transitions.size == 1 && copiedBlend.transitions[0].id != dissolve.id && both.timeline.duration == t(3.5),
+        "An internal transition travels with both selected partners and keeps the real overlap")
+    copiedBlend.validate(listOf(source))
+    val inside = blend.timeline.copy(); TimelinePaste.paste(inside, late, t(join.time - 0.1))
+    require(inside.transitions.isEmpty() && inside.duration == t(12.0), "A mid-transition scene paste retains all source handles (${inside.duration.seconds})")
+    inside.validate(listOf(source))
+
     val spaced = base.copy()
     spaced.move(spaced.selection(clips.takeLast(2).map { it.id }.toSet()), t(2.0))
     val marked = TimelinePaste.copied(spaced, spaced.entireSelection(EditInterval(t(4.0), t(10.0))))

@@ -11,8 +11,35 @@ class RenderPlan(edit: EditState) {
     private val pictures = timeline.video.sortedWith(TrackTimeline.backToFront)
 
     data class Picture(val item: UUID, val source: UUID, val sourceTime: Double, val interval: EditInterval, val clip: TimelineClip)
-    /// One picture to draw. `slot` tells apart two pictures on screen at once from the same recording.
-    data class Layer(val picture: Picture, val placement: VideoPlacement?, val slot: Int)
+    /// One picture to draw. `slot` tells apart two pictures on screen at once
+    /// from the same recording; `alpha` below 1 dissolves it over what is behind.
+    data class Layer(val picture: Picture, val placement: VideoPlacement?, val slot: Int, val alpha: Float = 1f)
+    /// A colour laid over the whole finished frame: a fade's colour, at some strength.
+    data class Wash(val color: TransitionColor, val alpha: Float)
+
+    /// The transition whose picture window holds `time`, with its progress.
+    private fun transitionAt(time: EditTime): Pair<TimelineTransition, Double>? {
+        for (relation in timeline.transitions) {
+            val timing = relation.timing
+            val elapsed = (time - relation.origin).seconds
+            if (elapsed >= 0 && elapsed < timing.videoDuration) return relation to timing.progress(elapsed)
+        }
+        return null
+    }
+    private fun eased(t: Double) = t * t * (3 - 2 * t)
+    /// The colour over the frame at `time`: fades to and from a colour, and
+    /// opening or closing fades, which are always through their colour.
+    fun wash(time: EditTime): Wash? {
+        val (relation, t) = transitionAt(time) ?: return null
+        val color = relation.settings.resolvedFadeColor
+        val alpha = when {
+            relation.edge == -1 -> 1 - eased(t)
+            relation.edge == 1 -> eased(t)
+            relation.settings.style == TransitionStyle.FadeColor -> if (t < 0.5) minOf(1.0, t * 2) else maxOf(0.0, 2 - t * 2)
+            else -> return null
+        }
+        return if (alpha > 0.0001) Wash(color, alpha.toFloat()) else null
+    }
     /// What to draw at one time, back to front. Pictures that share the frame
     /// through an arrangement are all drawn; without one the front picture
     /// covers the frame. Nothing at all means black, never a held frame.
@@ -22,6 +49,14 @@ class RenderPlan(edit: EditState) {
         fun picture(item: VideoTimelineItem) = item.mapping.source(time - item.start)?.let { Picture(item.id, item.content.sourceID, it, item.interval, item.content) }
         val ids = active.map { it.id }
         val region = if (active.size > 1) timeline.placements.firstOrNull { it.participants == ids.toSet() } else null
+        // A dissolve shows both partners: the incoming one over the outgoing, ever stronger.
+        transitionAt(time)?.let { (relation, t) ->
+            val out = active.firstOrNull { it.id == relation.outgoing }; val into = active.firstOrNull { it.id == relation.incoming }
+            if (region == null && relation.edge == 0 && relation.settings.style == TransitionStyle.Dissolve && out != null && into != null) {
+                val first = picture(out); val second = picture(into)
+                return listOfNotNull(first?.let { Layer(it, null, 0) }, second?.let { Layer(it, null, if (first?.source == it.source) 1 else 0, eased(t).toFloat()) })
+            }
+        }
         if (region == null) return listOfNotNull(picture(active.last())?.let { Layer(it, null, 0) })
         val result = ArrayList<Layer>()
         for (id in VideoPlacement.ordered(ids, region.videos)) {
@@ -77,6 +112,25 @@ class AudioMix(private val timeline: TrackTimeline, private val open: (UUID) -> 
         private set
     // Censored parts: the original falls silent and a tone replaces it.
     private val censors = timeline.audio.associate { it.id to AudioCensor.spans(timeline, it) }.filterValues { it.isNotEmpty() }
+    // Sound following a picture with a transition rises over the transition's
+    // incoming sound range and falls over its outgoing one, in project seconds.
+    private val ramps = timeline.audio.mapNotNull { item ->
+        val picture = item.followsVideo ?: return@mapNotNull null
+        fun range(relation: TimelineTransition?, incoming: Boolean) = relation?.let { r ->
+            val (a, b) = if (incoming) r.timing.audioIn else r.timing.audioOut
+            (r.origin.seconds + a) to (r.origin.seconds + b)
+        }
+        val rise = range(timeline.transitions.firstOrNull { it.incoming == picture }, true)
+        val fall = range(timeline.transitions.firstOrNull { it.outgoing == picture }, false)
+        if (rise == null && fall == null) null else item.id to (rise to fall)
+    }.toMap()
+    private fun ramp(item: UUID, time: Double): Double {
+        val (rise, fall) = ramps[item] ?: return 1.0
+        var gain = 1.0
+        rise?.let { gain *= ((time - it.first) / maxOf(0.008, it.second - it.first)).coerceIn(0.0, 1.0) }
+        fall?.let { gain *= ((it.second - time) / maxOf(0.008, it.second - it.first)).coerceIn(0.0, 1.0) }
+        return gain
+    }
 
     /// Fill `frames` frames starting at project frame `start`. The block is overwritten.
     fun render(start: Long, out: FloatArray, frames: Int) {
@@ -122,7 +176,8 @@ class AudioMix(private val timeline: TrackTimeline, private val open: (UUID) -> 
     }
     private fun add(item: AudioTimelineItem, source: PCMSource, projectFrame: Long, frames: Int, sourceFrame: Long, itemStart: Long, out: FloatArray, outOffset: Int) {
         val spans = censors[item.id]
-        val plain = item.fadeIn == null && item.fadeOut == null && spans == null
+        val ramped = item.id in ramps
+        val plain = item.fadeIn == null && item.fadeOut == null && spans == null && !ramped
         val level = item.gain.toFloat()
         var done = 0
         while (done < frames) {
@@ -131,6 +186,7 @@ class AudioMix(private val timeline: TrackTimeline, private val open: (UUID) -> 
             for (i in 0 until count) {
                 var gain = if (plain) level else item.gain((projectFrame + done + i - itemStart).toDouble() / sampleRate).toFloat()
                 if (spans != null) { val time = (projectFrame + done + i).toDouble() / sampleRate; gain *= spans.minOf { it.originalGain(time) }.toFloat() }
+                if (ramped) gain *= ramp(item.id, (projectFrame + done + i).toDouble() / sampleRate).toFloat()
                 val o = outOffset + (done + i) * channels
                 out[o] += scratch[i * channels] * gain
                 out[o + 1] += scratch[i * channels + 1] * gain

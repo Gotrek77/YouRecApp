@@ -133,6 +133,7 @@ device to confirm:
 | Add photo, Import photo | A portrait phone photo appears upright, unstretched and sharp for three seconds; a 48-megapixel photo is added without running out of memory |
 | Censor | The word under the marked range is gone in preview and export with no click at either edge; the tone's pitch and level follow the controls; music on another track keeps playing when only the voice is selected |
 | Pauses | On a spoken take, Find pauses lists the real gaps between sentences and not quiet syllables; after Apply speech is not clipped at either side of a cut; Remove brings every second back |
+| Transition | A dissolve looks smooth in preview at full speed (two decoders at once) and in export; a fade through black is black at the cut; opening and closing fades start and end on the colour; sound crossfades without a dip or a click; a project with an iPhone dissolve opens with the same timing |
 | Image | A transparent PNG keeps its transparency; a portrait photo is upright; size, position and opacity match between preview and export; the image stays readable when the clip is mirrored |
 | Cover | The nine frames come from the chosen range and show grade, crop and titles as the export does; swiping steps one frame per finger-width; the shared JPEG has the project size |
 | Volume and fades | Audible change matches the waveform; a fade survives a split through it |

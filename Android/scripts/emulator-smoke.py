@@ -307,6 +307,7 @@ def main():
     expected += photo()
     image()
     censored = censor()
+    faded = transition()
     shot("editor-after-tools")
     if crashed(): return
 
@@ -331,6 +332,12 @@ def main():
             fail("the export lasts %.2f s but the edit should last %.2f s" % (duration, expected))
         if shape and shape not in out:
             fail("the export is not in the chosen 1:1 shape")
+        if faded is not None:
+            level = brightness(movie, faded)
+            note("fade through black at %.2f s: %s" % (faded, level))
+            mean = re.search(r"mean ([0-9]+)", level)
+            if not mean or int(mean.group(1)) > 30:
+                fail("the frame at the middle of the fade through black is not black (%s)" % level)
         if censored:
             # A -18 dBFS sine has an RMS of about -21 dBFS; nothing else in the range.
             a, b = censored[0] + 0.05, censored[1] - 0.05
@@ -348,6 +355,19 @@ def main():
     pauses()
     if crashed(): return
     interrupted(len(takes))
+
+def transition():
+    """Put a fade through black at the cut nearest the playhead. Returns the cut's time."""
+    tap("Previous cut", 10); time.sleep(0.8)
+    if not tool("Transition") or not tap("Transition style Fade through color", 10):
+        return None
+    if not wait("Transition Fade through color", 10):
+        return None
+    at = readout()
+    note("transition: fade through black at %s" % (at,))
+    shot("editor-transition")
+    tap("Done with transition", 10)
+    return at[0] if at else None
 
 def censor():
     """Mark a range over sound and censor it. Returns the range in seconds, or None.

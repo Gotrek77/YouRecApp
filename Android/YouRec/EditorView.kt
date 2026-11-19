@@ -180,6 +180,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if (edit.timeline.video.any { item -> project.sources.firstOrNull { it.id == item.content.sourceID }?.isStillPhoto != true }) tool("Pauses") { openPauses() }
             if (edit.timeline.video.isNotEmpty()) { tool("Speed") { openSpeed() }; tool("Crop") { openCrop() }; tool("Mirror") { openMirror() }; tool("Color") { openColor() } }
             if (edit.timeline.video.isNotEmpty()) tool("Text") { openText(null) }
+            if (edit.timeline.video.isNotEmpty()) tool("Transition") { openTransition(null) }
             if (edit.timeline.video.isNotEmpty()) tool("Image") { openImage(null) }
             if (edit.timeline.video.isNotEmpty()) tool("Cover") { openCover() }
             if (edit.timeline.compile().any { it.video.size > 1 }) tool("Placement") { openPlacement(null) }
@@ -399,6 +400,61 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         panel.removeAllViews()
         // A control released outside its track may have left a draft on screen.
         project?.let { if (it.deferredHistory == null) editor.show(it.edit) }
+    }
+
+    /// A transition at the start, at a cut between two pictures, or at the end:
+    /// the join nearest the playhead first. Each change is one undo step.
+    private fun openTransition(index: Int?) {
+        val project = project ?: return
+        editor.pause()
+        val joins = TransitionLayout.joins(project.edit.timeline).filter { it.selectable }
+        if (joins.isEmpty()) return say("There is no cut here to join.")
+        val join = joins.firstOrNull { it.index == index } ?: joins.minByOrNull { Math.abs(it.time - editor.playhead) }!!
+        val current = join.transition
+        val position = joins.indexOf(join)
+        if (index == null) editor.seek(join.time)
+        fun apply(value: ClipTransition?, message: String) {
+            val now = this.project ?: return
+            val edit = if (value == null && current != null && join.edge == 0) TransitionLayout.restoringStraightCut(now.edit, join.index) else TransitionLayout.setting(now.edit, value, join.index)
+            if (edit != now.edit) commit(edit, message, TransitionLayout.joins(edit.timeline).firstOrNull { it.index == join.index }?.time)
+            else if (value != null) say("Not enough footage on both sides for a transition here.")
+            openTransition(join.index)
+        }
+        val where = when (join.edge) { -1 -> "Start"; 1 -> "End"; else -> "Cut " + join.index }
+        val content = Design.column(context, Design.row(context,
+            Design.button(context, "‹", Design.text, Design.raised) { joins.getOrNull(position - 1)?.let { editor.seek(it.time); openTransition(it.index) } }.apply { contentDescription = "Previous join"; isEnabled = position > 0; alpha = if (isEnabled) 1f else 0.4f },
+            Design.label(context, "Transition · $where · " + EditFrames.timestamp(EditTime.seconds(join.time)), 15f, bold = true),
+            Design.button(context, "›", Design.text, Design.raised) { joins.getOrNull(position + 1)?.let { editor.seek(it.time); openTransition(it.index) } }.apply { contentDescription = "Next join"; isEnabled = position < joins.size - 1; alpha = if (isEnabled) 1f else 0.4f }),
+            spacing = 6f)
+        fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val styles = listOf<Pair<String, TransitionStyle?>>("None" to null, "Dissolve" to TransitionStyle.Dissolve, "Fade through color" to TransitionStyle.FadeColor)
+        add(choices(*styles.map { (title, style) ->
+            val on = current?.style == style
+            Design.button(context, title, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) {
+                apply(style?.let { (current ?: ClipTransition(duration = 0.5)).copy(style = it) }, if (style == null) "Transition removed" else "Transition " + title)
+            }.apply { contentDescription = "Transition style $title" + if (on) ", selected" else "" }
+        }.toTypedArray()))
+        if (current != null) {
+            val shown = (join.timing.videoDuration).let { if (it > 0) it else current.duration }
+            add(choices(*listOf(0.25, 0.5, 1.0, 1.5, 2.0, 3.0).map { seconds ->
+                val on = Math.abs(current.duration - seconds) < 0.001
+                Design.button(context, ZoomTransition.number(seconds) + " s", if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) {
+                    apply(current.copy(duration = seconds), "Transition " + ZoomTransition.number(seconds) + " s")
+                }.apply { contentDescription = "Transition lasts " + ZoomTransition.number(seconds) + " seconds" + if (on) ", selected" else "" }
+            }.toTypedArray()))
+            if (Math.abs(shown - current.duration) > 0.01) add(Design.label(context, String.format("Shortened to %.2f s to fit the footage on both sides.", shown), 13f, Design.secondary))
+            if (current.style == TransitionStyle.FadeColor || join.edge != 0) {
+                val colours = listOf("Black" to TransitionColor.black, "White" to TransitionColor(1.0, 1.0, 1.0), "Warm" to TransitionColor(0.96, 0.72, 0.45), "Blue" to TransitionColor(0.12, 0.25, 0.55))
+                add(choices(*colours.map { (title, colour) ->
+                    val on = current.resolvedFadeColor == colour
+                    Design.button(context, title, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) {
+                        apply(current.copy(fadeColor = if (colour == TransitionColor.black) null else colour), "Fade colour $title")
+                    }.apply { contentDescription = "Fade colour $title" + if (on) ", selected" else "" }
+                }.toTypedArray()))
+            }
+        }
+        add(Design.button(context, "Done", Design.accent) { closePanel() }.apply { contentDescription = "Done with transition" })
+        showPanel(content)
     }
 
     /// A picture over the video, timed and placed like a title. A new one is

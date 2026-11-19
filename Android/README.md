@@ -67,6 +67,11 @@ capture, recording controls, the cut editor, export.
   built-in looks or an imported `.cube` LUT (3D or 1D, Rec.709), with strength,
   after exposure, warmth and tint. Exposure and white balance are per-channel
   gains on display values: close to the iPhone result, not identical to it.
+  **Transition** at the start, at a cut or at the end: Dissolve, or Fade
+  through a colour, with its length (shortened to the footage there is); sound
+  crossfades with the picture. The other iPhone styles (wipe, split screen,
+  Hitchcock, whip pan, flash cut, still, defocus), holds and custom sound timing
+  are not ported yet and are refused by name.
   **Image** places a picture from the phone over the video, with size,
   position, opacity and duration, timed with its footage like a title.
   **Cover** offers nine frames of the finished edit from the marked range,
@@ -100,14 +105,14 @@ with their `.kt` counterparts first: they define the shared document.
 ## What is not ported yet
 
 Each of these exists on iPhone and is absent here. A project that uses one of
-them is **refused by name** on Android ("This project uses Transitions…")
+them is **refused by name** on Android ("This project uses Wipe transitions…")
 instead of being opened and quietly losing that work on the next save, the same
 policy older iPhone builds apply to newer projects.
 
 Subtitles and the Qwen3-ASR model · Title designs, looks and outlines, imported fonts,
 animated titles ·
 Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export · Video effects and their Metal
-shaders · Transitions · Dragging and pinching a placed picture in the preview,
+shaders · Transition styles other than Dissolve and Fade through color, transition holds and sound timing · Dragging and pinching a placed picture in the preview,
 and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
 animated Crop and Placement · Stabilization · Enhance audio (RNNoise, DeepFilterNet3, LavaSR,
 VoiceFixer) and the RNNoise voice check in Pauses · Original

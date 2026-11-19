@@ -280,12 +280,15 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
                     var placements: List<VideoPlacementRegion> = emptyList()) {
     // Transient provenance follows tool drafts; it is not rendering data.
     var captureBase: Int? = null
+    var transitions: List<TimelineTransition> = emptyList()
+    var generated: List<TimelineGeneratedRegion> = emptyList()
 
     override fun equals(other: Any?) = other is TrackTimeline && video == other.video && audio == other.audio && links == other.links && bookmarks == other.bookmarks && placements == other.placements
+        && transitions == other.transitions && generated == other.generated
     override fun hashCode() = video.hashCode() * 31 + audio.hashCode()
-    fun copy() = TrackTimeline(video, audio, links, bookmarks, placements).also { it.captureBase = captureBase }
+    fun copy() = TrackTimeline(video, audio, links, bookmarks, placements).also { it.captureBase = captureBase; it.transitions = transitions; it.generated = generated }
 
-    val duration: EditTime get() = maxOf(video.maxOfOrNull { it.end } ?: EditTime.zero, audio.maxOfOrNull { it.end } ?: EditTime.zero)
+    val duration: EditTime get() = maxOf(video.maxOfOrNull { it.end } ?: EditTime.zero, audio.maxOfOrNull { it.end } ?: EditTime.zero, generated.maxOfOrNull { it.interval.end } ?: EditTime.zero)
     val allIDs: Set<UUID> get() = (video.map { it.id } + audio.map { it.id }).toSet()
 
     companion object {
@@ -374,14 +377,19 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
     fun linkPlan(requested: TimelineSelection): TimelineLinkPlan {
         val selection = expanded(requested)
         if (selection.ids.size < 2 || selection.range != null) throw TimelineLinkError(TimelineLinkError.Kind.TooFew)
-        fun chain(parts: List<EditInterval>): EditInterval? {
-            val sorted = parts.sortedBy { it.start }
+        fun chain(parts: List<Pair<UUID?, EditInterval>>): EditInterval? {
+            val sorted = parts.sortedBy { it.second.start }
             if (sorted.isEmpty()) return null
-            for ((a, b) in sorted.zip(sorted.drop(1))) if (a.end != b.start) throw TimelineLinkError(TimelineLinkError.Kind.NonContiguous)
-            return EditInterval(sorted.first().start, sorted.maxOf { it.end })
+            for ((a, b) in sorted.zip(sorted.drop(1))) if (a.second.end != b.second.start) {
+                // A real transition connects two sequential parts even though
+                // its handles overlap. Arbitrary stacked videos are not a chain.
+                val join = a.second.end > b.second.start && a.first != null && b.first != null && transitions.any { it.outgoing == a.first && it.incoming == b.first }
+                if (!join) throw TimelineLinkError(TimelineLinkError.Kind.NonContiguous)
+            }
+            return EditInterval(sorted.first().second.start, sorted.maxOf { it.second.end })
         }
-        val plan = TimelineLinkPlan(selection, chain(video.filter { it.id in selection.video }.map { it.interval }),
-                                    chain(audio.filter { it.id in selection.audio }.map { it.interval }))
+        val plan = TimelineLinkPlan(selection, chain(video.filter { it.id in selection.video }.map { it.id to it.interval }),
+                                    chain(audio.filter { it.id in selection.audio }.map { it.followsVideo to it.interval }))
         if (plan.needsIntersection && plan.intersection == null) throw TimelineLinkError(TimelineLinkError.Kind.NoIntersection)
         return plan
     }
@@ -454,6 +462,9 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
         video = video.map { if (it.id in selection.video) it.copy(start = it.start + amount) else it }
         promoteNewOverlaps(selection.video, previous)
         audio = audio.map { if (it.id in selection.audio) it.copy(start = it.start + amount) else it }
+        transitions = transitions.map { relation ->
+            if (selection.video.containsAll(setOfNotNull(relation.outgoing, relation.incoming))) relation.copy(origin = relation.origin + amount) else relation
+        }
         retainPlacementAcrossNewOverlaps(selection.video)
         pruneRelations()
     }
@@ -506,6 +517,11 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
             val amount = EditTime.ticks(closedGaps.filter { it.start <= anchor }.sumOf { it.duration.ticks })
             video = video.map { if (it.id in group.members) it.copy(start = it.start - amount) else it }
             audio = audio.map { if (it.id in group.members) it.copy(start = it.start - amount) else it }
+        }
+        transitions = transitions.map { relation ->
+            val owner = relation.outgoing ?: relation.incoming
+            val prior = oldVideo.firstOrNull { it.id == owner }; val current = video.firstOrNull { it.id == owner }
+            if (prior != null && current != null) relation.copy(origin = relation.origin + current.start - prior.start) else relation
         }
         pruneRelations()
         val position = preserving ?: return null
@@ -581,6 +597,45 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
             members.size == region.participants.size && members.size > 1 && members.maxOf { it.start } < members.minOf { it.end }
         }
         links = links.mapNotNull { link -> val members = link.members.intersect(ids); if (members.size >= 2) link.copy(members = members) else null }
+        transitions = transitions.mapNotNull { saved ->
+            var relation = saved
+            val a = relation.outgoing?.let { id -> video.firstOrNull { it.id == id } }
+            val b = relation.incoming?.let { id -> video.firstOrNull { it.id == id } }
+            if (relation.outgoing != null && a == null || relation.incoming != null && b == null) return@mapNotNull null
+            if (a != null && b != null) {
+                val required = (a.end - b.start).seconds
+                val original = TransitionTiming(relation.settings, relation.factor)
+                if (abs(original.overlap - required) > 2.0 / EditTime.scale) {
+                    val low = TransitionTiming(relation.settings, 0.0).overlap; val high = TransitionTiming(relation.settings, 1.0).overlap
+                    if (required < minOf(low, high) - 0.00001 || required > maxOf(low, high) + 0.00001) return@mapNotNull null
+                    var lo = 0.0; var hi = 1.0
+                    repeat(48) { val mid = (lo + hi) / 2; if ((TransitionTiming(relation.settings, mid).overlap < required) == (high >= low)) lo = mid else hi = mid }
+                    relation = relation.copy(factor = (lo + hi) / 2)
+                }
+                val timing = TransitionTiming(relation.settings, relation.factor)
+                if (timing.leftCost > a.mapping.duration.seconds + 0.00001 || timing.rightCost > b.mapping.duration.seconds + 0.00001) return@mapNotNull null
+                relation = relation.copy(origin = a.end - EditTime.seconds(timing.leftEnd))
+                if (abs((relation.origin + EditTime.seconds(timing.rightStart) - b.start).ticks) > 2) return@mapNotNull null
+            } else {
+                val timing = relation.timing
+                if (a != null) relation = relation.copy(origin = a.end - EditTime.seconds(timing.leftEnd))
+                if (b != null) relation = relation.copy(origin = b.start - EditTime.seconds(timing.rightStart))
+            }
+            relation
+        }
+        // Each picture has one incoming and one outgoing slot; the newest relation wins.
+        val incoming = HashSet<UUID>(); val outgoing = HashSet<UUID>()
+        transitions = transitions.reversed().filter { relation ->
+            if (relation.incoming?.let { it in incoming } == true || relation.outgoing?.let { it in outgoing } == true) return@filter false
+            relation.incoming?.let { incoming.add(it) }; relation.outgoing?.let { outgoing.add(it) }
+            true
+        }.reversed()
+        generated = transitions.map { relation ->
+            val timing = relation.timing
+            TimelineGeneratedRegion(counterpart(relation.id), relation.id,
+                EditInterval(maxOf(EditTime.zero, relation.origin + EditTime.seconds(timing.lower)), maxOf(EditTime.zero, relation.origin + EditTime.seconds(timing.upper))),
+                if (relation.settings.style == TransitionStyle.Still) relation.outgoing else null)
+        }
         audio = audio.map { sound ->
             val id = sound.followsVideo
             if (id != null && !links.any { id in it.members && sound.id in it.members }) sound.copy(followsVideo = null) else sound
@@ -645,6 +700,8 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
             val child = sound.followsVideo?.let { children[it] }
             if (child != null && sound.start >= time) sound.copy(followsVideo = child) else sound
         }
+        // The left part keeps the cut it began with; the right part takes the outgoing transition.
+        transitions = transitions.map { relation -> relation.outgoing?.let { children[it] }?.let { relation.copy(outgoing = it) } ?: relation }
         val ids = selection.ids
         val newLinks = ArrayList<TimelineLink>()
         for (group in links) {
@@ -694,6 +751,7 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
         split(time, if (atPictureGap) TimelineSelection(video.filter { it.start >= time }.map { it.id }.toSet()) else entireSelection())
         video = video.map { if (it.start >= time) it.copy(start = it.start + length) else it }
         audio = audio.map { if (it.start >= time) it.copy(start = it.start + length) else it }
+        transitions = transitions.map { if (it.origin >= time) it.copy(origin = it.origin + length) else it }
         bookmarks = bookmarks.map { mark ->
             val anchor = mark.anchor
             if (anchor is BookmarkAnchor.Project && anchor.time >= time) mark.copy(anchor = BookmarkAnchor.Project(anchor.time + length)) else mark
@@ -749,8 +807,14 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
             linked.addAll(link.members)
         }
         require(links.map { it.id }.toSet().size == links.size && bookmarks.map { it.id }.toSet().size == bookmarks.size
-            && placements.map { it.id }.toSet().size == placements.size)
+            && placements.map { it.id }.toSet().size == placements.size && transitions.map { it.id }.toSet().size == transitions.size)
         val pictures = video.map { it.id }.toSet()
+        val incoming = transitions.mapNotNull { it.incoming }; val outgoing = transitions.mapNotNull { it.outgoing }
+        require(incoming.toSet().size == incoming.size && outgoing.toSet().size == outgoing.size)
+        for (relation in transitions) {
+            val participants = setOfNotNull(relation.outgoing, relation.incoming)
+            require(participants.isNotEmpty() && pictures.containsAll(participants) && relation.settings.valid && relation.factor.isFinite() && relation.factor in 0.0..1.0)
+        }
         for (placement in placements) require(placement.participants.size > 1 && pictures.containsAll(placement.participants)
             && placement.videos.keys == placement.participants && placement.videos.values.all { it.valid })
         for (bookmark in bookmarks) {
@@ -784,7 +848,7 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
     val chronologicalVideo: List<VideoTimelineItem> get() = video.withIndex().sortedWith { a, b ->
         if (a.value.start == b.value.start) a.index.compareTo(b.index) else a.value.start.compareTo(b.value.start) }.map { it.value }
     val projectedClips: List<TimelineClip> get() = chronologicalVideo.map { it.content }
-    val videoCoverage: List<EditInterval> get() = union(video.map { it.interval })
+    val videoCoverage: List<EditInterval> get() = union(video.map { it.interval } + generated.map { it.interval })
 
     fun synchronizeFollowers() {
         audio = audio.map { sound ->
@@ -807,22 +871,56 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
             if (content == before.content) continue
             val derived = SourcePlaybackMap(content)
             val timingChanged = derived != SourcePlaybackMap(before.content)
-            val after = before.copy(content = content, mapping = if (timingChanged) derived else before.mapping)
+            var after = before.copy(content = content, mapping = if (timingChanged) derived else before.mapping)
             video = video.map { if (it.id == id) after else it }
-            val delta = after.end - before.end
-            if (delta == EditTime.zero) continue
+            if (after.end - before.end == EditTime.zero) continue
             retimed.add(id)
             val group = links.firstOrNull { id in it.members } ?: continue
+            val originalIncoming = transitions.firstOrNull { it.incoming == id }
+            val originalOutgoing = transitions.firstOrNull { it.outgoing == id }
+            var incoming = originalIncoming; var outgoing = originalOutgoing
+            fun timing(relation: TimelineTransition?, scale: Double = 1.0) = if (relation == null) TransitionTiming(null) else TransitionTiming(relation.settings, relation.factor * scale, relation.edge)
+            fun cost(scale: Double) = timing(incoming, scale).rightCost + timing(outgoing, scale).leftCost
+            if (cost(1.0) > derived.duration.seconds) {
+                if (content.start != before.content.start || content.end != before.content.end) {
+                    // Trimming away the footage a transition needs removes that relation, as a trim promises.
+                    val removed = setOfNotNull(incoming?.id, outgoing?.id)
+                    transitions = transitions.filter { it.id !in removed }; incoming = null; outgoing = null
+                } else {
+                    // Speed changes keep the source footage. Fit both handles together before moving the next picture.
+                    var lo = 0.0; var hi = 1.0
+                    repeat(48) { val mid = (lo + hi) / 2; if (cost(mid) <= derived.duration.seconds) lo = mid else hi = mid }
+                    incoming = incoming?.let { it.copy(factor = it.factor * lo) }; outgoing = outgoing?.let { it.copy(factor = it.factor * lo) }
+                    for (updated in listOfNotNull(incoming, outgoing)) transitions = transitions.map { if (it.id == updated.id) updated else it }
+                }
+            }
+            if (originalIncoming != null) {
+                val t = timing(incoming)
+                val previous = video.firstOrNull { it.id == originalIncoming.outgoing }
+                val start = if (previous != null) previous.end - EditTime.seconds(t.leftEnd) + EditTime.seconds(t.rightStart)
+                            else incoming?.let { maxOf(EditTime.zero, it.origin + EditTime.seconds(t.rightStart)) } ?: EditTime.zero
+                after = after.copy(start = start); video = video.map { if (it.id == id) after else it }
+            }
+            var delta = after.end - before.end
+            val next = originalOutgoing?.let { relation -> video.firstOrNull { it.id == relation.incoming } }
+            if (next != null) { val t = timing(outgoing); delta = after.end - EditTime.seconds(t.leftEnd) + EditTime.seconds(t.rightStart) - next.start }
             val soundIDs = audio.map { it.id }.toSet(); val pictureIDs = video.map { it.id }.toSet()
             val downstream = if (group.members.none { it in soundIDs }) group.members
                 else links.filter { link -> link.members.any { it in soundIDs } && link.members.any { it in pictureIDs } }.flatMap { it.members }.toSet()
-            val isOverlay = previousItems.any { it.id != id && it.layer < before.layer && before.start in it.interval }
-            if (isOverlay) continue
-            val moving = video.filter { it.id != id && it.id in downstream && it.start >= before.end }.map { it.id }.toSet()
+            // A concurrent overlay is not downstream of the edited picture. Explicit
+            // transition handles are the exception: their incoming picture follows the retimed end.
+            val nextPicture = originalOutgoing?.incoming
+            val isOverlay = previousItems.any { it.id != id && it.id != originalIncoming?.outgoing && it.layer < before.layer && before.start in it.interval }
+            val chain = HashSet<UUID>(); var link = nextPicture
+            while (link != null && chain.add(link)) { val current = link; link = transitions.firstOrNull { it.outgoing == current }?.incoming }
+            val moving = video.filter { it.id != id && it.id in downstream && (if (isOverlay) it.id in chain else it.start >= before.end || it.id == nextPicture) }.map { it.id }.toSet()
             video = video.map { if (it.id in moving) it.copy(start = it.start + delta) else it }
             audio = audio.map { sound ->
                 val follows = sound.followsVideo
-                if (sound.id in downstream && follows != id && (if (follows != null) follows in moving else sound.start >= before.end)) sound.copy(start = sound.start + delta) else sound
+                if (sound.id in downstream && follows != id && (if (follows != null) follows in moving else !isOverlay && sound.start >= before.end)) sound.copy(start = sound.start + delta) else sound
+            }
+            transitions = transitions.map { relation ->
+                if ((!isOverlay && relation.origin >= before.end) || relation.outgoing == id || relation.incoming?.let { it in moving } == true) relation.copy(origin = relation.origin + delta) else relation
             }
         }
         promoteNewOverlaps(retimed, previousItems)
@@ -880,7 +978,7 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
     }
 
     fun gap(time: EditTime): EditInterval? {
-        val occupied = union(video.map { it.interval } + audio.map { it.interval })
+        val occupied = union(video.map { it.interval } + audio.map { it.interval } + generated.map { it.interval })
         if (time < EditTime.zero || time >= duration || occupied.any { time in it }) return null
         val start = occupied.filter { it.end <= time }.maxOfOrNull { it.end } ?: EditTime.zero
         val end = occupied.filter { it.start > time }.minOfOrNull { it.start } ?: duration
@@ -890,6 +988,7 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
         val gap = gap(time) ?: return
         video = video.map { if (it.start >= gap.end) it.copy(start = it.start - gap.duration) else it }
         audio = audio.map { if (it.start >= gap.end) it.copy(start = it.start - gap.duration) else it }
+        transitions = transitions.map { if (it.origin >= gap.end) it.copy(origin = it.origin - gap.duration) else it }
         bookmarks = bookmarks.map { mark ->
             val anchor = mark.anchor
             if (anchor is BookmarkAnchor.Project && anchor.time >= gap.start) mark.copy(anchor = BookmarkAnchor.Project(maxOf(gap.start, anchor.time - gap.duration))) else mark

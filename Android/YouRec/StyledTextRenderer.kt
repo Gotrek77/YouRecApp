@@ -17,7 +17,7 @@ class ImageTextures(private val folder: java.io.File) {
     private val entries = LinkedHashMap<String, Entry?>(8, 0.75f, true)
     private var program: OverlayProgram? = null
 
-    fun draw(image: ImageOverlay, width: Int, height: Int, placement: Affine?) {
+    fun draw(image: ImageOverlay, width: Int, height: Int, placement: Affine?, alpha: Float = 1f) {
         val entry = (if (entries.containsKey(image.filename)) entries[image.filename] else load(image.filename).also { entries[image.filename] = it }) ?: return
         while (entries.size > 8) { val oldest = entries.keys.first(); entries.remove(oldest)?.let { GLES20.glDeleteTextures(1, intArrayOf(it.texture), 0) } }
         val shader = program ?: OverlayProgram().also { program = it }
@@ -25,7 +25,7 @@ class ImageTextures(private val folder: java.io.File) {
         val rect = image.rect(entry.size.width, entry.size.height, canvas)
         var place = Affine(a = rect.width / entry.size.width, d = rect.height / entry.size.height, tx = rect.x, ty = rect.y)
         if (placement != null) place = place.then(placement)
-        shader.draw(entry.texture, place, entry.size, canvas, image.opacity.toFloat())
+        shader.draw(entry.texture, place, entry.size, canvas, image.opacity.toFloat() * alpha)
     }
     private fun load(name: String): Entry? {
         if (!ImageOverlay.validFilename(name)) return null
@@ -60,7 +60,7 @@ class TitleTextures {
     private var program: OverlayProgram? = null
 
     /// Draw one title on a canvas of `width` by `height`, through `placement` when its picture has a window of its own.
-    fun draw(title: TextOverlay, width: Int, height: Int, placement: Affine?) {
+    fun draw(title: TextOverlay, width: Int, height: Int, placement: Affine?, alpha: Float = 1f) {
         // Position and time do not change the picture of a title: share it.
         val key = title.copy(start = 0.0, end = 0.0, x = 0.0, y = 0.0) to (width to height)
         val entry = entries.getOrPut(key) { render(key.first, width, height) ?: return }
@@ -70,7 +70,7 @@ class TitleTextures {
         var place = Affine.translation((title.x * width - entry.size.width / 2).coerceIn(0.0, maxOf(0.0, width - entry.size.width)),
                                        (title.y * height - entry.size.height / 2).coerceIn(0.0, maxOf(0.0, height - entry.size.height)))
         if (placement != null) place = place.then(placement)
-        shader.draw(entry.texture, place, entry.size, CanvasSize(width.toDouble(), height.toDouble()))
+        shader.draw(entry.texture, place, entry.size, CanvasSize(width.toDouble(), height.toDouble()), alpha)
     }
 
     private fun render(title: TextOverlay, width: Int, height: Int): Entry? {

@@ -101,7 +101,6 @@ internal object ProjectCoding {
     }
 
     fun timeline(value: Fields): TrackTimeline {
-        if (present(value.raw("transitions")) || present(value.raw("generated"))) unsupported("Transitions")
         if (present(value.raw("subtitles"))) unsupported("Subtitles")
         val video = list(value.list("video")) {
             if (present(it.raw("spanningEffects"))) unsupported("effects spanning several clips")
@@ -124,7 +123,12 @@ internal object ProjectCoding {
             VideoPlacementRegion(region.uuid("id"), region.list("participants").map { Fields.uuid(it) }.toSet(),
                 (0 until pairs.size / 2).associate { Fields.uuid(pairs[it * 2]) to placement(Fields.of(pairs[it * 2 + 1])) })
         }
-        return TrackTimeline(video, audio, links, bookmarks, placements)
+        return TrackTimeline(video, audio, links, bookmarks, placements).also { timeline ->
+            timeline.transitions = value.listOrNull("transitions")?.let { list(it, ::transition) } ?: emptyList()
+            timeline.generated = value.listOrNull("generated")?.let { list(it) { g ->
+                TimelineGeneratedRegion(g.uuid("id"), g.uuid("owner"), interval(g.fields("interval")), g.uuidOrNull("freezeVideo"))
+            } } ?: emptyList()
+        }
     }
     private fun censor(value: Fields): AudioCensorRegion {
         val settings = value.fields("settings")
@@ -165,7 +169,31 @@ internal object ProjectCoding {
             jsonObject("id" to region.id.text, "participants" to region.participants.map { it.text }.sorted(),
                 "videos" to region.videos.entries.sortedBy { it.key.text }.flatMap { listOf(it.key.text, encode(it.value)) })
         },
-        "transitions" to emptyList<Any?>(), "generated" to emptyList<Any?>())
+        "transitions" to timeline.transitions.map { jsonObject("outgoing" to it.outgoing?.text, "incoming" to it.incoming?.text, "settings" to encode(it.settings),
+            "origin" to encode(it.origin), "factor" to it.factor) },
+        "generated" to timeline.generated.map { jsonObject("id" to it.id.text, "owner" to it.owner.text, "interval" to encode(it.interval), "freezeVideo" to it.freezeVideo?.text) })
+
+    private fun transition(value: Fields): TimelineTransition {
+        val s = value.fields("settings")
+        fun framing(f: Fields) = TransitionFraming(f.double("x"), f.double("y"), f.double("zoom"))
+        fun <T> choice(values: List<T>, raw: String, name: (T) -> String) = values.firstOrNull { name(it) == raw } ?: throw ProjectError.InvalidDocument()
+        val settings = ClipTransition(s.uuid("id"), s.uuidOrNull("nextClipID"), choice(TransitionStyle.values().toList(), s.string("style")) { it.raw }, s.double("duration"),
+            choice(TransitionAxis.values().toList(), s.string("axis")) { it.raw }, s.double("divider"), s.bool("reverse"),
+            choice(TransitionAudio.values().toList(), s.string("audio")) { it.raw }, framing(s.fields("first")), framing(s.fields("second")),
+            s.fieldsOrNull("fadeColor")?.let { TransitionColor(it.double("red"), it.double("green"), it.double("blue")) },
+            s.doubleOrNull("hold"), s.doubleOrNull("audioOffset"), s.doubleOrNull("audioBlend"), s.doubleOrNull("wipeAngle"), s.boolOrNull("hardEdge"),
+            s.boolOrNull("highlightsFirst"), s.intOrNull("flashCount"), s.doubleOrNull("flashAcceleration"), s.doubleOrNull("stillDissolve"), s.doubleOrNull("blurAmount"))
+        settings.unsupported?.let { unsupported(it) }
+        return TimelineTransition(value.uuidOrNull("outgoing"), value.uuidOrNull("incoming"), settings, time(value.fields("origin")), value.double("factor"))
+    }
+    private fun encode(t: ClipTransition): Map<String, Any?> {
+        fun framing(f: TransitionFraming) = jsonObject("x" to f.x, "y" to f.y, "zoom" to f.zoom)
+        return jsonObject("id" to t.id.text, "nextClipID" to t.nextClipID?.text, "style" to t.style.raw, "duration" to t.duration, "axis" to t.axis.raw,
+            "divider" to t.divider, "reverse" to t.reverse, "audio" to t.audio.raw, "first" to framing(t.first), "second" to framing(t.second),
+            "fadeColor" to t.fadeColor?.let { jsonObject("red" to it.red, "green" to it.green, "blue" to it.blue) }, "hold" to t.hold, "audioOffset" to t.audioOffset,
+            "audioBlend" to t.audioBlend, "wipeAngle" to t.wipeAngle, "hardEdge" to t.hardEdge, "highlightsFirst" to t.highlightsFirst, "flashCount" to t.flashCount,
+            "flashAcceleration" to t.flashAcceleration, "stillDissolve" to t.stillDissolve, "blurAmount" to t.blurAmount)
+    }
 
     fun editState(value: Fields): EditState {
         // The sequential "clips" form predates the first public release.

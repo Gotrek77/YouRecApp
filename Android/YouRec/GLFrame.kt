@@ -86,8 +86,8 @@ class FrameProgram {
             attribute vec4 position; attribute vec4 coordinate; uniform mat4 transform; varying vec2 uv;
             void main() { gl_Position = position; uv = (transform * coordinate).xy; }""",
             if (!graded) """#extension GL_OES_EGL_image_external : require
-            precision mediump float; uniform samplerExternalOES frame; varying vec2 uv;
-            void main() { gl_FragColor = texture2D(frame, uv); }"""
+            precision mediump float; uniform samplerExternalOES frame; uniform float opacity; varying vec2 uv;
+            void main() { gl_FragColor = vec4(texture2D(frame, uv).rgb, opacity); }"""
             // Balance first, then the look, mixed in by its strength. The cube is a
             // grid of tiles, one per blue step: two neighbouring tiles are read with
             // the texture's own filtering and blended, which is a trilinear lookup.
@@ -98,7 +98,7 @@ class FrameProgram {
             precision mediump float;
             #endif
             uniform samplerExternalOES frame; uniform sampler2D lut; varying vec2 uv;
-            uniform vec3 gain; uniform vec3 low; uniform vec3 span; uniform vec4 grid;
+            uniform vec3 gain; uniform vec3 low; uniform vec3 span; uniform vec4 grid; uniform float opacity;
             vec3 tile(vec3 c, float slice) {
                 float n = grid.x; float row = floor((slice + 0.5) / grid.y); float column = slice - row * grid.y;
                 return texture2D(lut, vec2((column * n + 0.5 + c.r * (n - 1.0)) / (n * grid.y), (row * n + 0.5 + c.g * (n - 1.0)) / (n * grid.z))).rgb;
@@ -111,7 +111,7 @@ class FrameProgram {
                     float z = p.b * (grid.x - 1.0); float z0 = floor(z); float z1 = min(z0 + 1.0, grid.x - 1.0);
                     c = mix(c, mix(tile(p, z0), tile(p, z1), z - z0), grid.w);
                 }
-                gl_FragColor = vec4(c, picture.a);
+                gl_FragColor = vec4(c, opacity);
             }""")
         val position = GLES20.glGetAttribLocation(program, "position")
         val coordinate = GLES20.glGetAttribLocation(program, "coordinate")
@@ -122,6 +122,7 @@ class FrameProgram {
         val low = GLES20.glGetUniformLocation(program, "low")
         val span = GLES20.glGetUniformLocation(program, "span")
         val grid = GLES20.glGetUniformLocation(program, "grid")
+        val opacity = GLES20.glGetUniformLocation(program, "opacity")
     }
     private val plain = Shader(false)
     private var graded: Shader? = null
@@ -144,7 +145,7 @@ class FrameProgram {
         }
         present(textureID, matrix)
     }
-    private fun present(textureID: Int, matrix: FloatArray, grade: FrameGrade? = null) {
+    private fun present(textureID: Int, matrix: FloatArray, grade: FrameGrade? = null, alpha: Float = 1f) {
         quadBuffer.position(0); quadBuffer.put(quad); quadBuffer.position(0)
         val shader = if (grade == null) plain else graded ?: Shader(true).also { graded = it }
         GLES20.glUseProgram(shader.program)
@@ -158,6 +159,9 @@ class FrameProgram {
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureID)
         GLES20.glUniform1i(shader.texture, 0)
+        GLES20.glUniform1f(shader.opacity, alpha)
+        // A picture partly through a dissolve is blended over what is already drawn.
+        if (alpha < 1f) { GLES20.glEnable(GLES20.GL_BLEND); GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA) }
         GLES20.glUniformMatrix4fv(shader.transform, 1, false, matrix, 0)
         GLES20.glEnableVertexAttribArray(shader.position)
         GLES20.glVertexAttribPointer(shader.position, 2, GLES20.GL_FLOAT, false, 0, quadBuffer)
@@ -166,18 +170,19 @@ class FrameProgram {
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         GLES20.glDisableVertexAttribArray(shader.position); GLES20.glDisableVertexAttribArray(shader.coordinate)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, 0)
+        if (alpha < 1f) GLES20.glDisable(GLES20.GL_BLEND)
     }
     /// Draw a source picture placed by an affine map from its own pixels to canvas
     /// pixels (both with y down). Whatever falls outside the canvas is clipped by
     /// the viewport, which is how a crop, a mirror or a rotation is drawn.
-    fun draw(textureID: Int, matrix: FloatArray, placement: Affine, source: CanvasSize, canvas: CanvasSize, grade: FrameGrade? = null) {
+    fun draw(textureID: Int, matrix: FloatArray, placement: Affine, source: CanvasSize, canvas: CanvasSize, grade: FrameGrade? = null, alpha: Float = 1f) {
         // Texture corners in strip order (bottom-left, bottom-right, top-left, top-right) as source pixels.
         val px = doubleArrayOf(0.0, source.width, 0.0, source.width); val py = doubleArrayOf(source.height, source.height, 0.0, 0.0)
         for (i in 0 until 4) {
             quad[i * 2] = (placement.x(px[i], py[i]) * 2 / canvas.width - 1).toFloat()
             quad[i * 2 + 1] = (1 - placement.y(px[i], py[i]) * 2 / canvas.height).toFloat()
         }
-        present(textureID, matrix, grade)
+        present(textureID, matrix, grade, alpha)
     }
     fun release() { GLES20.glDeleteProgram(plain.program); graded?.let { GLES20.glDeleteProgram(it.program) }; graded = null }
 

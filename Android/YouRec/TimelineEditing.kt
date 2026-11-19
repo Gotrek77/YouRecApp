@@ -13,6 +13,8 @@ object TimelineEditing {
     fun split(state: EditState, time: Double, selectedItems: Set<UUID> = emptySet()): EditState {
         val result = state.copy()
         val point = EditTime.seconds(quantize(time))
+        // Splitting inside a transition would cut footage both pictures are using.
+        if (insideTransition(state, point.seconds)) return state
         if (selectedItems.isNotEmpty()) {
             // An explicit lane selection can split detached audio or picture on
             // its own. A selection elsewhere must not swallow the playhead cut.
@@ -27,6 +29,10 @@ object TimelineEditing {
 
     // Use exactly the same clip-relative boundaries for Cut and Delete.
     // Absolute quantization corrupts selections at non-frame-aligned take joins.
+    /// Whether a time falls strictly inside the window of a transition between two pictures.
+    fun insideTransition(state: EditState, time: Double) = TransitionLayout.joins(state.timeline).any { join ->
+        join.transition != null && join.edge == 0 && join.range.start < time - 0.00001 && time < join.range.endInclusive - 0.00001
+    }
     /// A marked range as a selection of everything inside it. Ends within a
     /// frame of a cut snap to that cut, so no sliver is left behind.
     fun rangeSelection(start: Double, end: Double, state: EditState): TimelineSelection? {
@@ -37,7 +43,7 @@ object TimelineEditing {
             return if (abs(nearest - time) < frame) nearest else time
         }
         val a = aligned(start); val b = aligned(end)
-        if (b <= a) return null
+        if (b <= a || insideTransition(state, a) || insideTransition(state, b)) return null
         return state.timeline.entireSelection(EditInterval(a, b))
     }
     fun removing(start: Double, end: Double, state: EditState, preserving: EditTime? = null): Pair<EditState, EditTime?> {

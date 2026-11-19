@@ -219,6 +219,16 @@ object TimelinePaste {
 
     /// Open the picture sequence and its production sound, leaving independent music continuous.
     private fun insertPictureTime(timeline: TrackTimeline, length: EditTime, point: EditTime, pictureOnRight: UUID? = null): EditTime {
+        // Opening a transition apart would leave it without handles: it becomes a straight cut first.
+        val crossing = timeline.generated.filter { it.interval.start < point && point < it.interval.end }.map { it.owner }.toSet() +
+            timeline.transitions.filter { pictureOnRight != null && it.incoming == pictureOnRight && it.outgoing != null }.map { it.id }
+        for (id in crossing) {
+            val state = EditState(timeline.copy())
+            val join = TransitionLayout.joins(state.timeline).firstOrNull { it.transition?.id == id } ?: continue
+            val restored = TransitionLayout.restoringStraightCut(state, join.index).timeline
+            timeline.video = restored.video; timeline.audio = restored.audio; timeline.links = restored.links
+            timeline.transitions = restored.transitions; timeline.generated = restored.generated; timeline.placements = restored.placements
+        }
         val position = pictureOnRight?.let { id -> timeline.video.firstOrNull { it.id == id }?.start } ?: point
         timeline.split(position, TimelineSelection(video = timeline.video.map { it.id }.toSet()))
         val tail = timeline.expanded(TimelineSelection(video = timeline.video.filter { it.start >= position }.map { it.id }.toSet()))
@@ -257,6 +267,10 @@ object TimelinePaste {
         val placements = addition.placements.map { region ->
             VideoPlacementRegion(participants = region.participants.map(::fresh).toSet(), videos = region.videos.mapKeys { fresh(it.key) })
         }
+        val transitions = addition.transitions.map { relation ->
+            relation.copy(settings = relation.settings.copy(id = fresh(relation.id), nextClipID = relation.incoming?.let(::fresh)),
+                outgoing = relation.outgoing?.let(::fresh), incoming = relation.incoming?.let(::fresh), origin = relation.origin + position)
+        }
         val marks = addition.bookmarks.map { mark ->
             val anchor = when (val a = mark.anchor) {
                 is BookmarkAnchor.Source -> BookmarkAnchor.Source(fresh(a.occurrence), a.source, a.time)
@@ -269,6 +283,7 @@ object TimelinePaste {
             if (a.value.start == b.value.start) a.index.compareTo(b.index) else a.value.start.compareTo(b.value.start) }.map { it.value }
         timeline.audio = timeline.audio + audio; timeline.links = timeline.links + links
         timeline.placements = timeline.placements + placements; timeline.bookmarks = timeline.bookmarks + marks
+        timeline.transitions = timeline.transitions + transitions
         timeline.pruneRelations()
         return TimelineSelection(video.map { it.id }.toSet(), audio.map { it.id }.toSet())
     }

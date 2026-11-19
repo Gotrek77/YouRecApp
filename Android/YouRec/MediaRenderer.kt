@@ -47,6 +47,25 @@ class RenderSources(private val project: Project, private val folder: File, priv
     }
     /// Close the readers of a source whose decoder failed or was reclaimed; the next frame reopens them.
     fun drop(source: UUID) { for (key in frames.keys.filter { it.first == source }) try { frames.remove(key)?.release() } catch (e: Exception) { } }
+    private var washTexture = 0
+    private var washProgram: OverlayProgram? = null
+    private fun colorWash(wash: RenderPlan.Wash, width: Int, height: Int) {
+        val shader = washProgram ?: OverlayProgram().also { washProgram = it }
+        if (washTexture == 0) {
+            val ids = IntArray(1); android.opengl.GLES20.glGenTextures(1, ids, 0); washTexture = ids[0]
+            android.opengl.GLES20.glBindTexture(android.opengl.GLES20.GL_TEXTURE_2D, washTexture)
+            android.opengl.GLES20.glTexParameteri(android.opengl.GLES20.GL_TEXTURE_2D, android.opengl.GLES20.GL_TEXTURE_MIN_FILTER, android.opengl.GLES20.GL_NEAREST)
+            android.opengl.GLES20.glTexParameteri(android.opengl.GLES20.GL_TEXTURE_2D, android.opengl.GLES20.GL_TEXTURE_MAG_FILTER, android.opengl.GLES20.GL_NEAREST)
+        }
+        val c = wash.color
+        val pixel = ByteBuffer.allocateDirect(4).put(byteArrayOf((c.red * 255).toInt().toByte(), (c.green * 255).toInt().toByte(), (c.blue * 255).toInt().toByte(), 0xff.toByte()))
+        pixel.rewind()
+        android.opengl.GLES20.glBindTexture(android.opengl.GLES20.GL_TEXTURE_2D, washTexture)
+        android.opengl.GLES20.glTexImage2D(android.opengl.GLES20.GL_TEXTURE_2D, 0, android.opengl.GLES20.GL_RGBA, 1, 1, 0, android.opengl.GLES20.GL_RGBA, android.opengl.GLES20.GL_UNSIGNED_BYTE, pixel)
+        android.opengl.GLES20.glBindTexture(android.opengl.GLES20.GL_TEXTURE_2D, 0)
+        shader.draw(washTexture, Affine(a = width.toDouble(), d = height.toDouble()), CanvasSize(1.0, 1.0), CanvasSize(width.toDouble(), height.toDouble()), wash.alpha)
+    }
+
     /// GL thread. The look of a grade as a texture, made once per look or LUT file.
     /// An imported LUT that cannot be read fails an export; the preview shows the
     /// picture with its balance only.
@@ -89,7 +108,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
     /// Draw one moment of the edit into the current surface, already cleared to
     /// black. Preview and export both come through here. False if a picture
     /// that should be there could not be shown.
-    fun draw(layers: List<RenderPlan.Layer>, program: FrameProgram, width: Int, height: Int): Boolean {
+    fun draw(layers: List<RenderPlan.Layer>, program: FrameProgram, width: Int, height: Int, wash: RenderPlan.Wash? = null): Boolean {
         var complete = true
         val frame = CanvasSize(width.toDouble(), height.toDouble())
         for (layer in layers) {
@@ -102,10 +121,10 @@ class RenderSources(private val project: Project, private val folder: File, priv
             val texts = layer.picture.clip.visibleTexts(layer.picture.sourceTime)
             val images = layer.picture.clip.visibleImages(layer.picture.sourceTime)
             if (placement == null) {
-                program.draw(reader.texture, reader.matrix, placed, source, frame, tone)
+                program.draw(reader.texture, reader.matrix, placed, source, frame, tone, layer.alpha)
                 // Images and titles are placed on the finished frame, so a mirrored picture keeps them readable.
-                for (image in images) pictures.draw(image, width, height, null)
-                for (title in texts) titles.draw(title, width, height, null)
+                for (image in images) pictures.draw(image, width, height, null, layer.alpha)
+                for (title in texts) titles.draw(title, width, height, null, layer.alpha)
                 continue
             }
             // Within its window a picture is a small frame of its own: black behind it, nothing outside it.
@@ -123,11 +142,14 @@ class RenderSources(private val project: Project, private val folder: File, priv
             for (title in texts) titles.draw(title, width, height, placement.transform(frame))
             android.opengl.GLES20.glDisable(android.opengl.GLES20.GL_SCISSOR_TEST)
         }
+        // A fade lays its colour over the whole finished frame.
+        if (wash != null) colorWash(wash, width, height)
         return complete
     }
     /// Audio thread.
     fun sound(source: UUID): PCMSource? = sound.getOrPut(source) { DecodedAudio(file(source) ?: return null) }
-    fun releaseFrames() { for (reader in frames.values) try { reader.release() } catch (e: Exception) { }; frames.clear(); failed.clear(); titles.release(); pictures.release(); releaseLooks() }
+    fun releaseFrames() { for (reader in frames.values) try { reader.release() } catch (e: Exception) { }; frames.clear(); failed.clear(); titles.release(); pictures.release(); releaseLooks()
+        if (washTexture != 0) { android.opengl.GLES20.glDeleteTextures(1, intArrayOf(washTexture), 0); washTexture = 0 }; washProgram?.release(); washProgram = null }
     fun releaseSound() { for (reader in sound.values) reader.release(); sound.clear() }
 
     /// The project picture size: a fixed shape if one was chosen, otherwise
@@ -215,7 +237,7 @@ class MovieExport(project: Project, private val folder: File, private val export
                 val t0 = System.nanoTime()
                 FrameProgram.clear(width, height)
                 // A take that yields no picture must not become a black movie.
-                if (!sources.draw(plan.layers(time), program, width, height)) throw ProjectError.InvalidMedia()
+                if (!sources.draw(plan.layers(time), program, width, height, plan.wash(time))) throw ProjectError.InvalidMedia()
                 val t1 = System.nanoTime()
                 egl.setPresentationTime(window, n * 1_000_000_000L / fps)
                 egl.swap(window)
