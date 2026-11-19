@@ -57,6 +57,11 @@ capture, recording controls, the cut editor, export.
   unchanged edit offers its existing movie. Share, or save to the gallery.
   Sources and earlier exports are never rewritten.
 
+The port follows the iPhone app as of upstream commit `dadc258` (project
+schema 16). When the iPhone app moves on, compare `YouRec/Project.swift`,
+`TrackTimeline.swift`, `TimelineEditing.swift` and `TimelineNavigation.swift`
+with their `.kt` counterparts first: they define the shared document.
+
 ## What is not ported yet
 
 Each of these exists on iPhone and is absent here. A project that uses one of
@@ -73,7 +78,11 @@ VoiceFixer) · Censor audio · Pause cuts · Copy/paste · Cover picker · Origi
 recordings browser · Duplicate, Zip project and OpenTimelineIO · Dual-camera
 layouts, live effects, face follow, front light, horizon level, focus peaking ·
 Record-here insertion · Recovery of a segment interrupted while being written ·
-Landscape editor layout.
+Landscape editor layout · Label and headline cards in Text · Color, Crop,
+Mirror, Stabilization and effects limited to a range of a clip or spanning
+several clips · Variable aperture (the control exists on iPhone only for lenses
+that have one) · The Mac and iPad editions (desktop recorder, picture-in-picture,
+project library).
 
 Smaller gaps inside what *is* ported, all in the recorder: lenses hidden behind
 a logical multi-camera are reached through zoom rather than listed separately;

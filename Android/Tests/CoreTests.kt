@@ -103,8 +103,28 @@ private fun persistenceTests(root: File) {
         try { EditSnapshot.decode(tampered(change)); require(false, "$tool must be refused") }
         catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains(tool), "The refusal names $tool") }
     }
+    // Fields added by later iPhone versions are recognised too, down to one clip or one sound part.
+    @Suppress("UNCHECKED_CAST")
+    fun firstOf(timeline: MutableMap<String, Any?>, lane: String) = (timeline[lane] as MutableList<Any?>)[0] as MutableMap<String, Any?>
+    @Suppress("UNCHECKED_CAST")
+    for ((words, change) in listOf<Pair<String, (MutableMap<String, Any?>) -> Unit>>(
+        "Color" to { (firstOf(it, "video")["content"] as MutableMap<String, Any?>)["colorRegions"] = listOf(mapOf("start" to 0)) },
+        "range" to { (firstOf(it, "video")["content"] as MutableMap<String, Any?>)["effectWindows"] = listOf("A", listOf<Any?>()) },
+        "range" to { (firstOf(it, "video")["content"] as MutableMap<String, Any?>)["framingVariants"] = listOf(mapOf("crop" to mapOf("x" to 0))) },
+        "spanning" to { firstOf(it, "video")["spanningEffects"] = listOf("A") },
+        "spanning" to { firstOf(it, "audio")["spanningEffects"] = listOf("A") })) {
+        try { EditSnapshot.decode(tampered(change)); require(false, "$words must be refused") }
+        catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains(words), "The refusal mentions $words") }
+    }
+    val current = JSON.parse(head.readBytes()) as MutableMap<String, Any?>
+    current["schemaVersion"] = 16L
+    require(Project.readManifest(JSON.write(current)) { File(history, it).readBytes() }.schemaVersion == 16, "A schema 16 project that uses only ported tools opens")
+    fun warning(peak: Double?) = ExportReceipt(filename = "m.mp4", projectID = project.id, projectTitle = "", revision = "", sourceChecksums = emptyMap(), width = 2, height = 2,
+        framesPerSecond = 30, codec = ExportSettings.Codec.H264, resolution = ExportSettings.Resolution.Project, audioPeak = peak).audioWarning
+    require(warning(null) == null && warning(1.0) == null && warning(1.05) == null && warning(1.26)!!.contains("2.0 dB"),
+        "An export warns only when the mix peaks at least half a decibel above full scale")
     val newer = JSON.parse(head.readBytes()) as MutableMap<String, Any?>
-    newer["schemaVersion"] = 13L
+    newer["schemaVersion"] = 17L
     requireFailure<ProjectError.NewerProject>("A newer schema is refused") { Project.readManifest(JSON.write(newer)) { File(history, it).readBytes() } }
 
     // A document written by the iPhone app: uppercase identities, explicit optionals.

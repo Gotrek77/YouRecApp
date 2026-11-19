@@ -17,7 +17,8 @@ internal object ProjectCoding {
     // TimelineClip
     private val clipTools = mapOf("stabilization" to "Stabilization", "speed" to "Speed", "color" to "Color", "texts" to "Text", "pauses" to "Pause cuts",
         "crop" to "Crop", "mirror" to "Mirror", "images" to "Image overlays", "openingTransition" to "Transitions", "transition" to "Transitions",
-        "videoEffects" to "Video effects", "frozenFrame" to "Freeze frame")
+        "videoEffects" to "Video effects", "frozenFrame" to "Freeze frame", "colorRegions" to "Color",
+        "effectWindows" to "effects limited to a range", "framingVariants" to "Crop, Mirror or Stabilization on a range")
     fun clip(value: Fields): TimelineClip {
         for ((key, tool) in clipTools) if (present(value.raw(key))) unsupported(tool)
         return TimelineClip(value.uuid("id"), value.uuid("sourceID"), value.double("start"), value.double("end"))
@@ -50,12 +51,14 @@ internal object ProjectCoding {
         if (present(value.raw("transitions")) || present(value.raw("generated"))) unsupported("Transitions")
         if (present(value.raw("subtitles"))) unsupported("Subtitles")
         val video = list(value.list("video")) {
+            if (present(it.raw("spanningEffects"))) unsupported("effects spanning several clips")
             VideoTimelineItem(it.uuid("occurrenceID"), time(it.fields("start")), clip(it.fields("content")), it.int("layer"), time(it.fields("localOrigin")), map(it.fields("mapping")))
         }
         val audio = list(value.list("audio")) {
             if (present(it.raw("enhancements"))) unsupported("Enhance audio")
             if (present(it.raw("censorRegions"))) unsupported("Censor audio")
             if (present(it.raw("subtitleWords"))) unsupported("Subtitles")
+            if (present(it.raw("spanningEffects"))) unsupported("effects spanning several clips")
             AudioTimelineItem(it.uuid("id"), it.uuid("occurrenceID"), it.uuid("sourceID"), time(it.fields("start")), map(it.fields("mapping")), time(it.fields("localOrigin")),
                 it.uuidOrNull("followsVideo"), it.double("volumeDB"), it.bool("muted"), fade(it.fieldsOrNull("fadeIn")), fade(it.fieldsOrNull("fadeOut")))
         }
@@ -157,7 +160,7 @@ internal object ProjectCoding {
         value.fields("sourceChecksums").let { sums -> sums.keys.associateWith { sums.string(it) } }, value.int("width"), value.int("height"), value.int("framesPerSecond"),
         ExportSettings.Codec.values().firstOrNull { it.title == value.string("codec") } ?: throw ProjectError.InvalidDocument(),
         ExportSettings.Resolution.values().firstOrNull { it.title == value.string("resolution") } ?: throw ProjectError.InvalidDocument(), value.doubleOrNull("audioPeak"))
-    fun encode(receipt: ExportReceipt) = jsonObject("schemaVersion" to 1, "id" to receipt.id.text, "createdAt" to receipt.createdAt.reference, "filename" to receipt.filename,
+    fun encode(receipt: ExportReceipt) = jsonObject("schemaVersion" to 2, "id" to receipt.id.text, "createdAt" to receipt.createdAt.reference, "filename" to receipt.filename,
         "projectID" to receipt.projectID.text, "projectTitle" to receipt.projectTitle, "revision" to receipt.revision, "sourceChecksums" to receipt.sourceChecksums,
         "width" to receipt.width, "height" to receipt.height, "framesPerSecond" to receipt.framesPerSecond, "codec" to receipt.codec.title, "resolution" to receipt.resolution.title, "audioPeak" to receipt.audioPeak)
 }

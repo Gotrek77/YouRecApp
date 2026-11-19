@@ -73,7 +73,9 @@ class EditorTimeline(context: Context) : View(context) {
         verticalOffset = verticalOffset.coerceIn(0f, maxOf(0f, contentHeight() - height))
         canvas.drawColor(Design.background)
         drawRuler(canvas)
+        links = TimelineLinkLayout(lanes, timeline.links)
         for (lane in lanes) drawLane(canvas, lane)
+        drawBridges(canvas)
         val a = rangeStart; val b = rangeEnd
         if (a != null) {
             // A lone Start mark is a line; a complete range is the shaded span that Delete removes.
@@ -110,15 +112,27 @@ class EditorTimeline(context: Context) : View(context) {
         }
     }
 
+    private var links = TimelineLinkLayout(emptyList(), emptyList())
+    private val radii = FloatArray(8)
+    private val outline = RectF()
+
+    /// A linked group reads as one object: its cards lose the corners and
+    /// borders where they meet, a seam marks each cut inside it, and picture
+    /// and sound that cover the same time share a border.
     private fun drawLane(canvas: Canvas, lane: TimelineLane) {
         val r = rect(lane)
         if (r.right < 0 || r.left > width || r.bottom < ruler || r.top > height) return
-        val radius = dp(6f)
+        val edges = links.edges[lane.id] ?: TimelineLinkLayout.Edges()
         val isSelected = lane.id in selected
+        // Corner radii in Path order: top-left, top-right, bottom-right, bottom-left.
+        val round = dp(6f)
+        val corners = booleanArrayOf(edges.previous == null && !edges.joinsAbove, edges.next == null && !edges.joinsAbove,
+                                     edges.next == null && !edges.joinsBelow, edges.previous == null && !edges.joinsBelow)
+        for (i in 0 until 4) { radii[i * 2] = if (corners[i]) round else 0f; radii[i * 2 + 1] = radii[i * 2] }
         canvas.save()
-        clip.rewind(); clip.addRoundRect(r, radius, radius, Path.Direction.CW)
+        clip.rewind(); clip.addRoundRect(r, radii, Path.Direction.CW)
         canvas.clipPath(clip)
-        paint.style = Paint.Style.FILL; paint.color = if (lane.audio) 0xFF14323A.toInt() else Design.surface
+        paint.style = Paint.Style.FILL; paint.color = if (lane.audio) soundColor else Design.surface
         canvas.drawRect(r, paint)
         val file = sources.firstOrNull { it.id == lane.source }?.let { source -> folder?.let { File(it, source.filename) } }
         val shift = if (moving?.ids?.contains(lane.id) == true) moveDelta.seconds else 0.0
@@ -128,10 +142,41 @@ class EditorTimeline(context: Context) : View(context) {
             canvas.drawText("Missing file", r.left + dp(6f), r.centerY(), textPaint)
         }
         canvas.restore()
-        paint.style = Paint.Style.STROKE; paint.strokeWidth = dp(if (isSelected) 2.5f else 1f)
-        paint.color = if (isSelected) Design.accent else Design.separator
-        card.set(r); card.inset(paint.strokeWidth / 2, paint.strokeWidth / 2)
-        canvas.drawRoundRect(card, radius, radius, paint)
+
+        // An open side runs past the card and is clipped away, so no line is drawn across a join.
+        fun stroke(leftOpen: Boolean, rightOpen: Boolean, vertical: Boolean, color: Int, width: Float) {
+            outline.set(r); outline.inset(width / 2, width / 2)
+            val past = dp(3f)
+            if (leftOpen) outline.left -= past
+            if (rightOpen) outline.right += past
+            if (vertical && edges.joinsAbove) outline.top -= past
+            if (vertical && edges.joinsBelow) outline.bottom += past
+            canvas.save(); canvas.clipRect(r)
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = width; paint.color = color
+            clip.rewind(); clip.addRoundRect(outline, radii, Path.Direction.CW)
+            canvas.drawPath(clip, paint)
+            canvas.restore()
+        }
+        // The quiet outline marks glue even without a selection; a lone card keeps its plain border.
+        if (edges.outlinedGroup) stroke(edges.previous != null, edges.next != null, true, 0x85E6E6E6.toInt(), dp(1f))
+        else if (!isSelected) stroke(false, false, false, Design.separator, dp(1f))
+        if (isSelected) {
+            // Picture and sound are outlined as one only when the whole group is selected.
+            val group = timeline.links.firstOrNull { lane.id in it.members }?.members
+            stroke(edges.previous?.let { it in selected } ?: false, edges.next?.let { it in selected } ?: false,
+                   group != null && selected.containsAll(group), Design.accent, dp(2.5f))
+        }
+        if (edges.previous != null && r.left >= 0 && r.left <= width) {
+            // The cut inside a group, kept readable over bright footage or a dense waveform.
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = dp(1.5f); paint.color = 0xE6FFFFFF.toInt()
+            clip.rewind(); clip.moveTo(r.left, r.top + dp(1f))
+            if (minOf(lane.interval.duration.seconds, edges.previousDuration.seconds) * viewport.scale >= 14) {
+                val middle = r.centerY()
+                for ((dx, dy) in listOf(0f to -7f, -3f to -3f, 3f to 2f, 0f to 6f)) clip.lineTo(r.left + dp(dx), middle + dp(dy))
+            }
+            clip.lineTo(r.left, r.bottom - dp(1f))
+            canvas.drawPath(clip, paint)
+        }
         if (isSelected && moving == null && selected.size <= 2) {
             // Trim grips at both ends of the selected part.
             paint.style = Paint.Style.FILL; paint.color = Design.accent
@@ -141,6 +186,29 @@ class EditorTimeline(context: Context) : View(context) {
             }
         }
     }
+
+    /// Where linked picture and sound cover the same time, close the gap between their rows.
+    private fun drawBridges(canvas: Canvas) {
+        for (bridge in links.bridges) {
+            val groupLeft = x(bridge.interval.start.seconds) + dp(2f)
+            val left = maxOf(0f, groupLeft); val right = minOf(width.toFloat(), x(bridge.interval.end.seconds) - dp(2f))
+            if (right - left < dp(2f)) continue
+            val y = ruler + gap - verticalOffset + bridge.upperRow * (videoRow + gap) + videoRow
+            if (y + gap < ruler || y > height) continue
+            paint.style = Paint.Style.FILL; paint.color = soundColor
+            canvas.drawRect(left, y, right, y + gap, paint)
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = dp(1f); paint.color = 0x85E6E6E6.toInt()
+            val middle = y + gap / 2
+            clip.rewind(); clip.moveTo(left, middle)
+            if (groupLeft >= -dp(7f) && right - groupLeft >= dp(28f)) {
+                // A little stitch connects picture and sound without covering the waveform.
+                for ((dx, dy) in listOf(7f to 0f, 10f to -2f, 14f to 2f, 17f to 0f)) clip.lineTo(groupLeft + dp(dx), middle + dp(dy))
+            }
+            clip.lineTo(right, middle)
+            canvas.drawPath(clip, paint)
+        }
+    }
+    private val soundColor = 0xFF14323A.toInt()
 
     private fun drawThumbnails(canvas: Canvas, lane: TimelineLane, r: RectF, file: File, shift: Double) {
         val h = (r.height()).toInt()

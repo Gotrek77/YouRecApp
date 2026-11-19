@@ -3,7 +3,6 @@ package yourec
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
-import kotlin.math.ceil
 import kotlin.math.log10
 
 /// Seconds since 1 January 2001 UTC, the form the iPhone app writes. Keeping
@@ -83,7 +82,7 @@ data class DeferredProjectHistory(val manifest: File, val count: Int, val cursor
 
 class Project(var title: String) {
     companion object {
-        const val latestReadableSchema = 12
+        const val latestReadableSchema = 16
         fun isSnapshotName(name: String) = name.length == 69 && name.endsWith(".json") && name.take(64).all { it in "0123456789abcdef" }
         fun readManifest(data: ByteArray, summaryFile: File? = null, load: (String) -> ByteArray): Project = ProjectCoding.project(data, summaryFile, load)
     }
@@ -228,12 +227,12 @@ data class ExportSettings(val codec: Codec = Codec.H264, val resolution: Resolut
 data class ExportReceipt(val id: UUID = UUID.randomUUID(), val createdAt: Moment = Moment.now(), val filename: String, val projectID: UUID,
                          val projectTitle: String, val revision: String, val sourceChecksums: Map<String, String>, val width: Int, val height: Int,
                          val framesPerSecond: Int, val codec: ExportSettings.Codec, val resolution: ExportSettings.Resolution, val audioPeak: Double? = null) {
-    // Measured from this export's final mix. Older exports make no claim about headroom.
+    // Measured from this export's final mix.
     val audioWarning: String? get() {
         val peak = audioPeak ?: return null
-        if (!peak.isFinite() || peak <= 1.0001) return null
-        val excess = maxOf(0.1, ceil(20 * log10(peak) * 10) / 10)
-        return String.format("Peaks are %.1f dB above full scale. Lower Volume in the editor and export again.", excess)
+        // A small decode/resample overshoot isn't a useful export warning.
+        if (!peak.isFinite() || peak < Math.pow(10.0, 0.5 / 20)) return null
+        return String.format("The edited audio peaks %.1f dB above full scale. Lower the volume of the affected clips and export again.", 20 * log10(peak))
     }
 }
 

@@ -754,12 +754,12 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
 
 /// One viewport calculation for pinch, fit, presets and hit testing. At fit,
 /// both ends are visible and the playhead moves independently of the viewport.
-class TimelineViewport(val width: Double, val duration: Double, val requestedScale: Double) {
+class TimelineViewport(val width: Double, val duration: Double, val requestedScale: Double, val centersPlayhead: Boolean = true) {
     companion object { const val edgeInset = 48.0 }
     val minimumScale: Double get() = maxOf(0.000001, (width - 2 * edgeInset) / maxOf(1.0, duration))
     val scale: Double get() = maxOf(minimumScale, minOf(720.0, requestedScale))
     val fits: Boolean get() = duration * scale <= width - 2 * edgeInset + 0.5
-    val inset: Double get() = if (fits) edgeInset else width / 2
+    val inset: Double get() = if (fits || !centersPlayhead) edgeInset else width / 2
     val contentWidth: Double get() = maxOf(width, duration * scale + 2 * inset)
     fun x(time: Double, offset: Double) = time * scale + inset - offset
     fun time(x: Double, offset: Double) = ((x + offset - inset) / scale).coerceIn(0.0, duration)
@@ -784,6 +784,13 @@ fun timelineLanes(timeline: TrackTimeline, moving: TimelineSelection? = null): L
         if (aLayer != bLayer) bLayer.compareTo(aLayer) else if (a.start == b.start) a.id.text.compareTo(b.id.text) else a.start.compareTo(b.start)
     }
     fun pack(items: List<TimelineLane>, base: Int): Int {
+        val chronological = items.sortedBy { it.interval.start }
+        if (chronological.zip(chronological.drop(1)).none { (a, b) -> a.interval.end > b.interval.start }) {
+            // The common case: every part can occupy the same row. Keep the
+            // original draw/hit-test order without testing every preceding part.
+            for (item in items) result.add(item.copy(row = base))
+            return if (items.isEmpty()) 0 else 1
+        }
         val rows = ArrayList<MutableList<EditInterval>>()
         val placed = ArrayList<Pair<EditInterval, Int>>()
         for (item in items) {
@@ -811,4 +818,58 @@ fun timelineLanes(timeline: TrackTimeline, moving: TimelineSelection? = null): L
         } else base += pack(items, base)
     }
     return result
+}
+
+/// Adjacency in the displayed lanes, after Move row packing: which cards of a
+/// linked group meet edge to edge, and where picture and sound share a border.
+class TimelineLinkLayout(lanes: List<TimelineLane>, links: List<TimelineLink>) {
+    data class Edges(val previous: UUID? = null, val previousDuration: EditTime = EditTime.zero, val next: UUID? = null,
+                     val joinsAbove: Boolean = false, val joinsBelow: Boolean = false, val memberCount: Int = 0, val outlinedGroup: Boolean = false)
+    data class Bridge(val group: UUID, val upperRow: Int, val interval: EditInterval)
+    val edges = HashMap<UUID, Edges>()
+    val bridges = ArrayList<Bridge>()
+
+    init {
+        val groups = HashMap<UUID, UUID>()
+        for (link in links) {
+            if (link.members.size < 2) continue
+            for (member in link.members) { groups[member] = link.id; edges[member] = Edges(memberCount = link.members.size) }
+        }
+        val rows = lanes.groupBy { it.row }.mapValues { row -> row.value.sortedBy { it.interval.start } }
+        val horizontalGroups = HashSet<UUID>()
+        for (index in rows.keys.sorted()) {
+            val row = rows[index]!!
+            for ((left, right) in row.zip(row.drop(1))) {
+                val group = groups[left.id]
+                if (left.interval.end != right.interval.start || group == null || group != groups[right.id]) continue
+                horizontalGroups.add(group)
+                edges[left.id] = edges[left.id]!!.copy(next = right.id)
+                edges[right.id] = edges[right.id]!!.copy(previous = left.id, previousDuration = left.interval.duration)
+            }
+            // Only adjacent picture and sound lanes can share a physical border.
+            val lower = rows[index + 1]
+            if (row.firstOrNull()?.audio != false || lower == null || lower.firstOrNull()?.audio != true) continue
+            var i = 0; var j = 0
+            val coverage = HashMap<UUID, EditTime>()
+            while (i < row.size && j < lower.size) {
+                val picture = row[i]; val sound = lower[j]
+                val group = groups[picture.id]
+                val common = if (group != null && group == groups[sound.id]) picture.interval.intersection(sound.interval) else null
+                if (group != null && common != null) {
+                    coverage[picture.id] = (coverage[picture.id] ?: EditTime.zero) + common.duration
+                    coverage[sound.id] = (coverage[sound.id] ?: EditTime.zero) + common.duration
+                    val last = bridges.lastOrNull()
+                    if (last != null && last.group == group && last.upperRow == index && last.interval.end == common.start) {
+                        bridges[bridges.size - 1] = last.copy(interval = EditInterval(last.interval.start, common.end))
+                    } else bridges.add(Bridge(group, index, common))
+                }
+                val pictureEnd = picture.interval.end; val soundEnd = sound.interval.end
+                if (pictureEnd <= soundEnd) i++
+                if (soundEnd <= pictureEnd) j++
+            }
+            for (lane in row) if (coverage[lane.id] == lane.interval.duration) edges[lane.id] = edges[lane.id]!!.copy(joinsBelow = true)
+            for (lane in lower) if (coverage[lane.id] == lane.interval.duration) edges[lane.id] = edges[lane.id]!!.copy(joinsAbove = true)
+        }
+        for (link in links) if (link.id in horizontalGroups) for (member in link.members) edges[member]?.let { edges[member] = it.copy(outlinedGroup = true) }
+    }
 }

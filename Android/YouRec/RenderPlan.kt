@@ -16,6 +16,9 @@ class RenderPlan(edit: EditState) {
         val item = pictures.lastOrNull { time in it.interval } ?: return null
         return Picture(item.id, item.content.sourceID, item.mapping.source(time - item.start) ?: return null, item.interval)
     }
+    /// What stays on screen once playback has reached the end: the last frame
+    /// of the last picture, or nothing when the movie ends on sound alone.
+    val ending: Picture? get() = if (duration > EditTime.zero) picture(duration - EditTime.ticks(EditTime.scale / 60)) else null
     /// The next time at which a different picture, or none, takes over.
     fun pictureChange(after: EditTime): EditTime =
         (pictures.flatMap { listOf(it.start, it.end) }.filter { it > after }.minOrNull() ?: duration)

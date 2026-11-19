@@ -152,8 +152,7 @@ class EditorController {
             val width = core.width(window); val height = core.height(window)
             FrameProgram.clear(width, height)
             // The last frame stays on screen at the very end, as a player would leave it.
-            val moment = EditTime.seconds(if (time >= duration && duration > 0) duration - 1.0 / 60 else time)
-            val picture = plan?.picture(moment)
+            val picture = if (time >= duration && duration > 0) plan?.ending else plan?.picture(EditTime.seconds(time))
             val reader = picture?.let { sources?.frames(it.source) }
             try {
                 if (picture != null && reader != null && reader.show(picture.sourceTime)) {

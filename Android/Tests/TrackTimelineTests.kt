@@ -99,6 +99,7 @@ fun trackTimelineTests() {
     moveCompanionTests()
     laneTests(source, baseline)
     fadeTests(baseline)
+    multiSelectionTests()
     navigationTests(baseline)
 }
 
@@ -217,4 +218,63 @@ private fun navigationTests(baseline: TrackTimeline) {
     require(TimelineNavigation.stops(baseline) == listOf(0.0, 2.0, 4.0), "Cut navigation visits each edge once")
     require(TimelineNavigation.jump(baseline, 2.0, true) == 4.0 && TimelineNavigation.jump(baseline, 2.0, false) == 0.0 && TimelineNavigation.jump(baseline, 4.0, true) == null,
         "Previous and next move past the cut under the playhead")
+}
+
+private fun multiSelectionTests() {
+    val source = SourceMedia(filename = "multi.mp4", duration = 12.0)
+    val clips = (0 until 3).map { TimelineClip(sourceID = source.id, start = it * 4.0, end = it * 4.0 + 4) }
+    val original = TrackTimeline.of(clips)
+    val all = original.entireSelection()
+    val (together, glued) = original.joining(all)
+    require(together.links.size == 1 && together.links[0].members == all.ids, "Join horizontal chains before vertical linking")
+    require(together.video == original.video && together.audio == original.audio, "Join preserves every sample map, source identity, setting and follower")
+    together.validate(listOf(source))
+    require(ProjectCoding.timeline(Fields.of(JSON.parse(JSON.write(ProjectCoding.encode(together))))) == together, "Multi-part link persists exactly")
+    val detached = original.copy(); detached.unlink(all)
+    val videos = TimelineSelection(video = all.video); val audios = TimelineSelection(audio = all.audio)
+    val v = detached.joining(videos).first; val a = detached.joining(audios).first
+    require(v.selection(clips[1].id).ids == all.video, "Video-only horizontal glue selects every joined section")
+    require(a.selection(detached.audio[1].id).ids == all.audio, "Audio-only horizontal glue selects every joined section")
+    val splitGroup = together.copy()
+    splitGroup.split(EditTime.seconds(6.0), glued)
+    require(splitGroup.links.size == 2 && splitGroup.links.all { it.members.size == 4 }, "Splitting a joined sequence separates the two sides, with AV sync preserved")
+    splitGroup.validate(listOf(source))
+    // Different internal split points, identical coverage: no unnecessary prompt.
+    val partitioned = TrackTimeline.of(listOf(TimelineClip(sourceID = source.id, start = 0.0, end = 12.0)))
+    partitioned.unlink(partitioned.entireSelection())
+    partitioned.split(EditTime.seconds(4.0), TimelineSelection(video = setOf(partitioned.video[0].id)))
+    partitioned.split(EditTime.seconds(8.0), TimelineSelection(video = partitioned.video.map { it.id }.toSet()))
+    require(!partitioned.linkPlan(partitioned.entireSelection()).needsIntersection, "Equal coverage links without asking")
+    val joinedPartition = partitioned.joining(partitioned.entireSelection()).first
+
+    fun layout(timeline: TrackTimeline, moving: TimelineSelection? = null) = TimelineLinkLayout(timelineLanes(timeline, moving), timeline.links)
+    val whole = EditInterval(0.0, 12.0)
+    val gluedLayout = layout(together); val separate = layout(original); val pictureOnly = layout(v)
+    require(gluedLayout.edges[clips[1].id]?.previous == clips[0].id && gluedLayout.edges[clips[1].id]?.next == clips[2].id
+        && gluedLayout.edges[original.audio[1].id]?.next == original.audio[2].id, "Glued picture and sound share internal cuts")
+    require(gluedLayout.edges.values.all { it.outlinedGroup } && separate.edges.values.none { it.outlinedGroup }, "The quiet group outline marks horizontal glue even without a selection")
+    require(separate.edges[clips[1].id]?.previous == null && separate.bridges.size == 3 && gluedLayout.bridges.map { it.interval } == listOf(whole),
+        "Only explicitly glued groups share outside borders")
+    require(pictureOnly.bridges.isEmpty() && pictureOnly.edges[clips[1].id]?.next == clips[2].id && pictureOnly.edges[original.audio[1].id] == null
+        && layout(detached).edges.isEmpty(), "Unlinked sound stays independent")
+    val mixed = layout(joinedPartition)
+    require(mixed.bridges.map { it.interval } == listOf(whole) && joinedPartition.video.all { mixed.edges[it.id]?.joinsBelow == true }
+        && mixed.edges[joinedPartition.audio[0].id]?.joinsAbove == true, "Unequal partitions outline the same joined span")
+    val gapped = together.copy()
+    gapped.video = gapped.video.mapIndexed { i, item -> if (i == 2) item.copy(start = item.start + EditTime.ticks(1)) else item }
+    require(layout(gapped).edges[clips[1].id]?.next == null && layout(gapped).edges[clips[2].id]?.joinsBelow == false, "A one-tick gap and unmatched tail never acquire a shared outline")
+    val lifted = layout(together, TimelineSelection(video = setOf(clips[1].id)))
+    require(lifted.edges[clips[1].id]?.previous == null && lifted.edges[clips[1].id]?.joinsBelow == false, "Lifting an item into a separate lane cannot join through an intervening row")
+    val cut = layout(splitGroup)
+    require(cut.bridges.size == 2 && cut.bridges.all { it.interval.end == EditTime.seconds(6.0) || it.interval.start == EditTime.seconds(6.0) },
+        "Splitting a group exposes an ordinary cut between the two new groups")
+    val soundOnly = layout(a)
+    require(soundOnly.bridges.isEmpty() && soundOnly.edges[detached.audio[1].id]?.previous == detached.audio[0].id && soundOnly.edges[clips[1].id] == null,
+        "Joined audio gets a seam without attaching the picture above")
+    // A sequence without overlaps takes one row whatever its order in the document.
+    val shuffled = TrackTimeline(original.video.reversed(), original.audio, original.links)
+    require(timelineLanes(shuffled).filter { !it.audio }.all { it.row == 0 } && timelineLanes(shuffled).map { it.id }.take(3) == timelineLanes(original).map { it.id }.take(3),
+        "Parts that never overlap share a row and keep their drawing order")
+    val edge = TimelineViewport(400.0, 600.0, 60.0, centersPlayhead = false)
+    require(edge.inset == TimelineViewport.edgeInset && TimelineViewport(400.0, 600.0, 60.0).inset == 200.0, "A viewport can keep the timeline start at its edge instead of the centre")
 }

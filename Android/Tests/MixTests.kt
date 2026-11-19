@@ -68,6 +68,9 @@ fun mixTests() {
     require(plan.pictureChange(EditTime.zero) == EditTime.seconds(1.0) && plan.pictureChange(EditTime.seconds(1.0)) == EditTime.seconds(3.0), "The plan reports where the picture changes")
     val gap = edit.copy(); gap.timeline.unlink(gap.timeline.entireSelection()); gap.timeline.video = emptyList()
     require(RenderPlan(gap).picture(EditTime.seconds(1.0)) == null && RenderPlan(gap).duration == EditTime.seconds(4.0), "Sound without picture is black, not missing time")
+    // At the end of playback the last source frame stays; an audio-only tail stays black.
+    val full = RenderPlan(edit)
+    require(full.ending?.sourceTime!! > 3.9 && RenderPlan(gap).ending == null, "The final picture is the last frame, or black under a sound-only tail")
     val over = layered.copy(); over.timeline.move(TimelineSelection(over.timeline.video.map { it.id }.toSet()), EditTime.zero)
     require(RenderPlan.fit(1920, 1080, 1920, 1080) == RenderPlan.Fit(1f, 1f) && RenderPlan.fit(1080, 1920, 1920, 1080).scaleX == 0.31640625f
         && RenderPlan.fit(1920, 1080, 1080, 1920).scaleY == 0.31640625f, "Footage of another shape keeps its whole picture inside the canvas")
