@@ -175,6 +175,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if (!chosen.isEmpty) tool("Move") { beginMove() }
             tool("Volume") { openVolume() }
             if (edit.timeline.video.isNotEmpty()) { tool("Speed") { openSpeed() }; tool("Crop") { openCrop() }; tool("Mirror") { openMirror() } }
+            if (edit.timeline.video.isNotEmpty()) tool("Text") { openText(null) }
             if (edit.timeline.compile().any { it.video.size > 1 }) tool("Placement") { openPlacement(null) }
             if (!chosen.isEmpty && edit.timeline.links.any { link -> link.members.any { it in chosen.ids } }) tool("Unlink") { unlink() }
             else if (chosen.ids.size >= 2) tool("Link") { link(false) }
@@ -585,6 +586,94 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                 apply("Placement reset", region.copy(videos = active.withIndex().associate { it.value.id to VideoPlacement(order = it.index) }))
             },
             Design.button(context, "Done", Design.accent) { closePanel() }, spacing = 6f).apply { setPadding(0, Design.dp(context, 6f), 0, 0) })
+        showPanel(content)
+    }
+
+    /// A title on the picture under the playhead. Typing and dragging preview
+    /// the draft; every finished change is one undo step.
+    private fun openText(chosen: UUID?) {
+        val project = project ?: return
+        editor.pause()
+        val edit = project.edit
+        val here = TimelineEditing.textsAt(editor.playhead, edit)
+        val id = chosen ?: here.lastOrNull()?.id
+        if (id == null) {
+            val (added, created) = TimelineEditing.addingText(TextOverlay(), editor.playhead, 3.0, edit)
+            if (created == null) return say("Move the playhead onto a video to add text.")
+            commit(added, "Text added")
+            return openText(created)
+        }
+        val owner = edit.timeline.video.firstOrNull { item -> item.content.texts?.any { it.id == id } == true } ?: return closePanel()
+        var title = owner.content.texts!!.first { it.id == id }
+        val length = project.sources.firstOrNull { it.id == owner.content.sourceID }?.duration ?: owner.content.end
+        fun preview() { this.project?.let { editor.show(TimelineEditing.updatingText(title, it.edit)) } }
+        fun save(message: String, reopen: Boolean = false) {
+            val now = this.project ?: return
+            val changed = TimelineEditing.updatingText(title, now.edit)
+            if (changed != now.edit) commit(changed, message)
+            if (reopen) openText(id)
+        }
+        val content = Design.column(context, Design.label(context, "Text", 15f, bold = true), spacing = 4f)
+        fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val field = android.widget.EditText(context).apply {
+            setText(title.text); setTextColor(Design.text); setHintTextColor(Design.secondary); hint = "Title"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            maxLines = 3; filters = arrayOf(android.text.InputFilter.LengthFilter(500))
+            contentDescription = "Title text"
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) { }
+                override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) { }
+                override fun afterTextChanged(text: android.text.Editable?) { title = title.copy(text = text?.toString() ?: ""); preview() }
+            })
+            // Leaving the field is the end of one edit of the words.
+            setOnFocusChangeListener { _, focused -> if (!focused) save("Text changed") }
+        }
+        add(field)
+        add(choices(*TextStyle.values().map { style ->
+            val on = style == title.style
+            Design.button(context, style.name, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) { title = title.copy(style = style); save("Text style", reopen = true) }
+                .apply { contentDescription = "Style " + style.name + if (on) ", selected" else "" }
+        }.toTypedArray()))
+        add(choices(*TextColor.values().map { color ->
+            val on = color == title.color
+            Design.button(context, if (on) "●" else " ", if (color == TextColor.White || color == TextColor.Yellow || color == TextColor.Mint) Design.background else Design.text, color.argb, 13f) { title = title.copy(color = color); save("Text colour", reopen = true) }
+                .apply { contentDescription = "Colour " + color.name + if (on) ", selected" else "" }
+        }.toTypedArray()).apply { setPadding(0, Design.dp(context, 6f), 0, 0) })
+        val values = List(3) { Design.label(context, "", 14f, mono = true) }
+        fun describe() { values[0].text = String.format("%.0f%%", title.size * 100); values[1].text = String.format("%.0f%%", title.x * 100); values[2].text = String.format("%.0f%%", title.y * 100) }
+        fun bar(max: Int, start: Int, update: (Int) -> Unit) = SeekBar(context).apply {
+            this.max = max; progress = start.coerceIn(0, max)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(b: SeekBar, value: Int, user: Boolean) { if (user) { update(value); describe(); preview() } }
+                override fun onStartTrackingTouch(b: SeekBar) { }
+                override fun onStopTrackingTouch(b: SeekBar) { save("Text changed") }
+            })
+        }
+        describe()
+        // Size from 2% to 30% of the shorter side of the frame.
+        add(labelled("Size", bar(280, Math.round(title.size * 1000).toInt() - 20) { title = title.copy(size = (it + 20) / 1000.0) }, values[0]))
+        add(labelled("Across", bar(100, Math.round(title.x * 100).toInt()) { title = title.copy(x = it / 100.0) }, values[1]))
+        add(labelled("Down", bar(100, Math.round(title.y * 100).toInt()) { title = title.copy(y = it / 100.0) }, values[2]))
+        val rate = owner.content.rate
+        val lasting = (title.end - title.start) / rate
+        add(choices(*EditorDurationPresets.wholeSeconds.filter { title.start + it * rate <= length + 0.001 || it == 1.0 }.map { seconds ->
+            val on = Math.abs(lasting - seconds) < 0.02
+            Design.button(context, ZoomTransition.number(seconds) + " s", if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) {
+                title = title.copy(end = minOf(length, title.start + seconds * rate)); save("Text duration", reopen = true)
+            }.apply { contentDescription = "On screen for " + ZoomTransition.number(seconds) + " seconds" + if (on) ", selected" else "" }
+        }.toTypedArray()))
+        add(Design.row(context,
+            Design.button(context, "Remove", Design.recording, size = 13f) {
+                val now = this.project ?: return@button
+                commit(TimelineEditing.removingText(id, now.edit), "Text removed"); closePanel()
+            },
+            Design.button(context, "Add another", size = 13f) {
+                save("Text changed")
+                val now = this.project ?: return@button
+                val (added, created) = TimelineEditing.addingText(TextOverlay(y = 0.75), editor.playhead, 3.0, now.edit)
+                if (created != null) { commit(added, "Text added"); openText(created) }
+            },
+            Design.button(context, "Done", Design.accent) { save("Text changed"); closePanel() }, spacing = 6f).apply { setPadding(0, Design.dp(context, 6f), 0, 0) })
         showPanel(content)
     }
 

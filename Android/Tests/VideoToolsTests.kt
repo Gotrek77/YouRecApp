@@ -19,6 +19,46 @@ fun videoToolsTests() {
     speedTests()
     stretchTests()
     placementTests()
+    textTests()
+}
+
+private fun textTests() {
+    val source = SourceMedia(filename = "titles.mp4", duration = 10.0)
+    val edit = EditState(listOf(TimelineClip(sourceID = source.id, start = 0.0, end = 10.0)))
+    val (titled, id) = TimelineEditing.addingText(TextOverlay(text = "The Sicilian Coast", y = 0.25, style = TextStyle.Box, color = TextColor.Yellow), 2.0, 3.5, edit)
+    val title = titled.clips[0].texts!!.single()
+    require(id == title.id && title.start == 2.0 && title.end == 5.5 && titled.duration == edit.duration, "A title starts under the playhead and lasts its chosen time")
+    titled.timeline.validate(listOf(source))
+    fun shown(state: EditState, time: Double) = RenderPlan(state).layers(EditTime.seconds(time)).flatMap { it.picture.clip.visibleTexts(it.picture.sourceTime) }.map { it.text }
+    require(shown(titled, 1.9).isEmpty() && shown(titled, 2.0) == listOf("The Sicilian Coast") && shown(titled, 5.4).size == 1 && shown(titled, 5.5).isEmpty(), "A title shows exactly between its times")
+    require(TimelineEditing.textsAt(3.0, titled).single().id == id && TimelineEditing.textsAt(8.0, titled).isEmpty(), "The titles under the playhead can be found for editing")
+    val restored = ProjectCoding.editState(Fields.of(JSON.parse(JSON.write(ProjectCoding.encode(titled)))))
+    require(restored == titled && String(JSON.write(ProjectCoding.encode(titled))).contains("\"style\":\"box\"") , "Titles round-trip with the iPhone app's style and colour names")
+    // A title belongs to its footage: it follows cuts, deletions, moves and speed.
+    val cut = TimelineEditing.removing(0.0, 1.0, titled).first
+    require(shown(cut, 1.0) == listOf("The Sicilian Coast") && shown(cut, 0.9).isEmpty(), "A title moves earlier when footage before it is removed")
+    val split = TimelineEditing.split(titled, 4.0)
+    require(split.clips.all { it.texts?.single()?.id == id } && shown(split, 3.9).size == 1 && shown(split, 4.1).size == 1 && shown(split, 5.6).isEmpty(), "A split through a title leaves it whole on screen")
+    val edited = TimelineEditing.updatingText(title.copy(text = "Sicily", color = TextColor.Mint), split)
+    require(edited.clips.all { it.texts?.single()?.text == "Sicily" }, "Editing a title changes every piece it spans")
+    require(TimelineEditing.removingText(id!!, split).clips.all { it.texts == null } && shown(TimelineEditing.removingText(id, split), 3.0).isEmpty(), "Removing a title removes it from every piece")
+    val fast = TimelineEditing.settingSpeed(2.0, TimelineSelection(), titled)
+    require(shown(fast, 1.0).size == 1 && shown(fast, 2.7).size == 1 && shown(fast, 2.8).isEmpty(), "A title keeps to its footage when the clip is retimed")
+    val late = TimelineEditing.addingText(TextOverlay(), 9.0, 5.0, edit).first.clips[0].texts!!.single()
+    require(late.end == 10.0, "A title cannot outlast its clip")
+    require(TimelineEditing.addingText(TextOverlay(), 10.0, 3.0, edit).second == null && TimelineEditing.addingText(TextOverlay(), 2.0, 3.0, EditState()).second == null, "Without a picture under the playhead there is nothing to title")
+    require(!TextOverlay(text = "  ").hasText && shown(TimelineEditing.updatingText(title.copy(text = " "), titled), 3.0).isEmpty(), "An empty title is not drawn")
+    val project = Project("Titles"); project.sources = listOf(source); project.history = listOf(edit)
+    project.commit(TimelineEditing.updatingText(title.copy(size = 0.5), titled))
+    requireFailure<ProjectError.InvalidDocument>("A title outside its limits is not a valid document") { project.validate() }
+    @Suppress("UNCHECKED_CAST")
+    for ((key, words) in listOf("appearance" to "title designs", "labelHeadline" to "cards", "motion" to "animated titles")) {
+        val json = JSON.parse(JSON.write(ProjectCoding.encode(titled))) as MutableMap<String, Any?>
+        val clip = (((json["timeline"] as MutableMap<String, Any?>)["video"] as List<Any?>)[0] as MutableMap<String, Any?>)["content"] as MutableMap<String, Any?>
+        ((clip["texts"] as List<Any?>)[0] as MutableMap<String, Any?>)[key] = mapOf("x" to 1)
+        try { ProjectCoding.editState(Fields.of(json)); require(false, "$words must be refused") } catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains(words), "The refusal names $words") }
+    }
+    require(TextColor.Yellow.argb == 0xFFFFD929.toInt() && TextColor.White.argb == 0xFFFFFFFF.toInt(), "Title colours are the iPhone app's")
 }
 
 private fun placementTests() {

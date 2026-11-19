@@ -29,7 +29,10 @@ data class SourceMedia(val id: UUID = UUID.randomUUID(), val filename: String, v
                        val isStillPhoto: Boolean? = null, val originalName: String? = null)
 
 data class TimelineClip(val id: UUID = UUID.randomUUID(), val sourceID: UUID, val start: Double, val end: Double,
-                        val speed: SpeedSettings? = null, val crop: CropSettings? = null, val mirror: MirrorSettings? = null) {
+                        val speed: SpeedSettings? = null, val crop: CropSettings? = null, val mirror: MirrorSettings? = null,
+                        val texts: List<TextOverlay>? = null) {
+    /// The titles to draw while this clip shows one source time.
+    fun visibleTexts(sourceTime: Double) = texts?.filter { it.hasText && it.start <= sourceTime && sourceTime < it.end } ?: emptyList()
     /// Source seconds played per timeline second.
     val rate: Double get() = (speed?.rate ?: 1.0).coerceIn(0.125, 6.0)
     val duration: Double get() = (end - start) / rate
@@ -202,6 +205,7 @@ class Project(var title: String) {
                 require(source != null && clip.start.isFinite() && clip.end.isFinite() && clip.start >= 0 && clip.end > clip.start && clip.end <= source.duration + 0.001)
                 require(clip.speed?.let { it.rate.isFinite() && it.rate in 0.25..4.0 } ?: true)
                 require(clip.crop?.valid ?: true)
+                require(clip.texts?.let { texts -> texts.map { it.id }.toSet().size == texts.size && texts.all { it.valid(source!!.duration) } } ?: true)
             }
         }
     }

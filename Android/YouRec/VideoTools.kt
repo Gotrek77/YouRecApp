@@ -88,6 +88,25 @@ data class MirrorSettings(val id: UUID = UUID.randomUUID(), val horizontal: Bool
                                                tx = if (horizontal) canvas.width else 0.0, ty = if (vertical) canvas.height else 0.0)
 }
 
+enum class TextStyle { Clean, Bold, Box, Highlight }
+enum class TextColor(val red: Double, val green: Double, val blue: Double) {
+    White(1.0, 1.0, 1.0), Black(0.03, 0.03, 0.04), Yellow(1.0, 0.85, 0.16), Coral(1.0, 0.3, 0.36), Mint(0.35, 0.94, 0.72), Blue(0.35, 0.66, 1.0);
+    val argb: Int get() = (0xFF shl 24) or (Math.round(red * 255).toInt() shl 16) or (Math.round(green * 255).toInt() shl 8) or Math.round(blue * 255).toInt()
+}
+/// A title on the picture. Its times are in the source recording, so it stays
+/// with its words through cuts, moves and speed changes; its place and size are
+/// fractions of the frame, so it looks the same at every export size.
+data class TextOverlay(val id: UUID = UUID.randomUUID(), val text: String = starterText, val start: Double = 0.0, val end: Double = 3.0,
+                       val x: Double = 0.5, val y: Double = 0.5,
+                       // Font size relative to the shorter canvas dimension; consistent on rotation.
+                       val size: Double = 0.10, val style: TextStyle = TextStyle.Bold, val color: TextColor = TextColor.White) {
+    companion object { const val starterText = "Text" }
+    val hasText: Boolean get() = text.isNotBlank()
+    fun valid(sourceDuration: Double) = start.isFinite() && end.isFinite() && start >= 0 && end > start && end <= sourceDuration + 0.001
+        && text.length <= 500 && x.isFinite() && y.isFinite() && x in 0.0..1.0 && y in 0.0..1.0 && size.isFinite() && size in 0.02..0.3
+}
+object EditorDurationPresets { val wholeSeconds: List<Double> = (1..10).map { it.toDouble() } + listOf(15.0, 30.0, 60.0) }
+
 data class SpeedSettings(val id: UUID = UUID.randomUUID(), val rate: Double = 1.0)
 
 enum class OutputShape(val title: String, val aspect: Double?) {

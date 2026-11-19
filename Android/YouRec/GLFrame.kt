@@ -181,3 +181,61 @@ class FrameProgram {
         }
     }
 }
+
+/// Draws an ordinary texture with transparency over what is already there:
+/// titles, drawn once into a bitmap and placed like any other picture.
+class OverlayProgram {
+    private val program: Int
+    private val position: Int
+    private val coordinate: Int
+    private val image: Int
+    private val quad = FloatArray(8)
+    private val quadBuffer: FloatBuffer = ByteBuffer.allocateDirect(32).order(ByteOrder.nativeOrder()).asFloatBuffer()
+    // A bitmap's first row is its top: these coordinates put it back on top.
+    private val coordinates: FloatBuffer = ByteBuffer.allocateDirect(32).order(ByteOrder.nativeOrder()).asFloatBuffer().apply { put(floatArrayOf(0f, 1f, 1f, 1f, 0f, 0f, 1f, 0f)); position(0) }
+
+    init {
+        fun shader(type: Int, source: String): Int {
+            val id = GLES20.glCreateShader(type)
+            GLES20.glShaderSource(id, source); GLES20.glCompileShader(id)
+            val status = IntArray(1); GLES20.glGetShaderiv(id, GLES20.GL_COMPILE_STATUS, status, 0)
+            check(status[0] != 0) { "Shader: " + GLES20.glGetShaderInfoLog(id) }
+            return id
+        }
+        program = GLES20.glCreateProgram()
+        val v = shader(GLES20.GL_VERTEX_SHADER, "attribute vec4 position; attribute vec2 coordinate; varying vec2 uv; void main() { gl_Position = position; uv = coordinate; }")
+        val f = shader(GLES20.GL_FRAGMENT_SHADER, "precision mediump float; uniform sampler2D image; varying vec2 uv; void main() { gl_FragColor = texture2D(image, uv); }")
+        GLES20.glAttachShader(program, v); GLES20.glAttachShader(program, f); GLES20.glLinkProgram(program)
+        val status = IntArray(1); GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, status, 0)
+        check(status[0] != 0) { "Program: " + GLES20.glGetProgramInfoLog(program) }
+        GLES20.glDeleteShader(v); GLES20.glDeleteShader(f)
+        position = GLES20.glGetAttribLocation(program, "position")
+        coordinate = GLES20.glGetAttribLocation(program, "coordinate")
+        image = GLES20.glGetUniformLocation(program, "image")
+    }
+
+    /// `placement` maps the image's own pixels to canvas pixels, both with y down.
+    fun draw(textureID: Int, placement: Affine, size: CanvasSize, canvas: CanvasSize) {
+        val px = doubleArrayOf(0.0, size.width, 0.0, size.width); val py = doubleArrayOf(size.height, size.height, 0.0, 0.0)
+        for (i in 0 until 4) {
+            quad[i * 2] = (placement.x(px[i], py[i]) * 2 / canvas.width - 1).toFloat()
+            quad[i * 2 + 1] = (1 - placement.y(px[i], py[i]) * 2 / canvas.height).toFloat()
+        }
+        quadBuffer.position(0); quadBuffer.put(quad); quadBuffer.position(0)
+        GLES20.glUseProgram(program)
+        // Android bitmaps carry colour already multiplied by alpha.
+        GLES20.glEnable(GLES20.GL_BLEND); GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureID)
+        GLES20.glUniform1i(image, 0)
+        GLES20.glEnableVertexAttribArray(position)
+        GLES20.glVertexAttribPointer(position, 2, GLES20.GL_FLOAT, false, 0, quadBuffer)
+        GLES20.glEnableVertexAttribArray(coordinate)
+        GLES20.glVertexAttribPointer(coordinate, 2, GLES20.GL_FLOAT, false, 0, coordinates)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        GLES20.glDisableVertexAttribArray(position); GLES20.glDisableVertexAttribArray(coordinate)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
+        GLES20.glDisable(GLES20.GL_BLEND)
+    }
+    fun release() { GLES20.glDeleteProgram(program) }
+}

@@ -84,6 +84,42 @@ object TimelineEditing {
     fun settingCrop(crop: CropSettings?, selection: TimelineSelection, state: EditState) = applying(selection, state) { clip ->
         clip.copy(crop = crop?.copy(id = clip.crop?.id ?: java.util.UUID.randomUUID()))
     }
+    /// The picture a title made at this time would sit on: the front one.
+    fun pictureAt(time: Double, state: EditState): VideoTimelineItem? {
+        val at = EditTime.seconds(time)
+        return state.timeline.video.filter { at in it.interval }.sortedWith(TrackTimeline.backToFront).lastOrNull()
+    }
+    fun textsAt(time: Double, state: EditState): List<TextOverlay> {
+        val item = pictureAt(time, state) ?: return emptyList()
+        val source = item.mapping.source(EditTime.seconds(time) - item.start) ?: return emptyList()
+        return item.content.texts?.filter { it.start <= source && source < it.end } ?: emptyList()
+    }
+    /// Put a title on the picture under `time`, from there for `seconds` of
+    /// playback or to the end of that clip, whichever comes first.
+    fun addingText(text: TextOverlay, time: Double, seconds: Double, state: EditState): Pair<EditState, UUID?> {
+        val item = pictureAt(time, state) ?: return state to null
+        val start = item.mapping.source(EditTime.seconds(time) - item.start) ?: return state to null
+        val end = minOf(item.content.end, start + seconds * item.content.rate)
+        if (end - start < frame * item.content.rate) return state to null
+        val placed = text.copy(start = start, end = end)
+        val result = state.copy()
+        result.timeline.replaceContents(mapOf(item.id to item.content.copy(texts = (item.content.texts ?: emptyList()) + placed)))
+        return result to placed.id
+    }
+    /// Parts split from one take share a title's identity: all of them change together.
+    fun updatingText(text: TextOverlay, state: EditState): EditState {
+        val result = state.copy()
+        result.timeline.replaceContents(result.timeline.video.filter { item -> item.content.texts?.any { it.id == text.id } == true }
+            .associate { it.id to it.content.copy(texts = it.content.texts!!.map { old -> if (old.id == text.id) text else old }) })
+        return result
+    }
+    fun removingText(id: UUID, state: EditState): EditState {
+        val result = state.copy()
+        result.timeline.replaceContents(result.timeline.video.filter { item -> item.content.texts?.any { it.id == id } == true }
+            .associate { it.id to it.content.copy(texts = it.content.texts!!.filter { old -> old.id != id }.ifEmpty { null }) })
+        return result
+    }
+
     /// A project-wide picture shape. Null returns to the shape of the reference take.
     fun settingShape(size: CanvasSize?, state: EditState): EditState = state.copy().also { it.outputSize = size }
 

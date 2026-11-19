@@ -57,6 +57,9 @@ capture, recording controls, the cut editor, export.
   **Speed** from 0.25× to 4× with the pitch of the sound preserved, **Crop**
   with zoom, position, rotation and the project shapes (Original, 16:9, 9:16,
   1:1, 4:5), and **Mirror**, on the selected clips or the whole project.
+  **Text** puts timed titles on the picture in the four plain styles and six
+  colours, with size, position and duration; a title stays with its footage
+  through cuts, moves and speed changes.
   **Placement** arranges videos that overlap: Full, Side by side, Stacked and
   Inset presets, front/back order, Fit or Fill, and each picture's window and
   framing.
@@ -77,7 +80,8 @@ them is **refused by name** on Android ("This project uses Transitions…")
 instead of being opened and quietly losing that work on the next save, the same
 policy older iPhone builds apply to newer projects.
 
-Subtitles and the Qwen3-ASR model · Text and title design, imported fonts ·
+Subtitles and the Qwen3-ASR model · Title designs, looks and outlines, imported fonts,
+animated titles ·
 Color LUTs, Log, HDR capture and export · Video effects and their Metal
 shaders · Transitions · Dragging and pinching a placed picture in the preview,
 and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·

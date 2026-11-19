@@ -15,7 +15,7 @@ internal object ProjectCoding {
     private fun present(value: Any?) = when (value) { null -> false; is List<*> -> value.isNotEmpty(); else -> true }
 
     // TimelineClip
-    private val clipTools = mapOf("stabilization" to "Stabilization", "color" to "Color", "texts" to "Text", "pauses" to "Pause cuts",
+    private val clipTools = mapOf("stabilization" to "Stabilization", "color" to "Color", "pauses" to "Pause cuts",
         "images" to "Image overlays", "openingTransition" to "Transitions", "transition" to "Transitions",
         "videoEffects" to "Video effects", "frozenFrame" to "Freeze frame", "colorRegions" to "Color",
         "effectWindows" to "effects limited to a range", "framingVariants" to "Crop, Mirror or Stabilization on a range")
@@ -30,12 +30,22 @@ internal object ProjectCoding {
         val speed = value.fieldsOrNull("speed")?.let { SpeedSettings(it.uuid("id"), it.double("rate")) }
         val crop = value.fieldsOrNull("crop")?.let { plain(it, "Crop") }?.let { CropSettings(it.uuid("id"), it.double("x"), it.double("y"), it.double("zoom"), it.doubleOrNull("rotation") ?: 0.0) }
         val mirror = value.fieldsOrNull("mirror")?.let { plain(it, "Mirror") }?.let { MirrorSettings(it.uuid("id"), it.bool("horizontal"), it.bool("vertical")) }
-        return TimelineClip(value.uuid("id"), value.uuid("sourceID"), value.double("start"), value.double("end"), speed, crop, mirror)
+        val texts = value.listOrNull("texts")?.let { items -> list(items) { text ->
+            // Plain titles are edited here; designed, carded and animated ones are not yet.
+            for ((key, tool) in mapOf("appearance" to "title designs", "labelHeadline" to "label and headline cards", "motion" to "animated titles", "playbackClock" to "titles limited to a range"))
+                if (present(text.raw(key))) unsupported(tool)
+            TextOverlay(text.uuid("id"), text.string("text"), text.double("start"), text.double("end"), text.double("x"), text.double("y"), text.double("size"),
+                TextStyle.values().firstOrNull { it.name.lowercase() == text.string("style") } ?: throw ProjectError.InvalidDocument(),
+                TextColor.values().firstOrNull { it.name.lowercase() == text.string("color") } ?: throw ProjectError.InvalidDocument())
+        } }
+        return TimelineClip(value.uuid("id"), value.uuid("sourceID"), value.double("start"), value.double("end"), speed, crop, mirror, texts)
     }
     fun encode(clip: TimelineClip) = jsonObject("id" to clip.id.text, "sourceID" to clip.sourceID.text, "start" to clip.start, "end" to clip.end,
         "speed" to clip.speed?.let { jsonObject("id" to it.id.text, "rate" to it.rate) },
         "crop" to clip.crop?.let { jsonObject("id" to it.id.text, "x" to it.x, "y" to it.y, "zoom" to it.zoom, "rotation" to it.rotation) },
-        "mirror" to clip.mirror?.let { jsonObject("id" to it.id.text, "horizontal" to it.horizontal, "vertical" to it.vertical) })
+        "mirror" to clip.mirror?.let { jsonObject("id" to it.id.text, "horizontal" to it.horizontal, "vertical" to it.vertical) },
+        "texts" to clip.texts?.map { jsonObject("id" to it.id.text, "text" to it.text, "start" to it.start, "end" to it.end, "x" to it.x, "y" to it.y,
+            "size" to it.size, "style" to it.style.name.lowercase(), "color" to it.color.name.lowercase()) })
 
     private fun map(value: Fields) = SourcePlaybackMap(list(value.list("runs")) {
         PlaybackRun(time(it.fields("duration")), it.double("sourceStart"), it.double("sourceEnd"), it.bool("silent"))

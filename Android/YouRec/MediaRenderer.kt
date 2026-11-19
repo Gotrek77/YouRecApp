@@ -19,6 +19,7 @@ import java.util.UUID
 /// reused across cuts, closed together.
 class RenderSources(private val project: Project, private val folder: File, private val strict: Boolean = false) {
     private val failed = HashSet<UUID>()
+    private val titles = TitleTextures()
     private val frames = LinkedHashMap<Pair<UUID, Int>, FrameReader>(4, 0.75f, true)
     private val sound = HashMap<UUID, DecodedAudio>()
     /// Two edits of the same originals can share open decoders.
@@ -55,7 +56,13 @@ class RenderSources(private val project: Project, private val folder: File, priv
             val source = CanvasSize(reader.video.displayWidth.toDouble(), reader.video.displayHeight.toDouble())
             var placed = layer.picture.clip.pictureTransform(source, frame)
             val placement = layer.placement
-            if (placement == null) { program.draw(reader.texture, reader.matrix, placed, source, frame); continue }
+            val texts = layer.picture.clip.visibleTexts(layer.picture.sourceTime)
+            if (placement == null) {
+                program.draw(reader.texture, reader.matrix, placed, source, frame)
+                // Titles are placed on the finished frame, so a mirrored picture keeps them readable.
+                for (title in texts) titles.draw(title, width, height, null)
+                continue
+            }
             // Within its window a picture is a small frame of its own: black behind it, nothing outside it.
             val visible = placement.visibleWindow(frame)
             val left = Math.round(maxOf(0.0, visible.x)).toInt(); val right = Math.round(minOf(frame.width, visible.x + visible.width)).toInt()
@@ -66,13 +73,15 @@ class RenderSources(private val project: Project, private val folder: File, priv
             android.opengl.GLES20.glScissor(left, height - bottom, right - left, bottom - top)
             android.opengl.GLES20.glClearColor(0f, 0f, 0f, 1f); android.opengl.GLES20.glClear(android.opengl.GLES20.GL_COLOR_BUFFER_BIT)
             program.draw(reader.texture, reader.matrix, placed, source, frame)
+            // A picture in a window carries its titles into that window with it.
+            for (title in texts) titles.draw(title, width, height, placement.transform(frame))
             android.opengl.GLES20.glDisable(android.opengl.GLES20.GL_SCISSOR_TEST)
         }
         return complete
     }
     /// Audio thread.
     fun sound(source: UUID): PCMSource? = sound.getOrPut(source) { DecodedAudio(file(source) ?: return null) }
-    fun releaseFrames() { for (reader in frames.values) try { reader.release() } catch (e: Exception) { }; frames.clear(); failed.clear() }
+    fun releaseFrames() { for (reader in frames.values) try { reader.release() } catch (e: Exception) { }; frames.clear(); failed.clear(); titles.release() }
     fun releaseSound() { for (reader in sound.values) reader.release(); sound.clear() }
 
     /// The project picture size: a fixed shape if one was chosen, otherwise
