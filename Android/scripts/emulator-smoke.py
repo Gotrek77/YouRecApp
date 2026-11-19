@@ -273,6 +273,10 @@ def main():
     if tool("Color") and option("Look Cinema", "Look "):
         time.sleep(1); tap("Done", 10)
         note("after Color: " + describe())
+    # Text needs a picture under the playhead; at the very end there is none.
+    readout = next((n[1] for n in nodes() if " / " in n[1]), "")
+    if readout and readout.split(" / ")[0] == readout.split(" / ")[-1]:
+        tap("Previous cut", 10); time.sleep(1)
     if tool("Text") and wait("Title text", 10):
         option("Style Box", "Style "); option("Colour Yellow", "Colour "); tap("Done", 10)
         note("after Text: " + describe())
