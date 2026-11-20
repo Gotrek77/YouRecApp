@@ -135,7 +135,8 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         // Progress takes the message line; when it ends, the message it covered comes back.
         if (editor.audioStatus != shownAudioStatus) {
             val previous = shownAudioStatus; shownAudioStatus = editor.audioStatus
-            if (shownAudioStatus != null) { if (previous == null) beforeAudioStatus = feedback.text; feedback.text = shownAudioStatus }
+            // A message said while progress showed is the one to bring back.
+            if (shownAudioStatus != null) { if (previous == null || feedback.text.toString() != previous) beforeAudioStatus = feedback.text; feedback.text = shownAudioStatus }
             else if (previous != null && feedback.text.toString() == previous) feedback.text = beforeAudioStatus
         }
         time.text = Design.timecode(editor.playhead) + " / " + Design.timecode(editor.duration)

@@ -412,10 +412,12 @@ def enhance():
     shot("editor-enhance")
     if not tap("Apply enhance audio", 10):
         return False
-    if not wait("Audio enhanced", 10) and not find("Enhancing audio"):
+    # Processing every take shows progress, then the edit's message again.
+    began = time.time()
+    if not wait("Audio enhanced", 600):
         note("Enhance: no confirmation. On screen: " + describe())
         return False
-    note("after Enhance: " + describe())
+    note("after Enhance (%.0f s of processing): %s" % (time.time() - began, describe()))
     return True
 
 def censor():
