@@ -20,6 +20,10 @@ jobs:
           java-version: '17'
       - name: Core checks
         run: ./scripts/test-core.sh
+      - name: DeepFilterNet3 parity
+        run: |
+          python3 -m pip install --quiet numpy onnxruntime
+          ./scripts/dfn3-parity/run.sh
       - name: Build debug APK
         run: ./gradlew --no-daemon assembleDebug
       - uses: actions/upload-artifact@v4

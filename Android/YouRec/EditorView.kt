@@ -712,7 +712,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         fun replace(effect: AudioEffect) { chain = chain.map { if (it.id == effect.id) effect else it } }
         refresh = {
             stages.removeAllViews()
-            if (chain.isEmpty()) stages.addView(Design.label(context, "Add a filter above, in any order. Speech detail (LavaSR), studio restoration (VoiceFixer) and DeepFilterNet3 are not available on Android yet.", 13f, Design.secondary))
+            if (chain.isEmpty()) stages.addView(Design.label(context, "Add a filter above, in any order. Speech detail (LavaSR) and studio restoration (VoiceFixer) are not available on Android yet.", 13f, Design.secondary))
             for ((index, effect) in chain.withIndex()) {
                 val head = Design.row(context, Design.label(context, "${index + 1} · " + effect.kind.title, 14f, bold = true), spacing = 4f)
                 (head.getChildAt(0).layoutParams as LayoutParams).apply { width = 0; weight = 1f }
@@ -733,13 +733,23 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                 val value = Design.label(context, effect.primaryText, 14f, mono = true)
                 stages.addView(labelled(effect.primaryLabel, bar(effect.normalizedPrimary) { n ->
                     val next = chain.first { it.id == effect.id }.settingPrimary(n); replace(next); value.text = next.primaryText }, value))
+                if (effect.kind == EffectKind.voiceIsolation) {
+                    // As on iPhone: RNNoise by default, DeepFilterNet3 on request; the project keeps the choice.
+                    stages.addView(Design.row(context, *listOf(AudioModel.rnnoise to "RNNoise", AudioModel.deepFilter to "DeepFilterNet3").map { (model, name) ->
+                        val on = effect.model == model
+                        Design.button(context, name, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) {
+                            replace(chain.first { it.id == effect.id }.copy(model = model)); refresh()
+                        }.apply { contentDescription = "Noise reduction model $name" + if (on) ", selected" else "" }
+                    }.toTypedArray(), spacing = 6f))
+                }
                 if (effect.kind == EffectKind.equalizer) {
                     val band = Design.label(context, effect.frequencyText, 14f, mono = true)
                     stages.addView(labelled("Frequency", bar(AudioEffect.equalizerPosition(effect.frequency)) { n ->
                         val next = chain.first { it.id == effect.id }.copy(frequency = AudioEffect.equalizerFrequency(n)); replace(next); band.text = next.frequencyText }, band))
                 }
                 stages.addView(Design.label(context, when (effect.kind) {
-                    EffectKind.voiceIsolation -> "RNNoise reduces background noise. Amount blends the cleaned voice with the recording."
+                    EffectKind.voiceIsolation -> if (effect.model == AudioModel.deepFilter) "DeepFilterNet3 reduces background noise more strongly and is slower to process. Amount blends the cleaned voice with the recording."
+                        else "RNNoise reduces background noise. Amount blends the cleaned voice with the recording."
                     EffectKind.highPass -> "Removes low rumble below the cutoff."
                     EffectKind.equalizer -> "Boosts or cuts this frequency. Add another EQ stage for another band."
                     else -> "Adjusts the output level in decibels."

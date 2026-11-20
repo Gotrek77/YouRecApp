@@ -25,7 +25,7 @@ fun enhanceTests() {
     require(AudioEffect.make(EffectKind.highPass).frequency == 80.0 && AudioEffect.make(EffectKind.highPass).settingPrimary(1.0).frequency == 500.0, "Low-cut runs from 20 Hz to 500 Hz")
     require(AudioEffect.make(EffectKind.gain).settingPrimary(0.75).amount == 12.0 && AudioEffect.equalizerFrequency(1.0) == 12000.0, "Gain and EQ controls use the iPhone scales")
     require(!AudioEffect.make(EffectKind.studioVoice).available && AudioEffect.make(EffectKind.studioVoice).supported, "LavaSR is the iPhone app's, not yet this build's")
-    require(!made.copy(model = AudioModel.deepFilter).available && made.copy(model = AudioModel.deepFilter).supported, "DeepFilterNet3 never plays through RNNoise")
+    require(made.copy(model = AudioModel.deepFilter).available, "DeepFilterNet3 runs here")
     require(!made.copy(model = AudioModel.rnnoise.copy(runtime = "other")).supported, "A model is identified by weights and runtime too")
     require(!AudioEffect(kind = EffectKind("future")).supported, "An unknown kind is not processed")
 
@@ -61,7 +61,8 @@ fun enhanceTests() {
     val zero = run(listOf(made.copy(amount = 0.0), AudioEffect.make(EffectKind.studioVoice).copy(amount = 0.0)), { throw IllegalStateException("no model at zero amount") })
     require(zero.indices.all { zero[it] == original[it] }, "Zero amount is an exact bypass, without loading a model")
     requireFailure<AudioProcessingError.UnavailableModel>("A stage this build cannot run is refused, not skipped") { run(listOf(AudioEffect.make(EffectKind.studioVoice)), { Late() }) }
-    requireFailure<AudioProcessingError.UnavailableModel>("DeepFilterNet3 is refused") { run(listOf(made.copy(model = AudioModel.deepFilter)), { Late() }) }
+    requireFailure<AudioProcessingError.UnavailableModel>("DeepFilterNet3 never plays through RNNoise") { run(listOf(made.copy(model = AudioModel.deepFilter)), { Late() }) }
+    deepFilterTests()
     val file = java.io.File.createTempFile("enhanced", ".f32"); file.delete()
     OfflineAudioPipeline.write(voice, length, listOf(AudioEffect.make(EffectKind.gain).copy(amount = -6.0)), { Late() }, file)
     val readBack = FloatArray(1200 * 2); ProcessedAudio(file).use { it.read(-100, readBack, 0, 1200) }
@@ -122,4 +123,50 @@ fun enhanceTests() {
     val plain = FloatArray(48000 * 2); unprepared.render(48000, plain, 48000)
     require(plain.all { it == 0.5f }, "Without processed sound the preview plays the original")
     println("Enhance audio: ok")
+}
+
+/// DeepFilterNet3's DSP around a stand-in network. Parity with upstream's own
+/// network and DSP is checked by scripts/dfn3-parity (it needs ONNX Runtime).
+private fun deepFilterTests() {
+    // FFT of 960 points against the plain DFT.
+    val n = 960; val random = java.util.Random(3)
+    val re = FloatArray(n) { random.nextFloat() - 0.5f }; val im = FloatArray(n) { random.nextFloat() - 0.5f }
+    val outRe = FloatArray(n); val outIm = FloatArray(n)
+    MixedRadixFFT(n).transform(re, im, outRe, outIm, -1)
+    var worst = 0.0
+    for (k in listOf(0, 1, 7, 240, 479, 480, 481, 959)) {
+        var sr = 0.0; var si = 0.0
+        for (j in 0 until n) { val a = -2 * Math.PI * k * j / n; sr += re[j] * Math.cos(a) - im[j] * Math.sin(a); si += re[j] * Math.sin(a) + im[j] * Math.cos(a) }
+        worst = maxOf(worst, abs(sr - outRe[k]), abs(si - outIm[k]))
+    }
+    require(worst < 1e-3, "The 960-point FFT agrees with the DFT ($worst)")
+
+    // A network that passes the spectrum through: mask 1 everywhere, deep filter
+    // weight 1 on the frame itself. The sound must come back unchanged, in place.
+    val dsp = DeepFilterDSP(FloatArray(481 * 32) { 1f / 481 }, FloatArray(32 * 481) { 1f / 32 }, FloatArray(32), FloatArray(96) { 1f })
+    val calls = ArrayList<Int>()
+    class Pass : DeepFilterModel {
+        override fun run(erb: FloatArray, spec: FloatArray, frames: Int, mask: FloatArray, coefs: FloatArray) {
+            calls.add(frames)
+            java.util.Arrays.fill(mask, 0, frames * 32, 1f); java.util.Arrays.fill(coefs, 0, frames * 96 * 10, 0f)
+            for (j in 0 until frames) for (k in 0 until 96) coefs[((j * 96 + k) * 5 + 2) * 2] = 1f
+        }
+        override fun close() { }
+    }
+    val length = 48000L * 3 + 123
+    val voice = object : PCMSource {
+        override fun read(position: Long, into: FloatArray, offset: Int, frames: Int) {
+            for (i in 0 until frames) { val p = position + i; val v = if (p in 0 until length) (sin(p * 0.031) * 0.4 + sin(p * 0.0071) * 0.2).toFloat() else 0f
+                into[offset + i * 2] = v; into[offset + i * 2 + 1] = v * 0.5f }
+        }
+    }
+    val original = FloatArray((length * 2).toInt()).also { voice.read(0, it, 0, length.toInt()) }
+    for (amount in listOf(1.0, 0.4)) {
+        calls.clear()
+        val out = ArrayList<Float>()
+        OfflineAudioPipeline.process(voice, length, listOf(AudioEffect.make(EffectKind.voiceIsolation).copy(model = AudioModel.deepFilter, amount = amount)), { error("no RNNoise") },
+            { block, count -> for (i in 0 until count * 2) out.add(block[i]) }, deepFilter = { DeepFilterStream(dsp, Pass(), chunk = 100, warm = 30) })
+        require(out.size == original.size && out.indices.all { abs(out[it] - original[it]) < 1e-4 }, "A pass-through network gives back the recording in place, at amount $amount")
+        require(calls.take(2) == listOf(100, 100) && calls.drop(2).all { it == 130 }, "Each channel's chunks run after their warm-up context ($calls)")
+    }
 }

@@ -64,9 +64,9 @@ data class AudioEffect(val id: UUID = UUID.randomUUID(), val kind: EffectKind, v
         if (kind == EffectKind.studioRestoration) return amount == 0.0 || model == AudioModel.voiceFixer
         return true
     }
-    /// What this build can process. RNNoise runs here; DeepFilterNet3, LavaSR
+    /// What this build can process. RNNoise and DeepFilterNet3 run here; LavaSR
     /// and VoiceFixer are Core ML models of the iPhone app, not ported yet.
-    val available: Boolean get() = supported && (!kind.isNeural || amount == 0.0 || (kind == EffectKind.voiceIsolation && model == AudioModel.rnnoise))
+    val available: Boolean get() = supported && (!kind.isNeural || amount == 0.0 || kind == EffectKind.voiceIsolation)
     /// Stages that can make the sound louder than it was.
     val canRaisePeak: Boolean get() = enabled && when (kind) {
         EffectKind.gain -> amount > 0

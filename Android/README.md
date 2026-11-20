@@ -84,11 +84,14 @@ capture, recording controls, the cut editor, export.
   or square; short, soft or pulsed; pitch and level), on the selected sound or
   all sound there; overlapping tracks share one tone.
   **Enhance** builds a filter chain over the selected sound, a marked range
-  or all sound: Noise reduction (the iPhone app's RNNoise, with Amount),
-  Low-cut, Voice EQ and Output gain, in any order, each with bypass. As on
-  iPhone each source is processed once per chain, before speed changes, and
-  preview and export play the same samples. Chains made on iPhone with
-  DeepFilterNet3, LavaSR or VoiceFixer open and are kept, but are reported as
+  or all sound: Noise reduction (RNNoise, as on iPhone, or DeepFilterNet3,
+  with Amount), Low-cut, Voice EQ and Output gain, in any order, each with
+  bypass. As on iPhone each source is processed once per chain, before speed
+  changes, and preview and export play the same samples. DeepFilterNet3 runs
+  upstream's ONNX graphs in ONNX Runtime, in 15-second chunks: close to, not
+  identical with, the iPhone's per-hop stream
+  ([details](ThirdParty/DeepFilterNet3/PROVENANCE.md)). Chains made on iPhone
+  with LavaSR or VoiceFixer open and are kept, but are reported as
   unavailable: the preview plays the original there and export refuses.
   Not ported from the iPhone inspector: level-matched compare, auditioning a
   short window, and resumable per-stage checkpoints.
@@ -127,7 +130,7 @@ Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export 
 shaders · Dragging and pinching a placed picture in the preview,
 and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
 animated Crop and Placement · Stabilization · The neural Enhance audio models
-DeepFilterNet3, LavaSR and VoiceFixer (their chains are kept, see Enhance) · Original
+LavaSR and VoiceFixer (their chains are kept, see Enhance) · Original
 recordings browser · OpenTimelineIO export · Dual-camera
 layouts, live effects, face follow, horizon level ·
 Landscape editor layout · Label and headline cards in Text · Color, Crop,
@@ -247,4 +250,7 @@ hardware, treat this port as unverified beyond its core.
 
 ## License
 
-The same [MIT License](../LICENSE) as YouRec. No third-party code is included.
+The same [MIT License](../LICENSE) as YouRec. Third-party parts: the iPhone
+app's RNNoise and DeepFilterNet3 DSP data (`../ThirdParty`, used in place);
+upstream DeepFilterNet3's ONNX graphs (`ThirdParty/DeepFilterNet3`, MIT or
+Apache-2.0, model MIT, Hendrik Schröter); ONNX Runtime (MIT, from Maven Central).

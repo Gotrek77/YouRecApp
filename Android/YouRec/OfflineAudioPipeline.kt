@@ -28,7 +28,7 @@ object OfflineAudioPipeline {
     const val frame = 480
     private const val channels = AudioMix.channels
     // Bump when processing math changes: cached results of older math are not reused.
-    const val cacheVersion = "android-audio-v1|rnnoise-adapter-1|eq-1"
+    const val cacheVersion = "android-audio-v1|rnnoise-adapter-1|eq-1|dfn3-onnx-ort1.31.1-chunk1500-warm300"
     /// Processed sound is a replaceable cache, outside every project. Set at launch.
     @Volatile var cacheFolder = File(System.getProperty("java.io.tmpdir") ?: ".", "Enhanced audio")
 
@@ -53,6 +53,28 @@ object OfflineAudioPipeline {
             for (i in 0 until frame) for (c in 0 until channels) block[i * channels + c] = processor.sample(block[i * channels + c], c)
         }
     }
+    /// DeepFilterNet3 per channel. Its output comes `latency` hops late; the dry
+    /// sound is held back as long, so Amount blends the same moments.
+    private class DeepFilter(private val amount: Float, private val streams: List<DeepFilterStream>) : Stage {
+        private val delay = streams.first().latency
+        override val latency = delay * frame
+        private val dry = Array(channels) { FloatArray((delay + 1) * frame) }
+        private val hop = FloatArray(frame); private val wet = FloatArray(frame)
+        private var count = 0L
+        override fun process(block: FloatArray) {
+            val slot = ((count % (delay + 1)) * frame).toInt()
+            val past = (((count - delay).mod(delay + 1L)) * frame).toInt()
+            for (c in 0 until channels) {
+                for (i in 0 until frame) { hop[i] = block[i * channels + c]; dry[c][slot + i] = hop[i] }
+                streams[c].process(hop, wet)
+                for (i in 0 until frame) {
+                    val original = dry[c][past + i]
+                    block[i * channels + c] = if (amount == 1f) wet[i] else original + amount * (wet[i] - original)
+                }
+            }
+            count++
+        }
+    }
     /// Wet from model frame n is the cleaned dry frame n−1; Amount blends them.
     private class Denoise(private val amount: Float, private val denoisers: List<FrameDenoiser>) : Stage {
         override val latency = frame
@@ -74,13 +96,17 @@ object OfflineAudioPipeline {
     /// recording, then silence after its end; the result has the same length.
     /// `output` receives interleaved stereo blocks. Returns the peak.
     fun process(input: PCMSource, length: Long, effects: List<AudioEffect>, denoiser: () -> FrameDenoiser,
-                output: (FloatArray, Int) -> Unit, progress: (Double) -> Unit = {}, cancelled: () -> Boolean = { false }): Float {
+                output: (FloatArray, Int) -> Unit, progress: (Double) -> Unit = {}, cancelled: () -> Boolean = { false },
+                deepFilter: (() -> DeepFilterStream)? = null): Float {
         if (!effects.filter { it.enabled }.all { it.available }) throw AudioProcessingError.UnavailableModel()
         val chain = active(effects)
-        val opened = ArrayList<FrameDenoiser>()
+        val opened = ArrayList<AutoCloseable>()
         try {
             val stages = chain.map { effect ->
-                if (effect.kind == EffectKind.voiceIsolation) Denoise(effect.amount.toFloat(), List(channels) { denoiser().also { opened.add(it) } })
+                if (effect.kind == EffectKind.voiceIsolation && effect.model == AudioModel.deepFilter) {
+                    val make = deepFilter ?: throw AudioProcessingError.UnavailableModel()
+                    DeepFilter(effect.amount.toFloat(), List(channels) { make().also { opened.add(it) } })
+                } else if (effect.kind == EffectKind.voiceIsolation) Denoise(effect.amount.toFloat(), List(channels) { denoiser().also { opened.add(it) } })
                 else Filter(effect)
             }
             val block = FloatArray(frame * channels)
@@ -124,7 +150,7 @@ object OfflineAudioPipeline {
     /// Write the processed sound to `destination` as little-endian float
     /// stereo. A partial file is never left under the final name.
     fun write(input: PCMSource, length: Long, effects: List<AudioEffect>, denoiser: () -> FrameDenoiser, destination: File,
-              progress: (Double) -> Unit = {}, cancelled: () -> Boolean = { false }) {
+              progress: (Double) -> Unit = {}, cancelled: () -> Boolean = { false }, deepFilter: (() -> DeepFilterStream)? = null) {
         destination.parentFile?.mkdirs()
         val partial = File(destination.parentFile, destination.name + ".partial-" + UUID.randomUUID())
         try {
@@ -134,7 +160,7 @@ object OfflineAudioPipeline {
                 process(input, length, effects, denoiser, { block, count ->
                     bytes.clear(); for (i in 0 until count * channels) bytes.putFloat(block[i]); bytes.flip()
                     while (bytes.hasRemaining()) channel.write(bytes)
-                }, progress, cancelled)
+                }, progress, cancelled, deepFilter)
                 channel.force(false)
             }
             if (!partial.renameTo(destination)) throw java.io.IOException("cannot store processed audio")

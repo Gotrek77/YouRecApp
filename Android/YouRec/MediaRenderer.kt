@@ -184,12 +184,16 @@ class RenderSources(private val project: Project, private val folder: File, priv
             val source = project.sources.firstOrNull { it.id == request.source } ?: throw ProjectError.MissingMedia()
             val file = File(folder, source.filename)
             if (!file.exists()) throw ProjectError.MissingMedia()
-            if (request.effects.any { it.kind == EffectKind.voiceIsolation && it.amount != 0.0 } && !SpeechDetector.available) throw AudioProcessingError.UnavailableModel()
+            val active = OfflineAudioPipeline.active(request.effects)
+            if (active.any { it.kind == EffectKind.voiceIsolation && it.model == AudioModel.rnnoise } && !SpeechDetector.available) throw AudioProcessingError.UnavailableModel()
+            // One DeepFilterNet3 network serves every channel of every DeepFilterNet3 stage of this chain.
+            val network = if (active.any { it.kind == EffectKind.voiceIsolation && it.model == AudioModel.deepFilter }) NeuralAssets.deepFilter() else null
             val decoded = DecodedAudio(file)
             try {
                 OfflineAudioPipeline.write(decoded, Math.ceil(source.duration * AudioMix.sampleRate).toLong(), request.effects, { RNNoiseDenoiser() },
-                    processedFile(request.source, request.effects)!!, { progress((index + it) / requests.size) }, cancelled)
-            } finally { decoded.release() }
+                    processedFile(request.source, request.effects)!!, { progress((index + it) / requests.size) }, cancelled,
+                    network?.let { (dsp, model) -> { DeepFilterStream(dsp, model) } })
+            } finally { decoded.release(); network?.second?.close() }
         }
         progress(1.0)
     }

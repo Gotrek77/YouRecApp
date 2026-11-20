@@ -360,7 +360,7 @@ def main():
             if not level or level[-1] == "-inf" or abs(float(level[-1]) + 21) > 3:
                 fail("the censored range does not carry the -18 dBFS tone (RMS %s)" % level)
         if enhanced:
-            # RNNoise ran through JNI over each source: one processed file per take, no partial left.
+            # DeepFilterNet3 ran through ONNX Runtime over each source: one processed file per take, no partial left.
             listing = adb("shell", "run-as " + PACKAGE + " ls -l 'cache/Enhanced audio' 2>&1")
             note("enhanced audio cache:\n" + listing)
             sizes = [int(f[4]) for f in (line.split() for line in listing.splitlines()) if len(f) > 7 and f[-1].endswith(".f32")]
@@ -398,15 +398,18 @@ def transition():
     return (after[0], before[1] - after[1])
 
 def enhance():
-    """Noise reduction (RNNoise) on all sound. True once applied."""
+    """Noise reduction (DeepFilterNet3) on all sound. True once applied."""
     if not tool("Enhance") or not tap("Add Noise reduction", 10):
         return False
-    shot("editor-enhance")
     if not wait("1 · Noise reduction", 5):
         note("Enhance: the filter was not added. On screen: " + describe())
         if not tap("Add Noise reduction", 5) or not wait("1 · Noise reduction", 5):
             fail("Enhance: Add Noise reduction did nothing")
             return False
+    # DeepFilterNet3 runs through ONNX Runtime; RNNoise through the NDK build.
+    if not tap("Noise reduction model DeepFilterNet3", 5):
+        fail("Enhance: no DeepFilterNet3 choice")
+    shot("editor-enhance")
     if not tap("Apply enhance audio", 10):
         return False
     if not wait("Audio enhanced", 10) and not find("Enhancing audio"):
