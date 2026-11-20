@@ -311,12 +311,14 @@ def main():
     if tool("Text") and wait("Title text", 10):
         option("Style Box", "Style "); option("Colour Yellow", "Colour "); tap("Done", 10)
         note("after Text: " + describe())
-    expected += photo()
-    image()
-    censored = censor()
+    # Before the photo: a photo has no sound and so no link, and does not ripple
+    # when a transition pulls the clips before it closer (as on iPhone).
     dissolved = transition()
     if dissolved:
         expected -= dissolved[1]
+    expected += photo()
+    image()
+    censored = censor()
     shot("editor-after-tools")
     if crashed(): return
 
