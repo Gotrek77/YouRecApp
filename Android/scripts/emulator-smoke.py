@@ -402,6 +402,11 @@ def enhance():
     if not tool("Enhance") or not tap("Add Noise reduction", 10):
         return False
     shot("editor-enhance")
+    if not wait("1 · Noise reduction", 5):
+        note("Enhance: the filter was not added. On screen: " + describe())
+        if not tap("Add Noise reduction", 5) or not wait("1 · Noise reduction", 5):
+            fail("Enhance: Add Noise reduction did nothing")
+            return False
     if not tap("Apply enhance audio", 10):
         return False
     if not wait("Audio enhanced", 10) and not find("Enhancing audio"):

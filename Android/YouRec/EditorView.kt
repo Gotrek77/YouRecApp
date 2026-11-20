@@ -695,6 +695,11 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         val content = Design.column(context, Design.label(context, "Enhance audio · $scope", 15f, bold = true), spacing = 4f)
         fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         val stages = Design.column(context, spacing = 6f)
+        lateinit var refresh: () -> Unit
+        add(choices(*listOf(EffectKind.voiceIsolation, EffectKind.highPass, EffectKind.equalizer, EffectKind.gain).map { kind ->
+            Design.button(context, "+ " + kind.stripName, Design.text, Design.raised, 13f) { chain = chain + AudioEffect.make(kind); refresh() }
+                .apply { contentDescription = "Add " + kind.title }
+        }.toTypedArray()))
         add(stages)
         fun bar(start: Double, change: (Double) -> Unit) = SeekBar(context).apply {
             max = 1000; progress = Math.round(start * 1000).toInt()
@@ -704,11 +709,10 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                 override fun onStopTrackingTouch(b: SeekBar) { }
             })
         }
-        lateinit var refresh: () -> Unit
         fun replace(effect: AudioEffect) { chain = chain.map { if (it.id == effect.id) effect else it } }
         refresh = {
             stages.removeAllViews()
-            if (chain.isEmpty()) stages.addView(Design.label(context, "Add a filter below. Combine noise reduction and EQ in any order.", 13f, Design.secondary))
+            if (chain.isEmpty()) stages.addView(Design.label(context, "Add a filter above, in any order. Speech detail (LavaSR), studio restoration (VoiceFixer) and DeepFilterNet3 are not available on Android yet.", 13f, Design.secondary))
             for ((index, effect) in chain.withIndex()) {
                 val head = Design.row(context, Design.label(context, "${index + 1} · " + effect.kind.title, 14f, bold = true), spacing = 4f)
                 (head.getChildAt(0).layoutParams as LayoutParams).apply { width = 0; weight = 1f }
@@ -743,15 +747,12 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             }
         }
         refresh()
-        add(choices(*listOf(EffectKind.voiceIsolation, EffectKind.highPass, EffectKind.equalizer, EffectKind.gain).map { kind ->
-            Design.button(context, "+ " + kind.stripName, Design.text, Design.raised, 13f) { chain = chain + AudioEffect.make(kind); refresh() }
-                .apply { contentDescription = "Add " + kind.title }
-        }.toTypedArray()))
-        add(Design.label(context, "Speech detail (LavaSR), studio restoration (VoiceFixer) and DeepFilterNet3 are not available on Android yet.", 12f, Design.secondary))
         val actions = Design.row(context, Design.button(context, "Apply", Design.background, Design.accent) {
             val now = this.project ?: return@button
+            if (chain.isEmpty() && existing == null) return@button say("Add a filter first.")
             val edit = now.edit.copy()
             edit.timeline.enhance(chain, target, existing?.id ?: UUID.randomUUID())
+            android.util.Log.w("YouRec", "enhance: ${chain.size} stages on ${audio.size} sound parts, changed ${edit != now.edit}")
             timeline.rangeStart = null; timeline.rangeEnd = null
             closePanel()
             if (edit != now.edit) commit(edit, if (chain.isEmpty()) "Enhance audio removed" else "Audio enhanced")
