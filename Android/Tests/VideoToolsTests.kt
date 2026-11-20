@@ -79,6 +79,15 @@ private fun pauseTests() {
     val plain = TimelineClip(sourceID = source.id, start = 0.0, end = 4.0)
     val cuts = PauseDetector.detect(levels, plain, settings)
     require(cuts.size == 1 && Math.abs(cuts[0].start - 1.1) < 0.001 && Math.abs(cuts[0].end - 2.3) < 0.001, "Pause detector retains independent pre/post speech padding")
+    // With RNNoise's voice probability, a whispered syllable inside a gap is kept.
+    val whisper = FloatArray(400) { if (it < 100) 0.2f else if (it in 170 until 180) 0.004f else 0.001f }
+    val voiced = ByteArray(400) { (if (it < 100 || it in 170 until 180) 230 else 5).toByte() }
+    val automatic = PauseSettings(thresholdDB = -40.0, minimum = 0.3, before = 0.0, after = 0.0)
+    val loudness = PauseDetector.raw(SourceLevels(4.0, whisper), plain, automatic.copy(levelMode = PauseLevelMode.Manual))
+    val listening = PauseDetector.raw(SourceLevels(4.0, whisper, voiced), plain, automatic.copy(levelMode = PauseLevelMode.Automatic), -40.0)
+    require(loudness.size == 1 && listening.size == 2 && listening[0].end <= 1.7 + 1e-9 && listening[1].start >= 1.8 - 1e-9,
+        "A whispered syllable the voice detector hears splits the pause instead of being cut (${loudness.size}, ${listening.map { it.start to it.end }})")
+    require(PauseDetector.raw(SourceLevels(4.0, whisper, ByteArray(400) { 5 }), plain, automatic, -40.0).size == 1, "Without dialogue the ordinary silence test applies")
     val raw = PauseDetector.raw(levels, plain, settings)
     val effective = PauseDetector.effectiveCuts(raw.map { DetectedPause(it) }, plain, settings)
     require(raw.size == 1 && effective == cuts, "Padding applied to raw detections gives the same cuts")

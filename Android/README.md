@@ -80,10 +80,10 @@ capture, recording controls, the cut editor, export.
   **Censor** replaces the sound in a marked range with a tone (sine, triangle
   or square; short, soft or pulsed; pitch and level), on the selected sound or
   all sound there; overlapping tracks share one tone.
-  **Pauses** finds silence in the selected clips (by loudness, at a measured
-  or chosen level; the iPhone app also asks RNNoise whether a quiet stretch is
-  speech), lists each pause to keep or cut, and shortens picture and sound
-  together; Remove restores the media.
+  **Pauses** finds silence in the selected clips, at a measured or chosen
+  level; as on iPhone, RNNoise tells a quiet syllable from silence in spoken
+  takes. Each pause can be kept or cut; picture and sound shorten together;
+  Remove restores the media.
   **Placement** arranges videos that overlap: Full, Side by side, Stacked and
   Inset presets, front/back order, Fit or Fill, and each picture's window and
   framing.
@@ -115,7 +115,7 @@ Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export 
 shaders · Transition styles other than Dissolve and Fade through color, transition holds and sound timing · Dragging and pinching a placed picture in the preview,
 and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
 animated Crop and Placement · Stabilization · Enhance audio (RNNoise, DeepFilterNet3, LavaSR,
-VoiceFixer) and the RNNoise voice check in Pauses · Original
+VoiceFixer) · Original
 recordings browser · OpenTimelineIO export · Dual-camera
 layouts, live effects, face follow, front light, horizon level, focus peaking ·
 Record-here insertion ·
@@ -167,7 +167,9 @@ are a matter of adding fields and renderers, not of converting documents.
 
 ## Build and run
 
-Requires JDK 17 or later and the Android SDK (platform 35). Android Studio can
+Requires JDK 17 or later and the Android SDK (platform 35), with the NDK and
+CMake from the SDK manager: the iPhone app's RNNoise (`../ThirdParty/RNNoise`,
+unchanged) is built by `native/CMakeLists.txt` for the voice check in Pauses. Android Studio can
 open the `Android` folder directly. From a terminal:
 
 ```sh

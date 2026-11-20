@@ -1,5 +1,6 @@
 // One module, no dependencies: the app is written against the Android
 // framework alone. Sources live flat in YouRec/, like the iPhone app's.
+// The only native code is the iPhone app's own RNNoise (ThirdParty/RNNoise).
 plugins {
     id("com.android.application") version "8.7.3"
     id("org.jetbrains.kotlin.android") version "2.0.21"
@@ -16,7 +17,9 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
+    externalNativeBuild { cmake { path = file("native/CMakeLists.txt"); version = "3.22.1" } }
     sourceSets["main"].apply {
         manifest.srcFile("AndroidManifest.xml")
         java.setSrcDirs(listOf("YouRec"))

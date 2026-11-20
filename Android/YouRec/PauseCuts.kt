@@ -29,8 +29,9 @@ data class PauseSettings(val id: UUID = UUID.randomUUID(), val thresholdDB: Doub
 /// One stretch of source played at one rate.
 data class PlaybackSpan(val start: Double, val end: Double, val rate: Double) { val duration: Double get() = (end - start) / rate }
 
-/// Loudness of a source in 10 ms bins, for finding pauses.
-class SourceLevels(val duration: Double, val rms: FloatArray)
+/// Loudness of a source in 10 ms bins, for finding pauses, with RNNoise's
+/// speech probability per bin (0–255) when it could be measured.
+class SourceLevels(val duration: Double, val rms: FloatArray, val speech: ByteArray? = null)
 
 object PauseDetector {
     const val binsPerSecond = 100
@@ -79,9 +80,7 @@ object PauseDetector {
         return cuts.filter { it.duration >= frame - 0.000001 }
     }
 
-    /// Unpadded silent stretches in the clip, in source seconds. The iPhone app
-    /// also consults a voice detector (RNNoise) for quiet syllables; here
-    /// loudness alone decides.
+    /// Unpadded silent stretches in the clip, in source seconds.
     fun raw(levels: SourceLevels, clip: TimelineClip, settings: PauseSettings, levelDB: Double? = null) =
         detect(levels, clip, settings.copy(before = 0.0, after = 0.0), levelDB)
 
@@ -99,12 +98,48 @@ object PauseDetector {
             if (full.timelineTime(interval.end) - full.timelineTime(interval.start) >= TimelineEditing.frame) result.add(interval)
         }
         val first = maxOf(0, ceil(clip.start / step).toInt()); val last = minOf(bins.size, floor(clip.end / step).toInt())
-        var beginning = -1
-        for (index in first until last) {
-            if (bins[index] <= threshold) { if (beginning < 0) beginning = index }
-            else if (beginning >= 0) { append(beginning, index); beginning = -1 }
+        if (first >= last) return result
+        // Establish that this is dialogue before relaxing the energy gate. For music,
+        // steady room tone or an unvoiced selection, keep the ordinary silence test.
+        val speech = levels.speech?.takeIf { settings.levelMode == PauseLevelMode.Automatic && it.size == bins.size }
+        fun probability(i: Int) = speech!![i].toInt() and 0xff
+        var hasDialogue = false
+        if (speech != null) {
+            var voiced = 0; val reference = maxOf(1, ceil(0.16 / step).toInt())
+            for (i in first until last) { voiced = if (probability(i) >= 179) voiced + 1 else 0; if (voiced >= reference) { hasDialogue = true; break } }
         }
-        if (beginning >= 0 && first < last) append(beginning, last)
+        // Let steady noise exceed the normal threshold by up to 12 dB, bounded
+        // at -15 dBFS. A likely voice protects even a quiet syllable.
+        val noiseLimit = minOf(0.177828f, threshold * 3.981072f)
+        var beginning = -1
+        fun close(end: Int) {
+            val start = beginning
+            if (start < 0) return
+            beginning = -1
+            if (!hasDialogue || end - start < 5 || (start until end).none { bins[it] > threshold }) { append(start, end); return }
+            // A faint utterance can slip past the voice classifier. Protect sustained
+            // onsets that rise 7 dB above this gap's own background. Three of five
+            // 10 ms bins distinguish a short syllable from an isolated noise spike.
+            val sorted = (start until end).map { bins[it] }.sorted()
+            val onset = maxOf(threshold, sorted[sorted.size / 2] * 2.23872f)
+            var elevated = 0; var cursor = start
+            for (i in start until end + 2) {
+                if (i < end && bins[i] > onset) elevated += 1
+                if (i - 5 >= start && bins[i - 5] > onset) elevated -= 1
+                if (i >= start + 2 && elevated >= 3) {
+                    val protected = i - 2
+                    if (cursor < protected) append(cursor, protected)
+                    cursor = protected + 1
+                }
+            }
+            if (cursor < end) append(cursor, end)
+        }
+        for (index in first until last) {
+            var quiet = bins[index] <= threshold
+            if (hasDialogue) { val p = probability(index); quiet = (quiet && p < 102) || (bins[index] <= noiseLimit && p < 31) }
+            if (quiet) { if (beginning < 0) beginning = index } else close(index)
+        }
+        close(last)
         return result
     }
 }

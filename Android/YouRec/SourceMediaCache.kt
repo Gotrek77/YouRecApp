@@ -351,23 +351,31 @@ object SourceMediaCache {
     }
     private const val bucketsPerSecond = 100
 
-    /// Loudness in 10 ms bins for finding pauses. Blocking: call off the main thread.
+    /// Loudness in 10 ms bins for finding pauses, and RNNoise's speech
+    /// probability when the native detector loaded. Blocking: call off the main thread.
     fun levels(file: File): SourceLevels {
         val duration = MediaFiles.duration(file, needsVideo = false)
-        val bin = AudioMix.sampleRate / PauseDetector.binsPerSecond
+        val bin = AudioMix.sampleRate / PauseDetector.binsPerSecond   // 480 frames: one RNNoise frame
         val count = (duration * PauseDetector.binsPerSecond).toInt()
         val rms = FloatArray(count)
+        val speech = if (SpeechDetector.available) ByteArray(count) else null
+        val left = speech?.let { SpeechDetector() }; val right = speech?.let { SpeechDetector() }
         val audio = DecodedAudio(file)
         try {
             val block = FloatArray(bin * 2)
             for (i in 0 until count) {
                 audio.read(i.toLong() * bin, block, 0, bin)
-                var sum = 0.0
-                for (f in 0 until bin) { val mono = (block[f * 2] + block[f * 2 + 1]) * 0.5; sum += mono * mono }
-                rms[i] = Math.sqrt(sum / bin).toFloat()
+                // Measure the louder channel rather than downmixing away off-centre or out-of-phase speech.
+                var l = 0.0; var r = 0.0
+                for (f in 0 until bin) { l += block[f * 2] * block[f * 2]; r += block[f * 2 + 1] * block[f * 2 + 1] }
+                rms[i] = Math.sqrt(maxOf(l, r) / bin).toFloat()
+                if (speech != null) {
+                    val p = maxOf(left!!.probability(block, 0, 2), right!!.probability(block, 1, 2))
+                    speech[i] = Math.round(p.coerceIn(0f, 1f) * 255).toByte()
+                }
             }
-        } finally { audio.release() }
-        return SourceLevels(count.toDouble() / PauseDetector.binsPerSecond, rms)
+        } finally { audio.release(); left?.close(); right?.close() }
+        return SourceLevels(count.toDouble() / PauseDetector.binsPerSecond, rms, speech)
     }
 
     /// Drop decoders held for a project that is no longer on screen.
