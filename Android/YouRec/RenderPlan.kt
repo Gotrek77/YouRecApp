@@ -11,52 +11,43 @@ class RenderPlan(edit: EditState) {
     private val pictures = timeline.video.sortedWith(TrackTimeline.backToFront)
 
     data class Picture(val item: UUID, val source: UUID, val sourceTime: Double, val interval: EditInterval, val clip: TimelineClip)
-    /// One picture to draw. `slot` tells apart two pictures on screen at once
-    /// from the same recording; `alpha` below 1 dissolves it over what is behind.
-    data class Layer(val picture: Picture, val placement: VideoPlacement?, val slot: Int, val alpha: Float = 1f)
-    /// A colour laid over the whole finished frame: a fade's colour, at some strength.
-    data class Wash(val color: TransitionColor, val alpha: Float)
+    /// One picture to draw. `slot` tells apart two pictures on screen at once from the same recording.
+    data class Layer(val picture: Picture, val placement: VideoPlacement?, val slot: Int)
+    /// One frame inside a transition: the outgoing and incoming pictures (null
+    /// where the transition meets the edit's edge, or between the halves of a
+    /// fade, where `fill` shows), mixed by `style` at `progress`.
+    class TransitionFrame(val first: Layer?, val second: Layer?, val settings: ClipTransition, val progress: Double,
+                          val fill: TransitionColor, val edge: Int, val videoDuration: Double)
 
-    /// The transition whose picture window holds `time`, with its progress.
-    private fun transitionAt(time: EditTime): Pair<TimelineTransition, Double>? {
+    /// The transition whose picture window holds `time`.
+    fun transition(time: EditTime): TransitionFrame? {
         for (relation in timeline.transitions) {
             val timing = relation.timing
             val elapsed = (time - relation.origin).seconds
-            if (elapsed >= 0 && elapsed < timing.videoDuration) return relation to timing.progress(elapsed)
+            if (elapsed < 0 || elapsed >= timing.videoDuration) continue
+            fun at(id: UUID?, frozen: Boolean): Picture? {
+                val item = pictures.firstOrNull { it.id == id } ?: return null
+                val local = if (time in item.interval) time - item.start else if (frozen) item.mapping.duration - EditTime.ticks(1) else return null
+                return item.mapping.source(local)?.let { Picture(item.id, item.content.sourceID, it, item.interval, item.content) }
+            }
+            // A still holds the outgoing picture's last frame after it ends.
+            val first = at(relation.outgoing, relation.settings.style == TransitionStyle.Still)
+            val second = at(relation.incoming, false)
+            // A fade at the edge of the edit is a dissolve from or to its colour.
+            val settings = if (relation.settings.style == TransitionStyle.FadeColor && relation.edge != 0) relation.settings.copy(style = TransitionStyle.Dissolve) else relation.settings
+            return TransitionFrame(first?.let { Layer(it, null, 0) }, second?.let { Layer(it, null, if (first?.source == it.source) 1 else 0) },
+                settings, timing.progress(elapsed), relation.settings.resolvedFadeColor, relation.edge, timing.videoDuration)
         }
         return null
     }
-    private fun eased(t: Double) = t * t * (3 - 2 * t)
-    /// The colour over the frame at `time`: fades to and from a colour, and
-    /// opening or closing fades, which are always through their colour.
-    fun wash(time: EditTime): Wash? {
-        val (relation, t) = transitionAt(time) ?: return null
-        val color = relation.settings.resolvedFadeColor
-        val alpha = when {
-            relation.edge == -1 -> 1 - eased(t)
-            relation.edge == 1 -> eased(t)
-            relation.settings.style == TransitionStyle.FadeColor -> if (t < 0.5) minOf(1.0, t * 2) else maxOf(0.0, 2 - t * 2)
-            else -> return null
-        }
-        return if (alpha > 0.0001) Wash(color, alpha.toFloat()) else null
-    }
-    /// What to draw at one time, back to front. Pictures that share the frame
-    /// through an arrangement are all drawn; without one the front picture
-    /// covers the frame. Nothing at all means black, never a held frame.
     fun layers(time: EditTime): List<Layer> {
         val active = pictures.filter { time in it.interval }
-        if (active.isEmpty()) return emptyList()
+        if (active.isEmpty()) return transition(time)?.let { listOfNotNull(it.first, it.second) } ?: emptyList()
         fun picture(item: VideoTimelineItem) = item.mapping.source(time - item.start)?.let { Picture(item.id, item.content.sourceID, it, item.interval, item.content) }
         val ids = active.map { it.id }
         val region = if (active.size > 1) timeline.placements.firstOrNull { it.participants == ids.toSet() } else null
-        // A dissolve shows both partners: the incoming one over the outgoing, ever stronger.
-        transitionAt(time)?.let { (relation, t) ->
-            val out = active.firstOrNull { it.id == relation.outgoing }; val into = active.firstOrNull { it.id == relation.incoming }
-            if (region == null && relation.edge == 0 && relation.settings.style == TransitionStyle.Dissolve && out != null && into != null) {
-                val first = picture(out); val second = picture(into)
-                return listOfNotNull(first?.let { Layer(it, null, 0) }, second?.let { Layer(it, null, if (first?.source == it.source) 1 else 0, eased(t).toFloat()) })
-            }
-        }
+        // Inside a transition both partners are decoded; the transition mixes them.
+        if (region == null) transition(time)?.let { frame -> return listOfNotNull(frame.first, frame.second) }
         if (region == null) return listOfNotNull(picture(active.last())?.let { Layer(it, null, 0) })
         val result = ArrayList<Layer>()
         for (id in VideoPlacement.ordered(ids, region.videos)) {

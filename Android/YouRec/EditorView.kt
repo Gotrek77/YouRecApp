@@ -432,31 +432,89 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             Design.button(context, "›", Design.text, Design.raised) { joins.getOrNull(position + 1)?.let { editor.seek(it.time); openTransition(it.index) } }.apply { contentDescription = "Next join"; isEnabled = position < joins.size - 1; alpha = if (isEnabled) 1f else 0.4f }),
             spacing = 6f)
         fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        val styles = listOf<Pair<String, TransitionStyle?>>("None" to null, "Dissolve" to TransitionStyle.Dissolve, "Fade through color" to TransitionStyle.FadeColor)
-        add(choices(*styles.map { (title, style) ->
-            val on = current?.style == style
-            Design.button(context, title, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) {
-                apply(style?.let { (current ?: ClipTransition(duration = 0.5)).copy(style = it) }, if (style == null) "Transition removed" else "Transition " + title)
-            }.apply { contentDescription = "Transition style $title" + if (on) ", selected" else "" }
+        fun pick(title: String, on: Boolean, description: String, action: () -> Unit) =
+            Design.button(context, title, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) { action() }
+                .apply { contentDescription = description + if (on) ", selected" else "" }
+        fun slider(title: String, value: Double, range: ClosedFloatingPointRange<Double>, steps: Int, format: String, change: (Double) -> ClipTransition) {
+            val label = Design.label(context, String.format(format, value), 14f, mono = true)
+            var chosen = value
+            add(labelled(title, SeekBar(context).apply {
+                max = steps; progress = Math.round((value - range.start) / (range.endInclusive - range.start) * steps).toInt().coerceIn(0, steps)
+                contentDescription = title
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(b: SeekBar, p: Int, user: Boolean) { if (user) { chosen = range.start + (range.endInclusive - range.start) * p / steps; label.text = String.format(format, chosen) } }
+                    override fun onStartTrackingTouch(b: SeekBar) { }
+                    override fun onStopTrackingTouch(b: SeekBar) { apply(change(chosen), "Transition $title") }
+                })
+            }, label))
+        }
+        add(choices(*(listOf<TransitionStyle?>(null) + TransitionStyle.values()).map { style ->
+            val title = style?.title ?: "None"
+            pick(title, current?.style == style, "Transition style $title") {
+                apply(style?.let { (current ?: ClipTransition(duration = 0.5)).copy(style = it) }, if (style == null) "Transition removed" else "Transition $title")
+            }
         }.toTypedArray()))
         if (current != null) {
             val shown = (join.timing.videoDuration).let { if (it > 0) it else current.duration }
-            add(choices(*listOf(0.25, 0.5, 1.0, 1.5, 2.0, 3.0).map { seconds ->
-                val on = Math.abs(current.duration - seconds) < 0.001
-                Design.button(context, ZoomTransition.number(seconds) + " s", if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) {
+            add(choices(*listOf(0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0).map { seconds ->
+                pick(ZoomTransition.number(seconds) + " s", Math.abs(current.duration - seconds) < 0.001, "Transition lasts " + ZoomTransition.number(seconds) + " seconds") {
                     apply(current.copy(duration = seconds), "Transition " + ZoomTransition.number(seconds) + " s")
-                }.apply { contentDescription = "Transition lasts " + ZoomTransition.number(seconds) + " seconds" + if (on) ", selected" else "" }
+                }
             }.toTypedArray()))
-            if (Math.abs(shown - current.duration) > 0.01) add(Design.label(context, String.format("Shortened to %.2f s to fit the footage on both sides.", shown), 13f, Design.secondary))
+            if (Math.abs(shown - current.duration - current.holdDuration) > 0.01 && current.style != TransitionStyle.Still)
+                add(Design.label(context, String.format("Shortened to %.2f s to fit the footage on both sides.", shown), 13f, Design.secondary))
+            if (current.style.supportsHold) add(choices(*listOf(0.0, 0.5, 1.0, 2.0, 4.0).map { seconds ->
+                pick("Hold " + ZoomTransition.number(seconds) + " s", Math.abs(current.holdDuration - seconds) < 0.001, "Hold at the middle for " + ZoomTransition.number(seconds) + " seconds") {
+                    apply(current.copy(hold = if (seconds == 0.0) null else seconds), "Transition hold")
+                }
+            }.toTypedArray()))
             if (current.style == TransitionStyle.FadeColor || join.edge != 0) {
                 val colours = listOf("Black" to TransitionColor.black, "White" to TransitionColor(1.0, 1.0, 1.0), "Warm" to TransitionColor(0.96, 0.72, 0.45), "Blue" to TransitionColor(0.12, 0.25, 0.55))
                 add(choices(*colours.map { (title, colour) ->
-                    val on = current.resolvedFadeColor == colour
-                    Design.button(context, title, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) {
-                        apply(current.copy(fadeColor = if (colour == TransitionColor.black) null else colour), "Fade colour $title")
-                    }.apply { contentDescription = "Fade colour $title" + if (on) ", selected" else "" }
+                    pick(title, current.resolvedFadeColor == colour, "Fade colour $title") { apply(current.copy(fadeColor = if (colour == TransitionColor.black) null else colour), "Fade colour $title") }
                 }.toTypedArray()))
             }
+            when (current.style) {
+                TransitionStyle.Wipe -> {
+                    val angle = TransitionMix.angle(current.copy(reverse = false))
+                    add(choices(*listOf("→" to 0.0, "↘" to 45.0, "↓" to 90.0, "↙" to 135.0, "←" to 180.0, "↖" to -135.0, "↑" to -90.0, "↗" to -45.0).map { (glyph, degrees) ->
+                        pick(glyph, Math.abs(((angle - degrees) % 360 + 360) % 360) < 0.5 && !current.reverse, "Wipe direction $degrees degrees") { apply(current.copy(wipeAngle = degrees, reverse = false), "Wipe direction") }
+                    }.toTypedArray()))
+                    add(choices(pick("Soft edge", current.hardEdge != true, "Soft wipe edge") { apply(current.copy(hardEdge = null), "Wipe edge") },
+                        pick("Hard edge", current.hardEdge == true, "Hard wipe edge") { apply(current.copy(hardEdge = true), "Wipe edge") }))
+                }
+                TransitionStyle.Split, TransitionStyle.Whip -> {
+                    add(choices(pick("Left / right", current.axis == TransitionAxis.Horizontal, "Axis left and right") { apply(current.copy(axis = TransitionAxis.Horizontal), "Transition axis") },
+                        pick("Top / bottom", current.axis == TransitionAxis.Vertical, "Axis top and bottom") { apply(current.copy(axis = TransitionAxis.Vertical), "Transition axis") },
+                        pick("Reverse", current.reverse, "Reverse direction") { apply(current.copy(reverse = !current.reverse), "Transition direction") }))
+                    if (current.style == TransitionStyle.Split) {
+                        slider("Divider", current.divider, 0.15..0.85, 70, "%.2f") { current.copy(divider = it) }
+                        slider("Zoom 1", current.first.zoom, 1.0..4.0, 30, "%.1f×") { current.copy(first = current.first.copy(zoom = it)) }
+                        slider("Zoom 2", current.second.zoom, 1.0..4.0, 30, "%.1f×") { current.copy(second = current.second.copy(zoom = it)) }
+                        add(choices(*TransitionAudio.values().map { audio ->
+                            val title = when (audio) { TransitionAudio.Crossfade -> "Crossfade"; TransitionAudio.First -> "First clip's sound"; TransitionAudio.Second -> "Second clip's sound" }
+                            pick(title, current.audio == audio, "Split sound $title") { apply(current.copy(audio = audio), "Split sound") }
+                        }.toTypedArray()))
+                    }
+                }
+                TransitionStyle.Hitchcock -> add(choices(pick("Shadows first", current.highlightsFirst != true, "Shadows first") { apply(current.copy(highlightsFirst = null), "Hitchcock order") },
+                    pick("Highlights first", current.highlightsFirst == true, "Highlights first") { apply(current.copy(highlightsFirst = true), "Hitchcock order") }))
+                TransitionStyle.FlashCut -> {
+                    slider("Flashes", (current.flashCount ?: 3).toDouble(), 1.0..20.0, 19, "%.0f") { current.copy(flashCount = Math.round(it).toInt()) }
+                    slider("Accelerate", current.flashAcceleration ?: 2.0, 0.25..4.0, 15, "%.2f") { current.copy(flashAcceleration = it) }
+                }
+                TransitionStyle.Still -> add(choices(*listOf(0.0, 0.25, 0.5, 1.0).map { seconds ->
+                    pick(if (seconds == 0.0) "Cut" else "Dissolve " + ZoomTransition.number(seconds) + " s", Math.abs((current.stillDissolve ?: 0.0) - seconds) < 0.001, "Still ends with " + if (seconds == 0.0) "a cut" else "a dissolve of $seconds seconds") {
+                        apply(current.copy(stillDissolve = if (seconds == 0.0) null else seconds), "Still ending")
+                    }
+                }.toTypedArray()))
+                TransitionStyle.Defocus -> slider("Blur", current.blurAmount ?: 0.75, 0.0..1.0, 20, "%.2f") { current.copy(blurAmount = it) }
+                else -> { }
+            }
+            // Sound can change before (J cut) or after (L cut) the picture, over its own length.
+            slider("Sound shift", current.audioOffset ?: 0.0, -2.0..2.0, 80, "%+.2f s") { current.copy(audioOffset = it) }
+            slider("Sound blend", current.audioBlend ?: current.defaultAudioBlend, 0.0..3.0, 60, "%.2f s") { current.copy(audioBlend = it) }
+            if (current.customAudio) add(Design.button(context, "Sound with the picture", size = 13f) { apply(current.copy(audioOffset = null, audioBlend = null), "Transition sound") })
         }
         add(Design.button(context, "Done", Design.accent) { closePanel() }.apply { contentDescription = "Done with transition" })
         showPanel(content)

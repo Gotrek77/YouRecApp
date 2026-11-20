@@ -3,6 +3,7 @@ package yourec
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.pow
+import kotlin.math.PI
 
 // A join belongs to these exact neighbours. Moving or deleting a clip must never
 // silently apply its transition to unrelated footage. Source trims stay intact.
@@ -39,13 +40,8 @@ data class ClipTransition(val id: UUID = UUID.randomUUID(), val nextClipID: UUID
         && (flashCount?.let { it in 1..20 } ?: true)
         && (flashAcceleration?.let { it.isFinite() && it in 0.25..4.0 } ?: true)
         && (blurAmount?.let { it.isFinite() && it in 0.0..1.0 } ?: true)
-    /// What this Android version draws: dissolves and fades through a colour, without holds or custom sound timing.
-    val unsupported: String? get() = when {
-        style != TransitionStyle.Dissolve && style != TransitionStyle.FadeColor -> style.title + " transitions"
-        hold != null && hold != 0.0 -> "transition holds"
-        customAudio -> "transition sound timing"
-        else -> null
-    }
+    /// Every style, hold and sound timing of the iPhone app is drawn here.
+    val unsupported: String? get() = null
 }
 
 /// A transition between two pictures (or a fade at an edge, with one side
@@ -138,6 +134,9 @@ class TransitionJoin(val index: Int, val time: Double, val range: ClosedFloating
                      val origin: Double = 0.0, val timing: TransitionTiming = TransitionTiming(null), val factor: Double = 1.0, val selectable: Boolean = true,
                      val edge: Int = 0, val outgoingID: UUID? = null, val incomingID: UUID? = null) {
     val title: String get() = if (index == 0) "Start" else "Join $index"
+    val videoRange: ClosedFloatingPointRange<Double> get() = origin..(origin + timing.videoDuration)
+    val audioIn: ClosedFloatingPointRange<Double> get() = (origin + timing.audioIn.first)..(origin + timing.audioIn.second)
+    val audioOut: ClosedFloatingPointRange<Double> get() = (origin + timing.audioOut.first)..(origin + timing.audioOut.second)
 }
 
 object TransitionLayout {
@@ -252,6 +251,113 @@ object TransitionLayout {
         timeline.transitions = timeline.transitions.map { relation ->
             val members = setOfNotNull(relation.outgoing, relation.incoming)
             if (moving.containsAll(members)) relation.copy(origin = relation.origin + delta) else relation
+        }
+    }
+}
+
+/// How each style mixes the outgoing picture A and the incoming picture B, in
+/// output pixels with y up (as GL and Core Image count them). The frame shader
+/// does the same arithmetic; this reference is what the checks run.
+object TransitionMix {
+    fun eased(t: Double) = t * t * (3 - 2 * t)
+
+    /// The frames of the next scene a Flash Cut shows, accelerating towards the cut.
+    fun flashFrames(settings: ClipTransition, duration: Double, framesPerSecond: Double = 30.0): List<Int> {
+        val frames = maxOf(1, Math.round(duration * framesPerSecond).toInt())
+        val count = minOf(settings.flashCount ?: 3, maxOf(0, (frames - 1) / 2))
+        if (count <= 0) return emptyList()
+        val result = ArrayList<Int>()
+        for (index in 1..count) {
+            val u = index.toDouble() / (count + 1)
+            val desired = Math.round((1 - (1 - u).pow(settings.flashAcceleration ?: 2.0)) * (frames - 1)).toInt()
+            result.add(minOf(frames - 2 - 2 * (count - index), maxOf((result.lastOrNull() ?: -1) + 2, desired)))
+        }
+        return result
+    }
+    fun flashFrame(t: Double, duration: Double, framesPerSecond: Double) = Math.floor(t * duration * framesPerSecond + 0.000001).toInt()
+
+    /// Degrees clockwise on screen.
+    fun angle(settings: ClipTransition) = (settings.wipeAngle ?: if (settings.axis == TransitionAxis.Horizontal) 0.0 else 90.0) + if (settings.reverse) 180.0 else 0.0
+    class Wipe(val dx: Double, val dy: Double, val p0x: Double, val p0y: Double, val feather: Double)
+    fun wipe(settings: ClipTransition, t: Double, width: Double, height: Double): Wipe {
+        val radians = angle(settings) * PI / 180; val dx = Math.cos(radians); val dy = -Math.sin(radians)
+        val span = abs(dx) * width + abs(dy) * height
+        val feather = if (settings.hardEdge == true) 0.5 else maxOf(1.0, span * 0.035)
+        val distance = (span + 2 * feather) * eased(t) - span / 2 - feather
+        val cx = width / 2 + dx * distance; val cy = height / 2 + dy * distance
+        return Wipe(dx, dy, cx - dx * feather, cy - dy * feather, feather)
+    }
+    /// 1 where the incoming picture shows.
+    fun wipeMask(w: Wipe, x: Double, y: Double) = (1 - ((x - w.p0x) * w.dx + (y - w.p0y) * w.dy) / (2 * w.feather)).coerceIn(0.0, 1.0)
+
+    /// Shadows (or highlights) of the outgoing picture give way first.
+    class Key(val sign: Double, val feather: Double, val bias: Double)
+    fun hitchcock(settings: ClipTransition, t: Double): Key {
+        val feather = 0.08; val threshold = eased(t) * (1 + 2 * feather) - feather
+        val highlights = settings.highlightsFirst == true
+        return Key(if (highlights) 1.0 else -1.0, feather, (if (highlights) threshold - 1 else threshold) / feather + 0.5)
+    }
+    fun hitchcockMask(k: Key, rgb: FloatArray): Double {
+        val luma = 0.2126 * rgb[0].coerceIn(0f, 1f) + 0.7152 * rgb[1].coerceIn(0f, 1f) + 0.0722 * rgb[2].coerceIn(0f, 1f)
+        return (k.sign * luma / k.feather + k.bias).coerceIn(0.0, 1.0)
+    }
+
+    /// The two views of a split screen, y up: left and right, or top and bottom.
+    fun splitRects(settings: ClipTransition, width: Double, height: Double): Pair<Rectangle, Rectangle> {
+        if (settings.axis == TransitionAxis.Horizontal) {
+            val split = width * settings.divider
+            return Rectangle(0.0, 0.0, split, height) to Rectangle(split, 0.0, width - split, height)
+        }
+        val split = height * settings.divider
+        return Rectangle(0.0, height - split, width, split) to Rectangle(0.0, 0.0, width, height - split)
+    }
+    /// The part of a picture a split view shows, as a rectangle of the picture with y up.
+    fun splitCrop(framing: TransitionFraming, view: Rectangle, width: Double, height: Double): Rectangle {
+        val top = CropSettings(x = framing.x, y = framing.y, zoom = framing.zoom).rect(CanvasSize(width, height), CanvasSize(view.width, view.height))
+        return Rectangle(top.x, height - (top.y + top.height), top.width, top.height)
+    }
+    fun splitLine(settings: ClipTransition, width: Double, height: Double): Rectangle {
+        val (first, _) = splitRects(settings, width, height)
+        val line = maxOf(1.0, minOf(width, height) * 0.002)
+        return if (settings.axis == TransitionAxis.Horizontal) Rectangle(first.x + first.width - line / 2, 0.0, line, height)
+               else Rectangle(0.0, first.y - line / 2, width, line)
+    }
+    fun whipRadius(t: Double, width: Double, height: Double) = minOf(width, height) * 0.12 * Math.sin(PI * t)
+    fun whipDistance(settings: ClipTransition, width: Double, height: Double) =
+        (if (settings.axis == TransitionAxis.Vertical) height else width) * 0.65 * (if (settings.reverse) -1.0 else 1.0)
+    fun defocusRadius(settings: ClipTransition, t: Double, width: Double, height: Double) = minOf(width, height) * 0.05 * (settings.blurAmount ?: 0.75) * Math.sin(PI * t)
+    fun defocusBlend(t: Double) = ((t - 0.35) / 0.3).coerceIn(0.0, 1.0)
+
+    private fun mix(a: FloatArray, b: FloatArray, f: Double) = FloatArray(3) { (a[it] + (b[it] - a[it]) * f).toFloat() }
+    private fun inside(r: Rectangle, x: Double, y: Double) = x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height
+    /// One output pixel at (x, y), y up. `a` and `b` give the two pictures' colours, without blur.
+    fun pixel(settings: ClipTransition, t: Double, x: Double, y: Double, width: Double, height: Double, a: (Double, Double) -> FloatArray,
+              b: (Double, Double) -> FloatArray, fill: TransitionColor = settings.resolvedFadeColor, duration: Double = settings.duration, framesPerSecond: Double = 30.0): FloatArray {
+        val color = floatArrayOf(fill.red.toFloat(), fill.green.toFloat(), fill.blue.toFloat())
+        if (t <= 0) return a(x, y); if (t >= 1) return b(x, y)
+        return when (settings.style) {
+            TransitionStyle.Dissolve, TransitionStyle.Still -> mix(a(x, y), b(x, y), eased(t))
+            TransitionStyle.FadeColor -> if (t < 0.5) mix(a(x, y), color, minOf(1.0, t * 2)) else mix(color, b(x, y), maxOf(0.0, t * 2 - 1))
+            TransitionStyle.Wipe -> mix(a(x, y), b(x, y), wipeMask(wipe(settings, t, width, height), x, y))
+            TransitionStyle.Hitchcock -> { val first = a(x, y); mix(first, b(x, y), hitchcockMask(hitchcock(settings, t), first)) }
+            TransitionStyle.FlashCut -> if (flashFrame(t, duration, framesPerSecond) in flashFrames(settings, duration, framesPerSecond)) b(x, y) else a(x, y)
+            TransitionStyle.Whip -> {
+                val e = eased(t); val d = whipDistance(settings, width, height); val vertical = settings.axis == TransitionAxis.Vertical
+                fun shifted(f: (Double, Double) -> FloatArray, offset: Double) = if (vertical) f(x, (y + offset).coerceIn(0.0, height - 1)) else f((x - offset).coerceIn(0.0, width - 1), y)
+                mix(shifted(a, -e * d), shifted(b, (1 - e) * d), e)
+            }
+            TransitionStyle.Defocus -> mix(a(x, y), b(x, y), defocusBlend(t))
+            TransitionStyle.Split -> {
+                val (left, right) = splitRects(settings, width, height)
+                fun framed(f: (Double, Double) -> FloatArray, framing: TransitionFraming, view: Rectangle): FloatArray {
+                    val crop = splitCrop(framing, view, width, height)
+                    return f(crop.x + (x - view.x) * crop.width / view.width, crop.y + (y - view.y) * crop.height / view.height)
+                }
+                var pair = if (inside(left, x, y)) framed(a, settings.first, left) else if (inside(right, x, y)) framed(b, settings.second, right) else floatArrayOf(0f, 0f, 0f)
+                if (inside(splitLine(settings, width, height), x, y)) pair = floatArrayOf(0.25f, 0.25f, 0.25f)
+                val edge = 0.15
+                if (t < edge) mix(a(x, y), pair, t / edge) else if (t > 1 - edge) mix(pair, b(x, y), (t - 1 + edge) / edge) else pair
+            }
         }
     }
 }
