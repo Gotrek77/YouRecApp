@@ -414,9 +414,13 @@ def enhance():
         return False
     # Processing every take shows progress, then the edit's message again.
     began = time.time()
-    time.sleep(1)
-    while find("Enhancing audio") and time.time() - began < 600:
+    # A screen read can come back empty: only three in a row without progress end the wait.
+    quiet = 0
+    while quiet < 3 and time.time() - began < 600:
         time.sleep(2)
+        if find("Audio enhanced"):
+            break
+        quiet = 0 if find("Enhancing audio") else quiet + 1
     if not wait("Audio enhanced", 10):
         note("Enhance: no confirmation. On screen: " + describe())
         return False
