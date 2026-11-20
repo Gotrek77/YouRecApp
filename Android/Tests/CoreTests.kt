@@ -26,6 +26,7 @@ fun main(arguments: Array<String>) {
     clipboardTests()
     archiveTests(File(root, "Archive"))
     censorTests()
+    enhanceTests()
     transitionTests()
     insertionTests()
     horizonTests()
@@ -108,8 +109,7 @@ private fun persistenceTests(root: File) {
     fun firstOf(timeline: MutableMap<String, Any?>, lane: String) = (timeline[lane] as MutableList<Any?>)[0] as MutableMap<String, Any?>
     require(snapshot.fields("state").fields("timeline").list("transitions").isEmpty(), "Unused relations are written as empty lists")
     for ((tool, change) in listOf<Pair<String, (MutableMap<String, Any?>) -> Unit>>(
-        "Subtitles" to { it["subtitles"] = mapOf("x" to 1) },
-        "Enhance audio" to { firstOf(it, "audio")["enhancements"] = listOf(mapOf("x" to 1)) })) {
+        "Subtitles" to { it["subtitles"] = mapOf("x" to 1) })) {
         try { EditSnapshot.decode(tampered(change)); require(false, "$tool must be refused") }
         catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains(tool), "The refusal names $tool") }
     }

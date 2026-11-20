@@ -37,6 +37,7 @@ class ProjectStore(private val context: Context) {
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private val preferences = context.getSharedPreferences("yourec", Context.MODE_PRIVATE).also { EditingPreferences.photosFollow = it.getBoolean("photosFollow", false) }
+    init { OfflineAudioPipeline.cacheFolder = File(context.cacheDir, "Enhanced audio") }
     private val observers = LinkedHashMap<Any, () -> Unit>()
     fun observe(owner: Any, callback: () -> Unit) { observers[owner] = callback }
     fun stopObserving(owner: Any) { observers.remove(owner) }

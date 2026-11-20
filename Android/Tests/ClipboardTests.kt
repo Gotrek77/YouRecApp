@@ -4,8 +4,8 @@ import java.util.UUID
 
 private fun t(seconds: Double) = EditTime.seconds(seconds)
 
-/// Ported from the iPhone app's timelineClipboardChecks. Transitions,
-/// subtitles and audio enhancements are not ported and are left out.
+/// Ported from the iPhone app's timelineClipboardChecks. Transitions and
+/// subtitles are left out (Enhance audio paste is in EnhanceTests).
 fun clipboardTests() {
     val source = SourceMedia(filename = "clipboard.mov", duration = 10.0)
     val clips = (0 until 5).map { TimelineClip(sourceID = source.id, start = it * 2.0, end = it * 2.0 + 2) }

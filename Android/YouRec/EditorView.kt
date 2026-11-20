@@ -129,7 +129,9 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         rebuildTools()
         refreshTransport()
     }
+    private var shownAudioStatus: String? = null
     private fun refreshTransport() {
+        if (editor.audioStatus != shownAudioStatus) { shownAudioStatus = editor.audioStatus; feedback.text = shownAudioStatus ?: "" }
         time.text = Design.timecode(editor.playhead) + " / " + Design.timecode(editor.duration)
         play.text = if (editor.playing) "❚❚" else "▶"; play.contentDescription = if (editor.playing) "Pause" else "Play"
         timeline.playhead = editor.playhead; timeline.selected = selected
@@ -177,6 +179,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if ((a != null && b != null) || !chosen.isEmpty) { tool("Copy") { copyOrCut(false) }; tool("Cut") { copyOrCut(true) } }
             if (store.clipboards[project.id]?.isEmpty == false) tool("Paste") { paste(null) }
             tool("Volume") { openVolume() }
+            if (edit.timeline.audio.isNotEmpty()) tool("Enhance") { openEnhance() }
             if (a != null && b != null && edit.timeline.audio.isNotEmpty()) tool("Censor") { openCensor() }
             if (edit.timeline.video.any { item -> project.sources.firstOrNull { it.id == item.content.sourceID }?.isStillPhoto != true }) tool("Pauses") { openPauses() }
             if (edit.timeline.video.isNotEmpty()) { tool("Speed") { openSpeed() }; tool("Crop") { openCrop() }; tool("Mirror") { openMirror() }; tool("Color") { openColor() } }
@@ -661,6 +664,100 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             closePanel()
             if (edit != now.edit) commit(edit, "Censor removed")
         }, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = Design.dp(context, 8f) })
+        actions.addView(Design.button(context, "Cancel") { closePanel() }, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = Design.dp(context, 8f) })
+        add(actions.apply { setPadding(0, Design.dp(context, 8f), 0, 0) })
+        showPanel(content)
+    }
+
+    /// A chain of filters over the selected sound, the marked range of it, or
+    /// all sound: noise reduction, low-cut, EQ and gain, in any order. The
+    /// whole source is processed once per chain; Apply is one undo step.
+    private fun openEnhance() {
+        val project = project ?: return
+        editor.pause()
+        val a = timeline.rangeStart; val b = timeline.rangeEnd
+        val range = if (a != null && b != null) TimelineEditing.rangeSelection(minOf(a, b), maxOf(a, b), project.edit)?.range else null
+        val chosen = selection(project.edit).audio
+        val audio = project.edit.timeline.audio.filter { (chosen.isEmpty() || it.id in chosen) && (range == null || (it.start < range.end && range.start < it.end)) }.map { it.id }.toSet()
+        if (audio.isEmpty()) return say("Select a sound part, or mark a range over sound.")
+        val target = TimelineSelection(audio = audio, range = range)
+        val existing = project.edit.timeline.audio.filter { it.id in audio }.flatMap { item -> item.enhancements.map { item to it } }
+            .firstOrNull { (item, region) -> range == null || (item.start + region.interval.start < range.end && range.start < item.start + region.interval.end) }?.second
+        var chain = existing?.effects ?: emptyList()
+        val scope = (if (range != null) EditFrames.timestamp(range.start) + " – " + EditFrames.timestamp(range.end) else "whole parts") +
+            " · " + (if (chosen.isEmpty()) "all sound" else "${audio.size} sound part" + if (audio.size == 1) "" else "s")
+        val content = Design.column(context, Design.label(context, "Enhance audio · $scope", 15f, bold = true), spacing = 4f)
+        fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val stages = Design.column(context, spacing = 6f)
+        add(stages)
+        fun bar(start: Double, change: (Double) -> Unit) = SeekBar(context).apply {
+            max = 1000; progress = Math.round(start * 1000).toInt()
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(b: SeekBar, value: Int, user: Boolean) { if (user) change(value / 1000.0) }
+                override fun onStartTrackingTouch(b: SeekBar) { }
+                override fun onStopTrackingTouch(b: SeekBar) { }
+            })
+        }
+        lateinit var refresh: () -> Unit
+        fun replace(effect: AudioEffect) { chain = chain.map { if (it.id == effect.id) effect else it } }
+        refresh = {
+            stages.removeAllViews()
+            if (chain.isEmpty()) stages.addView(Design.label(context, "Add a filter below. Combine noise reduction and EQ in any order.", 13f, Design.secondary))
+            for ((index, effect) in chain.withIndex()) {
+                val head = Design.row(context, Design.label(context, "${index + 1} · " + effect.kind.title, 14f, bold = true), spacing = 4f)
+                (head.getChildAt(0).layoutParams as LayoutParams).apply { width = 0; weight = 1f }
+                head.addView(Design.button(context, if (effect.enabled) "On" else "Bypassed", if (effect.enabled) Design.background else Design.text,
+                    if (effect.enabled) Design.accent else Design.raised, 13f) { replace(effect.copy(enabled = !effect.enabled)); refresh() }
+                    .apply { contentDescription = effect.kind.title + if (effect.enabled) " enabled" else " bypassed" })
+                head.addView(Design.symbol(context, "←", "Move effect earlier", fill = 0) {
+                    if (index > 0) { chain = chain.toMutableList().apply { add(index - 1, removeAt(index)) }; refresh() } })
+                head.addView(Design.symbol(context, "→", "Move effect later", fill = 0) {
+                    if (index + 1 < chain.size) { chain = chain.toMutableList().apply { add(index + 1, removeAt(index)) }; refresh() } })
+                head.addView(Design.symbol(context, "✕", "Remove effect", fill = 0) { chain = chain.filter { it.id != effect.id }; refresh() })
+                stages.addView(head)
+                if (!effect.available) {
+                    stages.addView(Design.label(context, if (effect.supported) "This filter uses a model YouRec for Android cannot run yet. Bypass or remove it to process audio; its saved settings are retained."
+                        else "This filter is unavailable in this app version. Bypass or remove it to process audio; its saved settings are retained.", 13f, Design.recording))
+                    continue
+                }
+                val value = Design.label(context, effect.primaryText, 14f, mono = true)
+                stages.addView(labelled(effect.primaryLabel, bar(effect.normalizedPrimary) { n ->
+                    val next = chain.first { it.id == effect.id }.settingPrimary(n); replace(next); value.text = next.primaryText }, value))
+                if (effect.kind == EffectKind.equalizer) {
+                    val band = Design.label(context, effect.frequencyText, 14f, mono = true)
+                    stages.addView(labelled("Frequency", bar(AudioEffect.equalizerPosition(effect.frequency)) { n ->
+                        val next = chain.first { it.id == effect.id }.copy(frequency = AudioEffect.equalizerFrequency(n)); replace(next); band.text = next.frequencyText }, band))
+                }
+                stages.addView(Design.label(context, when (effect.kind) {
+                    EffectKind.voiceIsolation -> "RNNoise reduces background noise. Amount blends the cleaned voice with the recording."
+                    EffectKind.highPass -> "Removes low rumble below the cutoff."
+                    EffectKind.equalizer -> "Boosts or cuts this frequency. Add another EQ stage for another band."
+                    else -> "Adjusts the output level in decibels."
+                }, 12f, Design.secondary))
+            }
+        }
+        refresh()
+        add(choices(*listOf(EffectKind.voiceIsolation, EffectKind.highPass, EffectKind.equalizer, EffectKind.gain).map { kind ->
+            Design.button(context, "+ " + kind.stripName, Design.text, Design.raised, 13f) { chain = chain + AudioEffect.make(kind); refresh() }
+                .apply { contentDescription = "Add " + kind.title }
+        }.toTypedArray()))
+        add(Design.label(context, "Speech detail (LavaSR), studio restoration (VoiceFixer) and DeepFilterNet3 are not available on Android yet.", 12f, Design.secondary))
+        val actions = Design.row(context, Design.button(context, "Apply", Design.background, Design.accent) {
+            val now = this.project ?: return@button
+            val edit = now.edit.copy()
+            edit.timeline.enhance(chain, target, existing?.id ?: UUID.randomUUID())
+            timeline.rangeStart = null; timeline.rangeEnd = null
+            closePanel()
+            if (edit != now.edit) commit(edit, if (chain.isEmpty()) "Enhance audio removed" else "Audio enhanced")
+        }.apply { contentDescription = "Apply enhance audio" })
+        if (existing != null) actions.addView(Design.button(context, "Remove", Design.recording) {
+            val now = this.project ?: return@button
+            val edit = now.edit.copy()
+            edit.timeline.enhance(emptyList(), target)
+            timeline.rangeStart = null; timeline.rangeEnd = null
+            closePanel()
+            if (edit != now.edit) commit(edit, "Enhance audio removed")
+        }.apply { contentDescription = "Remove enhance audio" }, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = Design.dp(context, 8f) })
         actions.addView(Design.button(context, "Cancel") { closePanel() }, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = Design.dp(context, 8f) })
         add(actions.apply { setPadding(0, Design.dp(context, 8f), 0, 0) })
         showPanel(content)

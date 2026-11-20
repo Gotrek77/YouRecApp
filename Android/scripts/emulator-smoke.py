@@ -318,6 +318,7 @@ def main():
         expected -= dissolved[1]
     expected += photo()
     image()
+    enhanced = enhance()
     censored = censor()
     shot("editor-after-tools")
     if crashed(): return
@@ -358,6 +359,13 @@ def main():
             note("censored range %.2f-%.2f s: RMS %s dB" % (a, b, level))
             if not level or level[-1] == "-inf" or abs(float(level[-1]) + 21) > 3:
                 fail("the censored range does not carry the -18 dBFS tone (RMS %s)" % level)
+        if enhanced:
+            # RNNoise ran through JNI over each source: one processed file per take, no partial left.
+            listing = adb("shell", "run-as", PACKAGE, "ls", "-l", "cache/Enhanced audio")
+            note("enhanced audio cache:\n" + listing)
+            sizes = [int(f[4]) for f in (line.split() for line in listing.splitlines()) if len(f) > 7 and f[-1].endswith(".f32")]
+            if not sizes or min(sizes) == 0 or ".partial" in listing:
+                fail("Enhance audio left no processed sound (%s)" % listing.strip())
     crashed()
     cover()
     if crashed(): return
@@ -388,6 +396,17 @@ def transition():
     if not before or not after:
         return None
     return (after[0], before[1] - after[1])
+
+def enhance():
+    """Noise reduction (RNNoise) on all sound. True once applied."""
+    if not tool("Enhance") or not tap("Add Noise reduction", 10):
+        return False
+    shot("editor-enhance")
+    if not tap("Apply enhance audio", 10):
+        return False
+    time.sleep(2)
+    note("after Enhance: " + describe())
+    return True
 
 def censor():
     """Mark a range over sound and censor it. Returns the range in seconds, or None.

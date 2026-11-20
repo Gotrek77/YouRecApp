@@ -15,3 +15,12 @@ class SpeechDetector : AutoCloseable {
     fun probability(samples: FloatArray, offset: Int, stride: Int): Float = if (state == 0L) 0f else probability(state, samples, offset, stride)
     override fun close() { if (state != 0L) destroy(state); state = 0L }
 }
+
+/// The iPhone app's RNNoise noise reduction on one channel, for Enhance audio.
+class RNNoiseDenoiser : FrameDenoiser {
+    private companion object { @JvmStatic external fun process(state: Long, input: FloatArray, output: FloatArray) }
+    private var state = if (SpeechDetector.available) SpeechDetector.create() else 0L
+    init { if (state == 0L) throw AudioProcessingError.UnavailableModel() }
+    override fun process(input: FloatArray, output: FloatArray) = process(state, input, output)
+    override fun close() { if (state != 0L) SpeechDetector.destroy(state); state = 0L }
+}

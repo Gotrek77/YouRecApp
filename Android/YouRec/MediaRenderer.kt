@@ -157,9 +157,46 @@ class RenderSources(private val project: Project, private val folder: File, priv
     }
     /// Audio thread.
     fun sound(source: UUID): PCMSource? = sound.getOrPut(source) { DecodedAudio(file(source) ?: return null) }
+
+    private val processedSound = HashMap<String, ProcessedAudio>()
+    /// Where one source through one chain is kept, named by both. A changed
+    /// recording or chain gets a new name; the old result is simply unused.
+    private fun processedFile(source: UUID, effects: List<AudioEffect>): File? {
+        val file = file(source) ?: return null
+        return File(OfflineAudioPipeline.cacheFolder, OfflineAudioPipeline.key(file.name + "|" + file.length() + "|" + file.lastModified(), effects) + ".f32")
+    }
+    /// The source as processed by `effects`, once prepared. An export never
+    /// plays the original in place of a chain it was asked for.
+    fun processed(source: UUID, effects: List<AudioEffect>): PCMSource? = synchronized(processedSound) {
+        val file = processedFile(source, effects)
+        if (file == null || !file.exists()) { if (strict) throw AudioProcessingError.UnavailableModel(); return null }
+        processedSound.getOrPut(file.name) { ProcessedAudio(file) }
+    }
+    /// Whether every chain of `timeline` is already processed.
+    fun audioPrepared(timeline: TrackTimeline) = AudioEnhancements.unavailable(timeline) == null &&
+        AudioEnhancements.requests(timeline).all { processedFile(it.source, it.effects)?.exists() != false }
+    /// Process every chain of `timeline` not yet processed. Slow: run it off the
+    /// main thread and the playback thread. Throws for a stage this build cannot process.
+    fun prepareAudio(timeline: TrackTimeline, progress: (Double) -> Unit = {}, cancelled: () -> Boolean = { false }) {
+        AudioEnhancements.unavailable(timeline)?.let { throw AudioProcessingError.UnavailableModel() }
+        val requests = AudioEnhancements.requests(timeline).filter { processedFile(it.source, it.effects)?.exists() == false }
+        for ((index, request) in requests.withIndex()) {
+            val source = project.sources.firstOrNull { it.id == request.source } ?: throw ProjectError.MissingMedia()
+            val file = File(folder, source.filename)
+            if (!file.exists()) throw ProjectError.MissingMedia()
+            if (request.effects.any { it.kind == EffectKind.voiceIsolation && it.amount != 0.0 } && !SpeechDetector.available) throw AudioProcessingError.UnavailableModel()
+            val decoded = DecodedAudio(file)
+            try {
+                OfflineAudioPipeline.write(decoded, Math.ceil(source.duration * AudioMix.sampleRate).toLong(), request.effects, { RNNoiseDenoiser() },
+                    processedFile(request.source, request.effects)!!, { progress((index + it) / requests.size) }, cancelled)
+            } finally { decoded.release() }
+        }
+        progress(1.0)
+    }
     fun releaseFrames() { for (reader in frames.values) try { reader.release() } catch (e: Exception) { }; frames.clear(); failed.clear(); titles.release(); pictures.release(); releaseLooks()
         compositor?.releaseProgram(); compositor = null }
-    fun releaseSound() { for (reader in sound.values) reader.release(); sound.clear() }
+    fun releaseSound() { for (reader in sound.values) reader.release(); sound.clear()
+        synchronized(processedSound) { for (reader in processedSound.values) reader.close(); processedSound.clear() } }
 
     /// The project picture size: a fixed shape if one was chosen, otherwise
     /// the displayed size of the reference take.
@@ -193,6 +230,7 @@ class MovieExport(project: Project, private val folder: File, private val export
             receipt = render(temp)
         } catch (e: Cancelled) {
         } catch (e: ProjectError) { failure = e.message
+        } catch (e: AudioProcessingError) { failure = e.message
         } catch (e: Exception) { failure = "The export could not be completed. " + (e.message ?: e.javaClass.simpleName) + " Your project and recordings are unchanged."
         } finally { temp.delete() }
         main.post { completion(receipt, failure) }
@@ -210,6 +248,10 @@ class MovieExport(project: Project, private val folder: File, private val export
         val fps = settings.frameRate.value
         val report = MediaProgress { value -> main.post { progress(value) } }
         report.report(0.0)
+        // Enhanced sound is processed over whole sources first: the first fifth of the bar.
+        val share = if (sources.audioPrepared(edit.timeline)) 0.0 else 0.2
+        try { sources.prepareAudio(edit.timeline, { report.report(it * share) }, { cancelled }) }
+        catch (e: AudioProcessingError.Cancelled) { throw Cancelled() }
 
         var egl: EGLCore? = null; var window = EGL14.EGL_NO_SURFACE; var program: FrameProgram? = null
         var videoEncoder: MediaCodec? = null; var audioEncoder: MediaCodec? = null; var muxer: MediaMuxer? = null
@@ -235,7 +277,7 @@ class MovieExport(project: Project, private val folder: File, private val export
             val writer = TrackWriter(muxer)
             egl = EGLCore(); window = egl.windowSurface(input); egl.makeCurrent(window); program = FrameProgram()
 
-            val mix = AudioMix(plan.timeline) { sources.sound(it) }
+            val mix = AudioMix(plan.timeline, { id, effects -> sources.processed(id, effects) }) { sources.sound(it) }
             val totalFrames = plan.frameCount(fps); val totalAudio = AudioMix.frame(plan.duration)
             val block = FloatArray(blockFrames * AudioMix.channels)
             var audioFed = 0L
@@ -263,7 +305,7 @@ class MovieExport(project: Project, private val folder: File, private val export
                 // A frame that takes a second names the stage that held it up.
                 val t3 = System.nanoTime()
                 if (t3 - t0 > 1_000_000_000L) android.util.Log.w("YouRec", "export frame $n of $totalFrames: picture ${(t1 - t0) / 1_000_000} ms, encode ${(t2 - t1) / 1_000_000} ms, sound ${(t3 - t2) / 1_000_000} ms")
-                report.report((n + 1).toDouble() / totalFrames * 0.99)
+                report.report(share + (n + 1).toDouble() / totalFrames * (0.99 - share))
             }
             while (audioFed < totalAudio) {
                 val count = minOf(blockFrames.toLong(), totalAudio - audioFed).toInt()

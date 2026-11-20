@@ -91,14 +91,24 @@ interface PCMSource {
 
 /// The project sound for any block of time: every active item, at its own
 /// level and fades, summed. Nothing is limited here; export measures the peak.
-class AudioMix(private val timeline: TrackTimeline, private val open: (UUID) -> PCMSource?) {
+/// Enhanced parts play the source as processed by their chain (`processed`);
+/// without that sound they play the original.
+class AudioMix(private val timeline: TrackTimeline, private val processed: (UUID, List<AudioEffect>) -> PCMSource? = { _, _ -> null },
+               private val open: (UUID) -> PCMSource?) {
     companion object {
         const val sampleRate = 48_000
         const val channels = 2
         fun frame(time: EditTime): Long = Math.floorDiv(time.ticks * sampleRate, EditTime.scale)
     }
     private val scratch = FloatArray(4096 * channels)
-    private val stretchers = HashMap<Triple<UUID, Long, Double>, TimeStretch>()
+    private data class Stretch(val item: UUID, val runStart: Long, val rate: Double, val chain: Int)
+    private val stretchers = HashMap<Stretch, TimeStretch>()
+    // Each item's enhanced parts, in item frames, with the chain they play through.
+    private class Enhanced(val start: Long, val end: Long, val effects: List<AudioEffect>)
+    private val enhanced = timeline.audio.associate { item ->
+        item.id to item.enhancements.filter { OfflineAudioPipeline.active(it.effects).isNotEmpty() }
+            .map { Enhanced(frame(it.interval.start), frame(it.interval.end), it.effects.filter { e -> e.enabled }) }
+    }.filterValues { it.isNotEmpty() }
     var peak = 0f
         private set
     // Censored parts: the original falls silent and a tone replaces it.
@@ -136,13 +146,23 @@ class AudioMix(private val timeline: TrackTimeline, private val open: (UUID) -> 
                 val sourceStart = Math.round(run.sourceStart * sampleRate)
                 val a = maxOf(start, runStart); val b = minOf(start + frames, runEnd)
                 if (b > a && !run.silent && !run.isHold) {
-                    val source = open(item.sourceID)
                     val rate = (run.sourceEnd - run.sourceStart) / run.duration.seconds
-                    if (source != null && Math.abs(rate - 1) < 1e-6) add(item, source, a, (b - a).toInt(), sourceStart + (a - runStart), first, out, ((a - start) * channels).toInt())
-                    else if (source != null) {
-                        // A retimed part plays through a stretcher: its own length changes, its pitch does not.
-                        val stretched = stretchers.getOrPut(Triple(item.id, runStart, rate)) { TimeStretch(source, sourceStart, rate) }
-                        add(item, stretched, a, (b - a).toInt(), a - runStart, first, out, ((a - start) * channels).toInt())
+                    // Split at the edges of enhanced parts: each piece reads its own version of the source.
+                    val parts = enhanced[item.id]
+                    val cuts = sortedSetOf(a, b)
+                    parts?.forEach { for (edge in listOf(first + it.start, first + it.end)) if (edge > a && edge < b) cuts.add(edge) }
+                    val marks = cuts.toList()
+                    for (k in 0 until marks.size - 1) {
+                        val p = marks[k]; val q = marks[k + 1]
+                        val chain = parts?.indexOfFirst { p >= first + it.start && p < first + it.end } ?: -1
+                        val version = if (chain >= 0) processed(item.sourceID, parts!![chain].effects) else null
+                        val source = version ?: open(item.sourceID)
+                        if (source != null && Math.abs(rate - 1) < 1e-6) add(item, source, p, (q - p).toInt(), sourceStart + (p - runStart), first, out, ((p - start) * channels).toInt())
+                        else if (source != null) {
+                            // A retimed part plays through a stretcher: its own length changes, its pitch does not.
+                            val stretched = stretchers.getOrPut(Stretch(item.id, runStart, rate, if (version != null) chain else -1)) { TimeStretch(source, sourceStart, rate) }
+                            add(item, stretched, p, (q - p).toInt(), p - runStart, first, out, ((p - start) * channels).toInt())
+                        }
                     }
                 }
                 runStart = runEnd; local += run.duration

@@ -83,6 +83,15 @@ capture, recording controls, the cut editor, export.
   **Censor** replaces the sound in a marked range with a tone (sine, triangle
   or square; short, soft or pulsed; pitch and level), on the selected sound or
   all sound there; overlapping tracks share one tone.
+  **Enhance** builds a filter chain over the selected sound, a marked range
+  or all sound: Noise reduction (the iPhone app's RNNoise, with Amount),
+  Low-cut, Voice EQ and Output gain, in any order, each with bypass. As on
+  iPhone each source is processed once per chain, before speed changes, and
+  preview and export play the same samples. Chains made on iPhone with
+  DeepFilterNet3, LavaSR or VoiceFixer open and are kept, but are reported as
+  unavailable: the preview plays the original there and export refuses.
+  Not ported from the iPhone inspector: level-matched compare, auditioning a
+  short window, and resumable per-stage checkpoints.
   **Pauses** finds silence in the selected clips, at a measured or chosen
   level; as on iPhone, RNNoise tells a quiet syllable from silence in spoken
   takes. Each pause can be kept or cut; picture and sound shorten together;
@@ -117,8 +126,8 @@ animated titles ·
 Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export · Video effects and their Metal
 shaders · Dragging and pinching a placed picture in the preview,
 and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
-animated Crop and Placement · Stabilization · Enhance audio (RNNoise, DeepFilterNet3, LavaSR,
-VoiceFixer) · Original
+animated Crop and Placement · Stabilization · The neural Enhance audio models
+DeepFilterNet3, LavaSR and VoiceFixer (their chains are kept, see Enhance) · Original
 recordings browser · OpenTimelineIO export · Dual-camera
 layouts, live effects, face follow, horizon level ·
 Landscape editor layout · Label and headline cards in Text · Color, Crop,
@@ -184,7 +193,7 @@ are a matter of adding fields and renderers, not of converting documents.
 
 Requires JDK 17 or later and the Android SDK (platform 35), with the NDK and
 CMake from the SDK manager: the iPhone app's RNNoise (`../ThirdParty/RNNoise`,
-unchanged) is built by `native/CMakeLists.txt` for the voice check in Pauses. Android Studio can
+unchanged) is built by `native/CMakeLists.txt` for Noise reduction and the voice check in Pauses. Android Studio can
 open the `Android` folder directly. From a terminal:
 
 ```sh

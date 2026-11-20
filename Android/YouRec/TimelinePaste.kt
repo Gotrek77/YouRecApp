@@ -261,7 +261,8 @@ object TimelinePaste {
         }
         val audio = addition.audio.map {
             it.copy(id = fresh(it.id), occurrenceID = fresh(it.occurrenceID), followsVideo = it.followsVideo?.let(::fresh), start = it.start + position,
-                censors = it.censors.map { region -> region.copy(id = fresh(region.id)) })
+                censors = it.censors.map { region -> region.copy(id = fresh(region.id)) },
+                enhancements = it.enhancements.map { region -> region.copy(id = fresh(region.id)) })
         }
         val links = addition.links.map { TimelineLink(members = it.members.map(::fresh).toSet()) }
         val placements = addition.placements.map { region ->

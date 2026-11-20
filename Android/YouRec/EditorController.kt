@@ -67,11 +67,40 @@ class EditorController {
         }
         audioSources?.let { old -> if (old !== files) audioThreadRelease(old) }
         audioSources = files; audioPlan = next
+        prepareAudio(files, edit.timeline)
         requestDraw()
         onChange?.invoke()
     }
     private var audioSources: RenderSources? = null
     private var audioPlan: RenderPlan? = null
+
+    /// Enhance audio processes whole sources before they can be heard: how far
+    /// that has come, or why it could not be done. Null when there is nothing to say.
+    var audioStatus: String? = null; private set
+    private val preparer = java.util.concurrent.Executors.newSingleThreadExecutor()
+    @Volatile private var preparation = 0
+    private var preparing = false
+    private var playWhenReady = false
+    private fun prepareAudio(files: RenderSources, timeline: TrackTimeline) {
+        val generation = ++preparation
+        if (files.audioPrepared(timeline)) { preparing = false; audioStatus = null; return }
+        preparing = AudioEnhancements.unavailable(timeline) == null
+        audioStatus = if (preparing) "Enhancing audio…" else AudioProcessingError.UnavailableModel().message
+        if (!preparing) return
+        preparer.execute {
+            var failure: String? = null
+            try {
+                files.prepareAudio(timeline, { value -> main.post { if (generation == preparation) { audioStatus = "Enhancing audio " + (value * 100).toInt() + "%"; onChange?.invoke() } } },
+                    { generation != preparation })
+            } catch (e: AudioProcessingError.Cancelled) { return@execute
+            } catch (e: Exception) { failure = (e.message ?: "The audio could not be enhanced.") + " The original sound plays instead." }
+            main.post {
+                if (generation != preparation) return@post
+                preparing = false; audioStatus = failure; onChange?.invoke()
+                if (playWhenReady) { playWhenReady = false; play() }
+            }
+        }
+    }
     private fun audioThreadRelease(old: RenderSources) { Thread { old.releaseSound() }.start() }
 
     /// Show a draft's pictures without committing it: tool panels preview through
@@ -113,6 +142,8 @@ class EditorController {
     fun play() {
         val plan = audioPlan ?: return; val files = audioSources ?: return
         if (playing || duration <= 0) return
+        // Enhanced sound is heard once processed; until then play waits for it.
+        if (preparing) { playWhenReady = true; onChange?.invoke(); return }
         // Play at the end starts again from the beginning.
         if (playhead >= duration - 1.0 / 30) playhead = 0.0
         audio = AudioPlayback(plan, files, playhead).also { it.start() }
@@ -121,6 +152,7 @@ class EditorController {
         onChange?.invoke()
     }
     fun pause() {
+        playWhenReady = false
         if (!playing) return
         playing = false
         Choreographer.getInstance().removeFrameCallback(frameCallback)
@@ -134,6 +166,7 @@ class EditorController {
     /// Leave the editor: stop playback and close every decoder.
     fun release() {
         pause()
+        preparation++; preparer.shutdown()
         val files = audioSources; audioSources = null; audioPlan = null
         files?.let { audioThreadRelease(it) }
         render.post {
@@ -177,7 +210,7 @@ class EditorController {
     private class AudioPlayback(plan: RenderPlan, private val sources: RenderSources, start: Double) {
         private val first = AudioMix.frame(EditTime.seconds(start))
         private val total = AudioMix.frame(plan.duration)
-        private val mix = AudioMix(plan.timeline) { sources.sound(it) }
+        private val mix = AudioMix(plan.timeline, { id, effects -> sources.processed(id, effects) }) { sources.sound(it) }
         private val track: AudioTrack
         private val stamp = AudioTimestamp()   // guarded by this
         @Volatile private var running = true

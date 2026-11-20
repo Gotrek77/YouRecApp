@@ -19,3 +19,11 @@ JNIEXPORT jfloat JNICALL Java_yourec_SpeechDetector_probability(JNIEnv *env, jcl
     (*env)->ReleaseFloatArrayElements(env, samples, values, JNI_ABORT);
     return p;
 }
+// Denoise one 480-sample mono frame (RNNoise output is one frame late).
+JNIEXPORT void JNICALL Java_yourec_RNNoiseDenoiser_process(JNIEnv *env, jclass type, jlong state, jfloatArray input, jfloatArray output) {
+    if (!state || (*env)->GetArrayLength(env, input) < 480 || (*env)->GetArrayLength(env, output) < 480) return;
+    jfloat in[480], out[480];
+    (*env)->GetFloatArrayRegion(env, input, 0, 480, in);
+    yr_denoiser_process((void *)(intptr_t)state, in, out);
+    (*env)->SetFloatArrayRegion(env, output, 0, 480, out);
+}
