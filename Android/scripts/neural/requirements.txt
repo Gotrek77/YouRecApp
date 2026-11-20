@@ -1,0 +1,13 @@
+# torch 2.7.0 and torchaudio 2.7.0 come from https://download.pytorch.org/whl/cpu
+numpy==2.2.6
+onnx==1.19.1
+onnxruntime==1.23.2
+huggingface_hub==0.36.0
+pyyaml==6.0.3
+vocos==0.1.0
+torchlibrosa==0.1.0
+librosa==1.0.0
+scipy==1.16.3
+matplotlib==3.10.7
+progressbar==2.5
+soundfile==0.13.1
