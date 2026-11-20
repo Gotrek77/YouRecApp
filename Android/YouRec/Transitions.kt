@@ -237,7 +237,7 @@ object TransitionLayout {
     }
     private fun shiftTargets(timeline: TrackTimeline, right: VideoTimelineItem, left: VideoTimelineItem?): Set<UUID> {
         val linked = timeline.links.flatMap { it.members }.toSet()
-        val pictures = timeline.video.filter { it.id != left?.id && (it.id == right.id || (it.id in linked && it.start >= right.start)) }.map { it.id }.toSet()
+        val pictures = timeline.video.filter { it.id != left?.id && (it.id == right.id || ((it.id in linked || EditingPreferences.photosFollow) && it.start >= right.start)) }.map { it.id }.toSet()
         val sounds = timeline.audio.filter { sound ->
             if (left != null && sound.followsVideo == left.id) return@filter false
             val follower = sound.followsVideo

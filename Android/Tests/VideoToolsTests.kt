@@ -124,6 +124,21 @@ private fun photoTests() {
     require(split.timeline.video.count { it.content.sourceID == photo.id } == 2 && split.duration == 7.0, "A photo splits like footage")
     project.undo()
     require(project.edit.timeline.video.none { it.content.sourceID == photo.id }, "Undo removes the photo from the edit")
+    // A photo keeps its place when a clip before it gets shorter, as on iPhone; with the preference it follows.
+    project.redo()
+    fun shortened(): EditState {
+        val e = project.edit.copy(); val take = e.timeline.video.first { it.content.sourceID == take.id }
+        e.timeline.replaceContents(mapOf(take.id to take.content.copy(speed = SpeedSettings(rate = 2.0))))
+        return e
+    }
+    require(shortened().timeline.video.first { it.content.sourceID == photo.id }.start == EditTime.seconds(4.0), "As on iPhone, a photo keeps its place")
+    EditingPreferences.photosFollow = true
+    try {
+        require(shortened().timeline.video.first { it.content.sourceID == photo.id }.start == EditTime.seconds(2.0), "With the preference, the photo follows the shorter clip")
+        val two = Project("Follow"); two.addRecording(take); two.addRecording(SourceMedia(filename = "second.mp4", duration = 4.0)); two.addPhoto(photo)
+        val joined = TransitionLayout.setting(two.edit, ClipTransition(duration = 1.0), 1)
+        require(joined.timeline.video.first { it.content.sourceID == photo.id }.start == EditTime.seconds(7.0), "With the preference, the photo follows a transition's overlap")
+    } finally { EditingPreferences.photosFollow = false }
 }
 
 /// Ported from the iPhone app's coverSamplingTests.

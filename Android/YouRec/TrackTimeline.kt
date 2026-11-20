@@ -38,6 +38,13 @@ data class EditInterval(val start: EditTime, val end: EditTime) {
 
 /// Each run maps an exact local interval to original source timestamps. A hold
 /// has equal source endpoints and is silent; no duplicate dialogue is inserted.
+/// Editing choices of this app, not of a project: documents stay the iPhone app's.
+object EditingPreferences {
+    /// Pictures without sound (photos) ripple with the clips before them, instead
+    /// of keeping their place as on iPhone. Off by default.
+    @Volatile var photosFollow = false
+}
+
 data class PlaybackRun(val duration: EditTime, val sourceStart: Double, val sourceEnd: Double, val silent: Boolean = false) {
     val isHold: Boolean get() = sourceStart == sourceEnd
     fun source(offset: EditTime): Double {
@@ -914,8 +921,11 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
             val chain = HashSet<UUID>(); var link = nextPicture
             while (link != null && chain.add(link)) { val current = link; link = transitions.firstOrNull { it.outgoing == current }?.incoming }
             // As on iPhone, only linked items ripple: a photo (picture without sound, so
-            // in no link) keeps its place and a gap opens. See README, "Open decisions".
-            val moving = video.filter { it.id != id && it.id in downstream && (if (isOverlay) it.id in chain else it.start >= before.end || it.id == nextPicture) }.map { it.id }.toSet()
+            // in no link) keeps its place and a gap opens, unless the user asked for
+            // pictures without sound to follow (EditingPreferences.photosFollow).
+            val linkedIDs = links.flatMap { it.members }.toSet()
+            val moving = video.filter { it.id != id && (it.id in downstream || (EditingPreferences.photosFollow && !isOverlay && it.id !in linkedIDs && it.start >= before.end))
+                && (if (isOverlay) it.id in chain else it.start >= before.end || it.id == nextPicture) }.map { it.id }.toSet()
             video = video.map { if (it.id in moving) it.copy(start = it.start + delta) else it }
             audio = audio.map { sound ->
                 val follows = sound.followsVideo

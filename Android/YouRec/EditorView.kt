@@ -43,7 +43,8 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
     init {
         orientation = VERTICAL
         setBackgroundColor(Design.background)
-        val bar = Design.row(context, Design.button(context, "‹ Projects", fill = 0) { navigation.showProjects() }, title, spacing = 4f)
+        val bar = Design.row(context, Design.button(context, "‹ Projects", fill = 0) { navigation.showProjects() }, title,
+            Design.symbol(context, "⚙", "Editor settings", fill = 0) { openEditorSettings() }, spacing = 4f)
         title.maxLines = 1; title.ellipsize = android.text.TextUtils.TruncateAt.END
         (title.layoutParams as LayoutParams).apply { width = 0; weight = 1f }
         bar.addView(undo); bar.addView(redo)
@@ -756,6 +757,18 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         actions.addView(Design.button(context, "Cancel") { closePanel() }, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = Design.dp(context, 8f) })
         add(android.widget.HorizontalScrollView(context).apply { addView(actions); setPadding(0, Design.dp(context, 8f), 0, 0) })
         showPanel(content)
+    }
+
+    private fun openEditorSettings() {
+        val on = EditingPreferences.photosFollow
+        showPanel(Design.column(context, Design.label(context, "Editor settings", 15f, bold = true),
+            Design.button(context, "Photos follow the edit  ·  " + if (on) "On" else "Off", if (on) Design.accent else Design.text) {
+                EditingPreferences.photosFollow = !on
+                context.getSharedPreferences("yourec", android.content.Context.MODE_PRIVATE).edit().putBoolean("photosFollow", !on).apply()
+                openEditorSettings()
+            }.apply { contentDescription = "Photos follow the edit, " + if (on) "on" else "off" },
+            Design.label(context, "Off, as on iPhone: a photo keeps its place when a clip before it gets shorter (Pauses, Speed, a transition), and a gap opens. On: photos move up with the clips before them. Projects are the same either way.", 13f, Design.secondary),
+            Design.button(context, "Done", Design.accent) { closePanel() }, spacing = 8f))
     }
 
     // Select cover: frames of the finished edit from the marked range, the
