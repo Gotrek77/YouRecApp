@@ -63,17 +63,19 @@ object TimelineEditing {
     }
 
     /// Insert takes at one time, opening exactly their length for everything after it.
-    fun inserting(clips: List<TimelineClip>, state: EditState, time: Double, pictureOnlySources: Set<UUID> = emptySet()): EditState {
+    fun inserting(clips: List<TimelineClip>, state: EditState, time: Double, pictureOnlySources: Set<UUID> = emptySet(), site: VideoInsertionSite? = null): EditState {
         if (clips.isEmpty()) return state
         val result = state.copy()
         // Inserted copies need independent identities: re-editing one copy
         // must not silently edit the original or a later insertion.
         val addition = TrackTimeline.of(clips.map { it.copy(id = UUID.randomUUID()) }, pictureOnlySources)
         val point = EditTime.seconds(time.coerceIn(0.0, state.duration))
-        result.timeline.insertTime(addition.duration, point)
+        // At the start, the end or a gap, free picture time is used before any time is opened.
+        val placement = site?.placement(state.timeline, addition.duration) ?: VideoInsertionSite.Placement(point, point, addition.duration)
+        result.timeline.insertTime(placement.ripple, placement.rippleAt, atPictureGap = site != null)
         val layer = (result.timeline.video.maxOfOrNull { it.layer } ?: 0) + 1
-        result.timeline.video = (result.timeline.video + addition.video.map { it.copy(start = it.start + point, layer = it.layer + layer) }).sortedBy { it.start }
-        result.timeline.audio += addition.audio.map { it.copy(start = it.start + point) }
+        result.timeline.video = (result.timeline.video + addition.video.map { it.copy(start = it.start + placement.start, layer = it.layer + layer) }).sortedBy { it.start }
+        result.timeline.audio += addition.audio.map { it.copy(start = it.start + placement.start) }
         result.timeline.links += addition.links
         return result
     }

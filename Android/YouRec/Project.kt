@@ -111,6 +111,7 @@ class EditSnapshot(state: EditState, val captureCursor: Int) {
     }
 }
 internal data class CaptureLedgerEntry(val clip: TimelineClip, val insertion: Boolean)
+internal data class RecordingInsertionSite(val site: VideoInsertionSite, val firstCapture: Int)
 data class DeferredProjectHistory(val manifest: File, val count: Int, val cursor: Int)
 
 class Project(var title: String) {
@@ -133,6 +134,7 @@ class Project(var title: String) {
     fun copy() = Project(title).also {
         it.exportSettings = exportSettings; it.schemaVersion = schemaVersion; it.id = id; it.createdAt = createdAt; it.updatedAt = updatedAt
         it.sources = sources; it.snapshots = snapshots; it.captureLedger = captureLedger; it.deferredHistory = deferredHistory; it.historyCursor = historyCursor
+        it.recordingInsertion = recordingInsertion; it.recordingSite = recordingSite; it.recordingInsertionStep = recordingInsertionStep
     }
 
     private fun materialized(snapshot: EditSnapshot, captureCount: Int = captureLedger.size): EditState {
@@ -192,9 +194,45 @@ class Project(var title: String) {
     /// undo cursor or discarding redo. Undo must never remove a captured segment.
     fun addRecording(source: SourceMedia) {
         schemaVersion = maxOf(schemaVersion, 2)
+        val position = recordingInsertion
+        if (position == null) { sources = sources + source; includeRecording(source); return }
+        // Recording here: the take goes in at the chosen time, and the next take of
+        // the same session follows it. The whole session is one undo step.
         sources = sources + source
-        includeRecording(source)
+        val clip = TimelineClip(sourceID = source.id, start = 0.0, end = source.duration)
+        captureLedger = captureLedger + CaptureLedgerEntry(clip, true)
+        val continuing = recordingInsertionStep == historyCursor && historyCursor > 0 && historyCursor == snapshots.size - 1
+        val previous = recordingSite
+        if (!continuing && recordingInsertionStep != null && previous != null) recordingSite = RecordingInsertionSite(previous.site, captureLedger.size - 1)
+        val site = recordingSite
+        val next: EditState
+        if (site != null && continuing) {
+            // Refit the complete recording, paused segments included, as one batch.
+            val clips = captureLedger.drop(site.firstCapture).filter { it.insertion }.map { it.clip }
+            next = TimelineEditing.inserting(clips, materialized(snapshots[historyCursor - 1]), position, site = site.site)
+            val ids = clips.map { it.sourceID }.toSet()
+            for (take in sources) if (take.id in ids) next.timeline.includeCaptureBookmarks(take)
+        } else {
+            next = TimelineEditing.inserting(listOf(clip), edit, position, site = site?.site)
+            next.timeline.includeCaptureBookmarks(source)
+        }
+        if (continuing) {
+            next.retainCanvasReference(edit)
+            snapshots = snapshots.toMutableList().also { it[historyCursor] = EditSnapshot(next, captureLedger.size) }; updatedAt = Moment.now()
+        } else { commit(next); recordingInsertionStep = historyCursor }
+        recordingInsertion = next.timeline.video.firstOrNull { it.content.sourceID == source.id }?.end?.seconds ?: minOf(edit.duration, position + source.duration)
     }
+    /// Recording into this project at `position` instead of at its end.
+    var recordingInsertion: Double? = null
+        set(value) { field = value; if (value == null) recordingSite = null }
+    var recordingInsertionStep: Int? = null
+    internal var recordingSite: RecordingInsertionSite? = null
+    fun beginRecordingInsertion(position: Double, site: VideoInsertionSite?) {
+        recordingInsertion = position
+        recordingInsertionStep = null
+        recordingSite = site?.let { RecordingInsertionSite(it, captureLedger.size) }
+    }
+    fun endRecordingInsertion() { recordingInsertion = null; recordingInsertionStep = null }
     /// A photo is a silent picture source: it joins the end of the edit with no sound part.
     fun addPhoto(source: SourceMedia) {
         val photo = source.copy(isStillPhoto = true)
@@ -224,6 +262,9 @@ class Project(var title: String) {
 
     fun validate() {
         fun require(ok: Boolean) { if (!ok) throw ProjectError.InvalidDocument() }
+        recordingInsertion?.let { require(it.isFinite() && it >= 0 && it <= 604800) }
+        recordingInsertionStep?.let { require(deferredHistory != null || it in snapshots.indices) }
+        recordingSite?.let { require(recordingInsertion != null && it.firstCapture in 0..captureLedger.size) }
         val reserved = setOf("project.json", "integrity.json", "cache", "processing", "previews", "exports")
         require(snapshots.all { it.captureCursor in 0..captureLedger.size })
         require(captureLedger.all { event -> sources.any { it.id == event.clip.sourceID } })

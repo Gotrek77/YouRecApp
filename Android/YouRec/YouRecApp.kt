@@ -75,8 +75,10 @@ class YouRecActivity : Activity(), Navigation {
         view.project = project
         show(view)
     }
-    override fun showProjects() { show(projects ?: ProjectsView(this, store, this).also { projects = it }) }
+    override fun showProjects() { store.endRecordingInsertions(); show(projects ?: ProjectsView(this, store, this).also { projects = it }) }
     override fun showEditor(project: UUID) {
+        // Leaving the recorder ends a Record here session: later takes go to the end again.
+        store.endRecordingInsertions()
         val view = editor ?: EditorView(this, store, this).also { editor = it }
         view.projectID = project
         show(view)

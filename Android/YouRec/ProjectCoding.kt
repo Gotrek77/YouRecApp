@@ -228,7 +228,22 @@ internal object ProjectCoding {
         "createdAt" to project.createdAt.reference, "updatedAt" to project.updatedAt.reference, "sources" to project.sources.map { encode(it) },
         "historyCursor" to project.historyCursor, "snapshotFiles" to snapshotFiles,
         "captureLedger" to project.captureLedger.map { jsonObject("clip" to encode(it.clip), "insertion" to it.insertion) },
-        "automaticCanvasVersion" to 1, "recordingHistoryVersion" to 1)
+        "automaticCanvasVersion" to 1, "recordingHistoryVersion" to 1,
+        "recordingInsertion" to project.recordingInsertion, "recordingInsertionStep" to project.recordingInsertionStep,
+        "recordingSite" to project.recordingSite?.let { jsonObject("site" to encode(it.site), "firstCapture" to it.firstCapture) })
+
+    // Swift's enum coding: {"start": {}}, {"end": {}}, {"gap": {"after": time}}.
+    private fun encode(site: VideoInsertionSite) = when (site) {
+        VideoInsertionSite.Start -> jsonObject("start" to jsonObject())
+        VideoInsertionSite.End -> jsonObject("end" to jsonObject())
+        is VideoInsertionSite.Gap -> jsonObject("gap" to jsonObject("after" to encode(site.after)))
+    }
+    private fun site(value: Fields): VideoInsertionSite = when {
+        value.has("start") -> VideoInsertionSite.Start
+        value.has("end") -> VideoInsertionSite.End
+        value.has("gap") -> VideoInsertionSite.Gap(time(value.fields("gap").fields("after")))
+        else -> throw ProjectError.InvalidDocument()
+    }
 
     fun project(data: ByteArray, summaryFile: File?, load: (String) -> ByteArray): Project {
         val values = try { Fields.of(JSON.parse(data)) } catch (e: JSON.Malformed) { throw ProjectError.InvalidDocument() }
@@ -245,6 +260,9 @@ internal object ProjectCoding {
         project.sources = list(values.list("sources"), ::source)
         project.historyCursor = values.int("historyCursor")
         project.captureLedger = values.listOrNull("captureLedger")?.let { entries -> list(entries) { CaptureLedgerEntry(clip(it.fields("clip")), it.bool("insertion")) } } ?: emptyList()
+        project.recordingInsertion = values.doubleOrNull("recordingInsertion")
+        project.recordingSite = values.fieldsOrNull("recordingSite")?.let { RecordingInsertionSite(site(it.fields("site")), it.int("firstCapture")) }
+        project.recordingInsertionStep = if (summaryFile == null) values.intOrNull("recordingInsertionStep") else null
         val names = values.listOrNull("snapshotFiles")?.map { it as? String ?: throw ProjectError.InvalidDocument() }
         if (names != null) {
             if (project.historyCursor !in names.indices || !names.all(Project::isSnapshotName)) throw ProjectError.InvalidDocument()

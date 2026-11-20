@@ -53,7 +53,8 @@ capture, recording controls, the cut editor, export.
   handles (shorten, or reveal trimmed material), **Move** with snapping and
   Done/Cancel, **Unlink**/**Link** for independent picture and sound lanes,
   **Close gap**, **Volume** with mute, **Fade in** and **Fade out**, bookmarks,
-  cut navigation, **Add video**, **Add photo** (as on iPhone, a three-second
+  cut navigation, **Record** from the editor (inside the edit, the new takes go
+  in at the playhead, one Undo for the whole session, as on iPhone), **Add video**, **Add photo** (as on iPhone, a three-second
   silent clip), **Add audio**, persistent Undo/Redo,
   **Copy**, **Cut** and **Paste** of selected parts or a marked range (at a
   cut where picture and sound sequences meet, Paste asks which one).
@@ -120,7 +121,6 @@ animated Crop and Placement · Stabilization · Enhance audio (RNNoise, DeepFilt
 VoiceFixer) · Original
 recordings browser · OpenTimelineIO export · Dual-camera
 layouts, live effects, face follow, front light, horizon level, focus peaking ·
-Record-here insertion ·
 Landscape editor layout · Label and headline cards in Text · Color, Crop,
 Mirror, Stabilization and effects limited to a range of a clip or spanning
 several clips · Variable aperture (the control exists on iPhone only for lenses

@@ -27,6 +27,7 @@ fun main(arguments: Array<String>) {
     archiveTests(File(root, "Archive"))
     censorTests()
     transitionTests()
+    insertionTests()
     println("PASS: YouRec Android core")
 }
 

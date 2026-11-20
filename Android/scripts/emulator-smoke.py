@@ -314,7 +314,9 @@ def main():
     expected += photo()
     image()
     censored = censor()
-    faded = transition()
+    dissolved = transition()
+    if dissolved:
+        expected -= dissolved[1]
     shot("editor-after-tools")
     if crashed(): return
 
@@ -339,12 +341,12 @@ def main():
             fail("the export lasts %.2f s but the edit should last %.2f s" % (duration, expected))
         if shape and shape not in out:
             fail("the export is not in the chosen 1:1 shape")
-        if faded is not None:
-            level = brightness(movie, faded)
-            note("fade through black at %.2f s: %s" % (faded, level))
-            mean = re.search(r"mean ([0-9]+)", level)
-            if not mean or int(mean.group(1)) > 30:
-                fail("the frame at the middle of the fade through black is not black (%s)" % level)
+        if dissolved:
+            level = brightness(movie, dissolved[0])
+            note("dissolve at %.2f s (overlap %.2f s): %s" % (dissolved[0], dissolved[1], level))
+            spread = re.search(r"spread ([0-9]+)", level)
+            if dissolved[1] <= 0.1 or not spread or int(spread.group(1)) < 10:
+                fail("the dissolve took no overlap or its middle frame is blank (%s)" % level)
         if censored:
             # A -18 dBFS sine has an RMS of about -21 dBFS; nothing else in the range.
             a, b = censored[0] + 0.05, censored[1] - 0.05
@@ -364,17 +366,26 @@ def main():
     interrupted(len(takes))
 
 def transition():
-    """Put a fade through black at the cut nearest the playhead. Returns the cut's time."""
+    """Dissolve at a cut inside the edit, where both pictures overlap. Returns
+    (time of the cut, seconds the overlap took out), or None."""
     tap("Previous cut", 10); time.sleep(0.8)
-    if not tool("Transition") or not tap("Transition style Fade through color", 10):
+    if not tool("Transition"):
         return None
-    if not wait("Transition Fade through color", 10):
+    if find("Transition · Start") or find("Transition · End"):
+        tap("Next join", 5) if find("Transition · Start") else tap("Previous join", 5)
+        time.sleep(1)
+    if not find("Transition · Cut"):
+        note("transition: no interior cut. On screen: " + describe()); tap("Done with transition", 5); return None
+    before = readout()
+    if not tap("Transition style Dissolve", 10) or not wait("Transition Dissolve", 10):
         return None
-    at = readout()
-    note("transition: fade through black at %s" % (at,))
+    after = readout()
+    note("transition: dissolve, before %s after %s" % (before, after))
     shot("editor-transition")
     tap("Done with transition", 10)
-    return at[0] if at else None
+    if not before or not after:
+        return None
+    return (after[0], before[1] - after[1])
 
 def censor():
     """Mark a range over sound and censor it. Returns the range in seconds, or None.

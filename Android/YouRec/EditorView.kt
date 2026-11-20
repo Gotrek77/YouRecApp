@@ -189,7 +189,12 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if (edit.timeline.gap(EditTime.seconds(editor.playhead)) != null) tool("Close gap") { closeGap() }
             if (edit.timeline.resolvedBookmarks.isNotEmpty()) { tool("‹ Mark") { jumpBookmark(false) }; tool("Mark ›") { jumpBookmark(true) } }
         }
-        tool("Record") { navigation.showRecorder(project.id) }
+        tool("Record") {
+            // Inside the edit, new takes go in at the playhead (Record here); at its end, after it.
+            val at = TimelineEditing.quantize(editor.playhead)
+            if (edit.timeline.video.isNotEmpty() && at < edit.duration - TimelineEditing.frame) store.beginRecordingInsertion(project.id, at)
+            navigation.showRecorder(project.id)
+        }
         tool("Add video") { addMedia(audioOnly = false) }
         tool("Add photo") { addPhoto() }
         tool("Add audio") { addMedia(audioOnly = true) }

@@ -261,6 +261,11 @@ class ProjectStore(private val context: Context) {
             main.post { completion(if (failure == null) target.name else null, failure) }
         }
     }
+    /// Record the next takes into a project at `position` instead of at its end.
+    fun beginRecordingInsertion(id: UUID, position: Double) = update(id) { it.beginRecordingInsertion(position, null) }
+    fun endRecordingInsertions() {
+        for (project in projects) if (project.recordingInsertion != null) update(project.id) { it.endRecordingInsertion() }
+    }
     /// Run a long project operation off the main thread, with progress on the list.
     private fun operation(label: String, work: ((Double) -> Unit) -> Project?, completed: (Project?) -> Unit = {}) {
         if (importing) return
