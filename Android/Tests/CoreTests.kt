@@ -28,6 +28,7 @@ fun main(arguments: Array<String>) {
     censorTests()
     transitionTests()
     insertionTests()
+    horizonTests()
     println("PASS: YouRec Android core")
 }
 
