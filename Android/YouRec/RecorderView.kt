@@ -99,12 +99,15 @@ class RecorderView(context: Context, private val store: ProjectStore, private va
         Design.label(context, "Allow Camera and Microphone access to record.", 16f, bold = true).apply { gravity = Gravity.CENTER },
         Design.button(context, "Allow access", Design.background, Design.accent) { request() }, spacing = 14f, gravity = Gravity.CENTER_HORIZONTAL).apply { visibility = GONE }
 
+    private val frontLight = RecorderFrontLight(context)
+    private val bulb = Design.symbol(context, "💡", "Adjust front light", 44f) { openFrontLight() }.apply { visibility = GONE }
     private val panelHost = FrameLayout(context).apply { visibility = GONE; setBackgroundColor(0x66000000); setOnClickListener { closePanel() }; contentDescription = "Close panel" }
 
     init {
         addView(preview, Design.frame())
         addView(touch, Design.frame())
         addView(focusBox, Design.frame(dp(72f), dp(72f)))
+        addView(frontLight, Design.frame())
         addView(overlay, Design.frame())
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
 
@@ -128,6 +131,7 @@ class RecorderView(context: Context, private val store: ProjectStore, private va
         bottom.addView(cameraBar, LinearLayout.LayoutParams(wrap, wrap).apply { setMargins(dp(12f), dp(8f), dp(12f), 0) })
         bottom.addView(shutter, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(96f)).apply { topMargin = dp(10f) })
         overlay.addView(bottom, Design.frame(height = wrap, gravity = Gravity.BOTTOM).apply { bottomMargin = dp(12f) })
+        overlay.addView(bulb, Design.frame(dp(44f), dp(44f), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(14f), dp(14f)) })
         overlay.addView(panelHost, Design.frame())
 
         preview.holder.addCallback(object : SurfaceHolder.Callback {
@@ -174,6 +178,7 @@ class RecorderView(context: Context, private val store: ProjectStore, private va
 
     override fun appear() {
         visible = true
+        frontLight.visible(true)
         store.observe(this) { refresh() }
         main.removeCallbacks(tick); main.post(tick)
         if (granted()) begin()
@@ -184,6 +189,7 @@ class RecorderView(context: Context, private val store: ProjectStore, private va
     /// back shows the recorder idle: recording again takes a new tap.
     override fun disappear() {
         visible = false
+        frontLight.visible(false)
         main.removeCallbacks(tick)
         closePanel()
         capture.stop()
@@ -551,7 +557,34 @@ class RecorderView(context: Context, private val store: ProjectStore, private va
         rows.add(toggle("Fill the screen", capture.fill) { capture.fill = it })
         rows.add(note("The full-screen view fills the display. Off shows the complete recorded frame."))
         rows.add(Design.button(context, "Zoom transition  ·  " + ZoomTransition.durationLabel(capture.zoomDuration)) { openDurations() }.apply { gravity = Gravity.CENTER_VERTICAL or Gravity.START })
+        rows.add(toggle("Front light", frontLight.on) { setFrontLight(it) })
+        rows.add(note("A lit border around the picture lights your face from the screen, at full brightness. It is not recorded."))
         showPanel("Camera settings", rows)
+    }
+
+    private fun setFrontLight(on: Boolean) { frontLight.on = on; bulb.visibility = if (on) VISIBLE else GONE }
+    private fun openFrontLight() {
+        val rows = ArrayList<View>()
+        rows.add(Design.label(context, "Border width", 13f, Design.secondary, bold = true))
+        rows.add(Design.row(context, *RecorderFrontLight.Width.values().map { w -> choice(w.title, w == frontLight.border) { frontLight.border = w; openFrontLight() } }.toTypedArray()))
+        rows.add(Design.label(context, "Color", 13f, Design.secondary, bold = true))
+        rows.add(Design.row(context, *RecorderFrontLight.Tone.values().map { t -> choice(t.title, t == frontLight.tone) { frontLight.tone = t; openFrontLight() } }.toTypedArray()))
+        fun slider(title: String, max: Int, value: Int, change: (Int) -> Unit) = android.widget.SeekBar(context).apply {
+            this.max = max; progress = value; contentDescription = title
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(b: android.widget.SeekBar, p: Int, user: Boolean) { if (user) change(p) }
+                override fun onStartTrackingTouch(b: android.widget.SeekBar) { }
+                override fun onStopTrackingTouch(b: android.widget.SeekBar) { }
+            })
+        }
+        if (frontLight.tone == RecorderFrontLight.Tone.Custom) {
+            rows.add(Design.label(context, "Hue", 13f, Design.secondary, bold = true))
+            rows.add(slider("Front light hue", 360, frontLight.customHue.toInt()) { frontLight.customHue = it.toFloat() })
+        }
+        rows.add(Design.label(context, "Opacity", 13f, Design.secondary, bold = true))
+        rows.add(slider("Front light opacity", 20, Math.round(frontLight.opacity * 20)) { frontLight.opacity = it / 20f })
+        rows.add(Design.button(context, "Turn off front light") { setFrontLight(false); closePanel() })
+        showPanel("Front light", rows)
     }
 
     companion object {

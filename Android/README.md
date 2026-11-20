@@ -120,7 +120,7 @@ and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
 animated Crop and Placement · Stabilization · Enhance audio (RNNoise, DeepFilterNet3, LavaSR,
 VoiceFixer) · Original
 recordings browser · OpenTimelineIO export · Dual-camera
-layouts, live effects, face follow, front light, horizon level, focus peaking ·
+layouts, live effects, face follow, horizon level, focus peaking ·
 Landscape editor layout · Label and headline cards in Text · Color, Crop,
 Mirror, Stabilization and effects limited to a range of a clip or spanning
 several clips · Variable aperture (the control exists on iPhone only for lenses
