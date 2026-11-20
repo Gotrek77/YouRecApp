@@ -361,7 +361,7 @@ def main():
                 fail("the censored range does not carry the -18 dBFS tone (RMS %s)" % level)
         if enhanced:
             # RNNoise ran through JNI over each source: one processed file per take, no partial left.
-            listing = adb("shell", "run-as", PACKAGE, "ls", "-l", "cache/Enhanced audio")
+            listing = adb("shell", "run-as " + PACKAGE + " ls -l 'cache/Enhanced audio' 2>&1")
             note("enhanced audio cache:\n" + listing)
             sizes = [int(f[4]) for f in (line.split() for line in listing.splitlines()) if len(f) > 7 and f[-1].endswith(".f32")]
             if not sizes or min(sizes) == 0 or ".partial" in listing:
@@ -404,7 +404,9 @@ def enhance():
     shot("editor-enhance")
     if not tap("Apply enhance audio", 10):
         return False
-    time.sleep(2)
+    if not wait("Audio enhanced", 10) and not find("Enhancing audio"):
+        note("Enhance: no confirmation. On screen: " + describe())
+        return False
     note("after Enhance: " + describe())
     return True
 

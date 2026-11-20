@@ -130,8 +130,14 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         refreshTransport()
     }
     private var shownAudioStatus: String? = null
+    private var beforeAudioStatus: CharSequence = ""
     private fun refreshTransport() {
-        if (editor.audioStatus != shownAudioStatus) { shownAudioStatus = editor.audioStatus; feedback.text = shownAudioStatus ?: "" }
+        // Progress takes the message line; when it ends, the message it covered comes back.
+        if (editor.audioStatus != shownAudioStatus) {
+            val previous = shownAudioStatus; shownAudioStatus = editor.audioStatus
+            if (shownAudioStatus != null) { if (previous == null) beforeAudioStatus = feedback.text; feedback.text = shownAudioStatus }
+            else if (previous != null && feedback.text.toString() == previous) feedback.text = beforeAudioStatus
+        }
         time.text = Design.timecode(editor.playhead) + " / " + Design.timecode(editor.duration)
         play.text = if (editor.playing) "❚❚" else "▶"; play.contentDescription = if (editor.playing) "Pause" else "Play"
         timeline.playhead = editor.playhead; timeline.selected = selected
