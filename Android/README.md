@@ -138,6 +138,18 @@ One of the larger items deserves a note. **Open formats:** the Kotlin `ProjectCo
 and writes the same JSON as the Swift `Codable` types, so the unported tools
 are a matter of adding fields and renderers, not of converting documents.
 
+## Open decisions
+
+- **A photo does not ripple.** A photo is picture without sound, so it is in no
+  link group. When a clip before it gets shorter (Pauses, Speed, a transition's
+  overlap), the linked clips move up and the photo stays where it was, leaving
+  a gap before it. The iPhone app does exactly the same (`TrackTimeline.init`
+  gives picture-only sources no link; `replaceContents` moves only linked
+  items), and the port keeps it. A possible future setting: keep the iPhone
+  behaviour, or let picture-only items ripple with the sequence. If it is ever
+  added, the place is `TrackTimeline.replaceContents` (and the transition shift
+  in `TransitionLayout.shiftTargets`), where `downstream` decides what moves.
+
 ## Choices
 
 - **The Android framework and nothing else.** No AndroidX, CameraX, Compose,

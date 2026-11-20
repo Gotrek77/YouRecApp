@@ -913,6 +913,8 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
             val isOverlay = previousItems.any { it.id != id && it.id != originalIncoming?.outgoing && it.layer < before.layer && before.start in it.interval }
             val chain = HashSet<UUID>(); var link = nextPicture
             while (link != null && chain.add(link)) { val current = link; link = transitions.firstOrNull { it.outgoing == current }?.incoming }
+            // As on iPhone, only linked items ripple: a photo (picture without sound, so
+            // in no link) keeps its place and a gap opens. See README, "Open decisions".
             val moving = video.filter { it.id != id && it.id in downstream && (if (isOverlay) it.id in chain else it.start >= before.end || it.id == nextPicture) }.map { it.id }.toSet()
             video = video.map { if (it.id in moving) it.copy(start = it.start + delta) else it }
             audio = audio.map { sound ->
