@@ -144,6 +144,9 @@ class CaptureController(private val context: Context) {
     /// The front preview behaves like a mirror; the saved movie keeps writing readable.
     @Volatile var previewMirrored = preferences.getBoolean("mirrorFrontPreview", true)
         set(value) { field = value; preferences.edit().putBoolean("mirrorFrontPreview", value).apply(); redraw() }
+    /// Red edges where the preview is sharp. Drawn on the screen only, never into a take.
+    @Volatile var focusPeaking = preferences.getBoolean("focusPeaking", false)
+        set(value) { field = value; preferences.edit().putBoolean("focusPeaking", value).apply(); redraw() }
     @Volatile var saveMirrored = preferences.getBoolean("mirrorFrontRecording", false)
         set(value) { field = value; preferences.edit().putBoolean("mirrorFrontRecording", value).apply() }
     /// Fill the display, or fit the complete recorded frame inside it.
@@ -908,6 +911,10 @@ class CaptureController(private val context: Context) {
                 GLES20.glEnable(GLES20.GL_SCISSOR_TEST)
                 GLES20.glScissor((windowWidth - place.frameWidth) / 2, (windowHeight - place.frameHeight) / 2, place.frameWidth, place.frameHeight)
                 quad.draw(textureID, matrix, place.scaleX, place.scaleY, place.rotation, place.mirror)
+                if (focusPeaking) {
+                    val size = current.camera.streamSize(quality)
+                    quad.drawPeaking(textureID, matrix, place.scaleX, place.scaleY, place.rotation, place.mirror, floatArrayOf(1f / size.width, 1f / size.height))
+                }
                 GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
             }
             core.swap(display)

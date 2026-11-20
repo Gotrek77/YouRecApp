@@ -111,6 +111,7 @@ device to confirm:
 | Check | Pass when |
 | --- | --- |
 | Front light | On from Camera settings: a lit border shows around the preview, the screen goes to full brightness and back when the light is turned off or the recorder is left; width, colour and opacity change at once; the recording never shows the border |
+| Focus peaking | Hold AF (or Camera settings): sharp edges turn red in the preview as focus is pulled by hand; soft edges stay clear; the saved take never shows red |
 | Record here | In the editor, with the playhead inside the edit, Record and two takes with a pause between: both takes appear at the playhead in order; one Undo removes both; leaving the recorder and recording again appends at the end |
 
 ## 2. Projects and durability

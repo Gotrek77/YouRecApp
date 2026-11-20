@@ -87,7 +87,10 @@ class RecorderView(context: Context, private val store: ProjectStore, private va
     private val flip = Design.symbol(context, "⇄", "Switch camera", fill = 0) { capture.flipCamera() }
     private val cameraName = Design.button(context, "Camera", fill = 0, size = 14f) { openCameras() }
     private val zoomReadout = Design.label(context, "1×", 14f, bold = true, mono = true).apply { gravity = Gravity.CENTER; minWidth = dp(52f) }
-    private val focus = Design.button(context, "AF", fill = 0, size = 14f) { focusTapped() }
+    private val focus = Design.button(context, "AF", fill = 0, size = 14f) { focusTapped() }.apply {
+        // As on iPhone: hold and release to toggle focus peaking.
+        setOnLongClickListener { capture.focusPeaking = !capture.focusPeaking; say(if (capture.focusPeaking) "Focus peaking on" else "Focus peaking off"); true }
+    }
     private val cameraBar = Design.row(context, flip, cameraName, divider(), zoomReadout, divider(), focus, spacing = 2f).apply { background = plate(); setPadding(dp(6f), 0, dp(6f), 0) }
 
     private val record = RecordButton(context).apply { setOnClickListener { Design.tap(it); recordTapped() } }
@@ -557,6 +560,8 @@ class RecorderView(context: Context, private val store: ProjectStore, private va
         rows.add(toggle("Fill the screen", capture.fill) { capture.fill = it })
         rows.add(note("The full-screen view fills the display. Off shows the complete recorded frame."))
         rows.add(Design.button(context, "Zoom transition  ·  " + ZoomTransition.durationLabel(capture.zoomDuration)) { openDurations() }.apply { gravity = Gravity.CENTER_VERTICAL or Gravity.START })
+        rows.add(toggle("Focus peaking", capture.focusPeaking) { capture.focusPeaking = it })
+        rows.add(note("Sharp edges show red in the preview, never in the recording. Holding AF turns it on or off too."))
         rows.add(toggle("Front light", frontLight.on) { setFrontLight(it) })
         rows.add(note("A lit border around the picture lights your face from the screen, at full brightness. It is not recorded."))
         showPanel("Camera settings", rows)

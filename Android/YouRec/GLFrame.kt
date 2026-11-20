@@ -81,11 +81,11 @@ class FrameGrade(val texture: Int, val dimension: Int, val columns: Int, val row
 
 class FrameProgram {
     /// One compiled shader. The graded one is only built when a clip needs it.
-    private class Shader(graded: Boolean) {
+    private class Shader(graded: Boolean, peaking: Boolean = false) {
         val program = link("""
             attribute vec4 position; attribute vec4 coordinate; uniform mat4 transform; varying vec2 uv;
             void main() { gl_Position = position; uv = (transform * coordinate).xy; }""",
-            if (!graded) """#extension GL_OES_EGL_image_external : require
+            if (peaking) PEAKING else if (!graded) """#extension GL_OES_EGL_image_external : require
             precision mediump float; uniform samplerExternalOES frame; uniform float opacity; varying vec2 uv;
             void main() { gl_FragColor = vec4(texture2D(frame, uv).rgb, opacity); }"""
             // Balance first, then the look, mixed in by its strength. The cube is a
@@ -123,8 +123,10 @@ class FrameProgram {
         val span = GLES20.glGetUniformLocation(program, "span")
         val grid = GLES20.glGetUniformLocation(program, "grid")
         val opacity = GLES20.glGetUniformLocation(program, "opacity")
+        val texel = GLES20.glGetUniformLocation(program, "texel")
     }
     private val plain = Shader(false)
+    private var peaking: Shader? = null
     private var graded: Shader? = null
     private val vertices: FloatBuffer = floats(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
     private val coordinates: FloatBuffer = floats(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
@@ -135,6 +137,10 @@ class FrameProgram {
     /// of the viewport, centred; `rotation` turns it clockwise in quarter turns and
     /// `mirror` flips it left to right, both as seen on the output.
     fun draw(textureID: Int, matrix: FloatArray, scaleX: Float = 1f, scaleY: Float = 1f, rotation: Int = 0, mirror: Boolean = false) {
+        geometry(scaleX, scaleY, rotation, mirror)
+        present(textureID, matrix)
+    }
+    private fun geometry(scaleX: Float, scaleY: Float, rotation: Int, mirror: Boolean) {
         // Corner order: bottom-left, bottom-right, top-left, top-right. Rotating the
         // quad's corners keeps the texture coordinates, and sampling, untouched.
         val corners = arrayOf(floatArrayOf(-1f, -1f), floatArrayOf(1f, -1f), floatArrayOf(-1f, 1f), floatArrayOf(1f, 1f))
@@ -143,12 +149,16 @@ class FrameProgram {
             val corner = corners[order[i]]
             quad[i * 2] = corner[0] * scaleX * (if (mirror) -1f else 1f); quad[i * 2 + 1] = corner[1] * scaleY
         }
-        present(textureID, matrix)
     }
-    private fun present(textureID: Int, matrix: FloatArray, grade: FrameGrade? = null, alpha: Float = 1f) {
+    private fun present(textureID: Int, matrix: FloatArray, grade: FrameGrade? = null, alpha: Float = 1f, texel: FloatArray? = null) {
         quadBuffer.position(0); quadBuffer.put(quad); quadBuffer.position(0)
-        val shader = if (grade == null) plain else graded ?: Shader(true).also { graded = it }
+        val shader = if (texel != null) peaking ?: Shader(false, true).also { peaking = it } else if (grade == null) plain else graded ?: Shader(true).also { graded = it }
+
         GLES20.glUseProgram(shader.program)
+        if (texel != null) {
+            GLES20.glUniform2f(shader.texel, texel[0], texel[1])
+            GLES20.glEnable(GLES20.GL_BLEND); GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+        }
         if (grade != null) {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, grade.texture)
@@ -170,7 +180,7 @@ class FrameProgram {
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         GLES20.glDisableVertexAttribArray(shader.position); GLES20.glDisableVertexAttribArray(shader.coordinate)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, 0)
-        if (alpha < 1f) GLES20.glDisable(GLES20.GL_BLEND)
+        if (alpha < 1f || texel != null) GLES20.glDisable(GLES20.GL_BLEND)
     }
     /// Draw a source picture placed by an affine map from its own pixels to canvas
     /// pixels (both with y down). Whatever falls outside the canvas is clipped by
@@ -184,9 +194,32 @@ class FrameProgram {
         }
         present(textureID, matrix, grade, alpha)
     }
-    fun release() { GLES20.glDeleteProgram(plain.program); graded?.let { GLES20.glDeleteProgram(it.program) }; graded = null }
+    fun release() { GLES20.glDeleteProgram(plain.program); graded?.let { GLES20.glDeleteProgram(it.program) }; graded = null; peaking?.let { GLES20.glDeleteProgram(it.program) }; peaking = null }
+    /// Focus peaking over a picture already drawn with the same geometry: sharp
+    /// edges turn red. `texel` is one camera pixel in texture coordinates.
+    /// For the recorder's preview only; it must never reach a recording.
+    fun drawPeaking(textureID: Int, matrix: FloatArray, scaleX: Float, scaleY: Float, rotation: Int, mirror: Boolean, texel: FloatArray) {
+        geometry(scaleX, scaleY, rotation, mirror)
+        present(textureID, matrix, texel = texel)
+    }
 
     companion object {
+        // The iPhone recorder's sharp-edge test: a strong gradient that is also
+        // high-frequency detail, extended by one pixel, drawn in red.
+        private const val PEAKING = """#extension GL_OES_EGL_image_external : require
+            precision mediump float; uniform samplerExternalOES frame; uniform vec2 texel; uniform float opacity; varying vec2 uv;
+            float luma(vec2 p) { return dot(texture2D(frame, p).rgb, vec3(0.2126, 0.7152, 0.0722)); }
+            float edge(vec2 p) {
+                float l = luma(p - vec2(texel.x, 0.0)), r = luma(p + vec2(texel.x, 0.0));
+                float t = luma(p - vec2(0.0, texel.y)), b = luma(p + vec2(0.0, texel.y)), c = luma(p);
+                float gradient = length(vec2(r - l, b - t));
+                float detail = max(abs(l + r - 2.0 * c), abs(t + b - 2.0 * c));
+                return smoothstep(0.065, 0.16, gradient) * smoothstep(0.017, 0.06, detail);
+            }
+            void main() {
+                float s = max(edge(uv), 0.9 * max(edge(uv + vec2(texel.x, 0.0)), edge(uv + vec2(0.0, texel.y))));
+                gl_FragColor = vec4(1.0, 0.045, 0.025, s);
+            }"""
         val identity = floatArrayOf(1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f)
 
         fun externalTexture(): Int {
