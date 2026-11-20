@@ -90,9 +90,11 @@ capture, recording controls, the cut editor, export.
   changes, and preview and export play the same samples. DeepFilterNet3 runs
   upstream's ONNX graphs in ONNX Runtime, in 15-second chunks: close to, not
   identical with, the iPhone's per-hop stream
-  ([details](ThirdParty/DeepFilterNet3/PROVENANCE.md)). Chains made on iPhone
-  with LavaSR or VoiceFixer open and are kept, but are reported as
-  unavailable: the preview plays the original there and export refuses.
+  ([details](ThirdParty/DeepFilterNet3/PROVENANCE.md)). Speech detail
+  (LavaSR) and Studio restoration (VoiceFixer) run the iPhone app's DSP with
+  the same networks converted to ONNX in CI
+  ([details](scripts/neural/README.md)); a build without them does not offer
+  them, and a project that uses them is reported as unavailable there.
   Not ported from the iPhone inspector: level-matched compare, auditioning a
   short window, and resumable per-stage checkpoints.
   **Pauses** finds silence in the selected clips, at a measured or chosen
@@ -129,8 +131,7 @@ animated titles ·
 Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export · Video effects and their Metal
 shaders · Dragging and pinching a placed picture in the preview,
 and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
-animated Crop and Placement · Stabilization · The neural Enhance audio models
-LavaSR and VoiceFixer (their chains are kept, see Enhance) · Original
+animated Crop and Placement · Stabilization · Original
 recordings browser · OpenTimelineIO export · Dual-camera
 layouts, live effects, face follow, horizon level ·
 Landscape editor layout · Label and headline cards in Text · Color, Crop,
@@ -253,4 +254,7 @@ hardware, treat this port as unverified beyond its core.
 The same [MIT License](../LICENSE) as YouRec. Third-party parts: the iPhone
 app's RNNoise and DeepFilterNet3 DSP data (`../ThirdParty`, used in place);
 upstream DeepFilterNet3's ONNX graphs (`ThirdParty/DeepFilterNet3`, MIT or
-Apache-2.0, model MIT, Hendrik Schröter); ONNX Runtime (MIT, from Maven Central).
+Apache-2.0, model MIT, Hendrik Schröter); the iPhone app's LavaSR and
+VoiceFixer DSP (`../ThirdParty`, used in place) and, in builds that carry
+them, those networks converted to ONNX (LavaSR Apache-2.0; VoiceFixer code MIT,
+weights CC BY 4.0, Haohe Liu et al.); ONNX Runtime (MIT, from Maven Central).

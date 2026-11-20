@@ -41,6 +41,21 @@ class ProjectStore(private val context: Context) {
         OfflineAudioPipeline.cacheFolder = File(context.cacheDir, "Enhanced audio")
         val assets = context.applicationContext.assets
         NeuralAssets.read = { name -> assets.open(name).use { it.readBytes() } }
+        val extracted = File(context.filesDir, "Neural")
+        NeuralAssets.file = { name ->
+            val target = File(extracted, name)
+            synchronized(NeuralAssets) {
+                val size = try { assets.openFd(name).use { it.length } } catch (e: Exception) { -1L }
+                if (!target.exists() || (size >= 0 && target.length() != size)) {
+                    target.parentFile?.mkdirs()
+                    val partial = File(target.parentFile, target.name + ".partial")
+                    assets.open(name).use { input -> partial.outputStream().use { input.copyTo(it, 1 shl 20) } }
+                    if (!partial.renameTo(target)) throw java.io.IOException("cannot extract $name")
+                }
+            }
+            target
+        }
+        NeuralAssets.has = { name -> try { assets.openFd(name).close(); true } catch (e: Exception) { try { assets.open(name).close(); true } catch (e: Exception) { false } } }
     }
     private val observers = LinkedHashMap<Any, () -> Unit>()
     fun observe(owner: Any, callback: () -> Unit) { observers[owner] = callback }

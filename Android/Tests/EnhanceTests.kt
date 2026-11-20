@@ -24,7 +24,7 @@ fun enhanceTests() {
     require(made.amount == 1.0 && made.model == AudioModel.rnnoise && made.available, "Noise reduction defaults to full RNNoise")
     require(AudioEffect.make(EffectKind.highPass).frequency == 80.0 && AudioEffect.make(EffectKind.highPass).settingPrimary(1.0).frequency == 500.0, "Low-cut runs from 20 Hz to 500 Hz")
     require(AudioEffect.make(EffectKind.gain).settingPrimary(0.75).amount == 12.0 && AudioEffect.equalizerFrequency(1.0) == 12000.0, "Gain and EQ controls use the iPhone scales")
-    require(!AudioEffect.make(EffectKind.studioVoice).available && AudioEffect.make(EffectKind.studioVoice).supported, "LavaSR is the iPhone app's, not yet this build's")
+    require(AudioEffect.make(EffectKind.studioVoice).available && AudioEffect.make(EffectKind.studioRestoration).available, "LavaSR and VoiceFixer are offered as on iPhone")
     require(made.copy(model = AudioModel.deepFilter).available, "DeepFilterNet3 runs here")
     require(!made.copy(model = AudioModel.rnnoise.copy(runtime = "other")).supported, "A model is identified by weights and runtime too")
     require(!AudioEffect(kind = EffectKind("future")).supported, "An unknown kind is not processed")
@@ -60,7 +60,8 @@ fun enhanceTests() {
     require(blended.indices.all { abs(blended[it] - 0.75f * original[it]) < 1e-6 }, "Amount blends the model output with the recording")
     val zero = run(listOf(made.copy(amount = 0.0), AudioEffect.make(EffectKind.studioVoice).copy(amount = 0.0)), { throw IllegalStateException("no model at zero amount") })
     require(zero.indices.all { zero[it] == original[it] }, "Zero amount is an exact bypass, without loading a model")
-    requireFailure<AudioProcessingError.UnavailableModel>("A stage this build cannot run is refused, not skipped") { run(listOf(AudioEffect.make(EffectKind.studioVoice)), { Late() }) }
+    requireFailure<AudioProcessingError.UnavailableModel>("A stage without its network is refused, not skipped") { run(listOf(AudioEffect.make(EffectKind.studioVoice)), { Late() }) }
+    studioTests()
     requireFailure<AudioProcessingError.UnavailableModel>("DeepFilterNet3 never plays through RNNoise") { run(listOf(made.copy(model = AudioModel.deepFilter)), { Late() }) }
     deepFilterTests()
     val file = java.io.File.createTempFile("enhanced", ".f32"); file.delete()
@@ -169,4 +170,69 @@ private fun deepFilterTests() {
         require(out.size == original.size && out.indices.all { abs(out[it] - original[it]) < 1e-4 }, "A pass-through network gives back the recording in place, at amount $amount")
         require(calls.take(2) == listOf(100, 100) && calls.drop(2).all { it == 130 }, "Each channel's chunks run after their warm-up context ($calls)")
     }
+}
+
+/// LavaSR's and VoiceFixer's windowing, reflection, cropping and blending, with
+/// stand-ins for the iPhone app's DSP and the networks; and the resampler.
+private fun studioTests() {
+    val length = 48000L * 9 + 777   // several windows, a partial last one
+    fun tone(p: Long) = (sin(p * 2 * Math.PI * 440 / 48000) * 0.3 + sin(p * 2 * Math.PI * 1700 / 48000) * 0.1).toFloat()
+    val stereo = object : PCMSource {
+        override fun read(position: Long, into: FloatArray, offset: Int, frames: Int) {
+            for (i in 0 until frames) { val p = position + i; val v = if (p in 0 until length) tone(p) else 0f
+                into[offset + i * 2] = v; into[offset + i * 2 + 1] = if (p in 0 until length) v * 0.5f else 0f }
+        }
+    }
+    // Resampler: 48 → 44.1 → 48 kHz keeps a band-limited signal.
+    val down = Resampler(48000, 44100); val up = Resampler(44100, 48000)
+    val low = ArrayList<Float>(); down.convert(stereo, length, { b, c -> for (i in 0 until c * 2) low.add(b[i]) })
+    require(low.size.toLong() == down.outputLength(length) * 2 && down.outputLength(length) == Math.ceil(length * 44100.0 / 48000).toLong(), "44.1 kHz length")
+    val lowSource = object : PCMSource { override fun read(position: Long, into: FloatArray, offset: Int, frames: Int) {
+        for (i in 0 until frames * 2) { val k = position * 2 + i; into[offset + i] = if (k >= 0 && k < low.size) low[k.toInt()] else 0f } } }
+    val back = ArrayList<Float>(); up.convert(lowSource, down.outputLength(length), { b, c -> for (i in 0 until c * 2) back.add(b[i]) })
+    var signal = 0.0; var error = 0.0
+    for (p in 4800 until length - 4800) { val a = tone(p).toDouble(); signal += a * a; val e = back[(p * 2).toInt()] - a; error += e * e }
+    require(10 * Math.log10(signal / error) > 60, "A round trip through 44.1 kHz stays within -60 dB (${10 * Math.log10(signal / error)} dB)")
+
+    // LavaSR: the merge halves its input; the result must be half the recording, in place.
+    var lastWindow = FloatArray(0)
+    val dsp = object : StudioDSP {
+        override fun lavaFeatures(audio: FloatArray, mel: FloatArray) { }
+        override fun lavaReconstruct(real: FloatArray, imaginary: FloatArray, audio: FloatArray) { }
+        override fun lavaMerge(original: FloatArray, restored: FloatArray, output: FloatArray) { for (i in original.indices) output[i] = original[i] * 0.5f }
+        override fun voiceFixerFeatures(audio: FloatArray, bank: FloatArray, mel: FloatArray) { lastWindow = audio.copyOf() }
+    }
+    var lavaRuns = 0
+    val lava = object : LavaNetwork { override fun run(mel: FloatArray, real: FloatArray, imaginary: FloatArray) { lavaRuns++ }; override fun close() { } }
+    val half = ArrayList<Float>()
+    StudioVoice.process(stereo, length, 1f, dsp, lava, { b, c -> for (i in 0 until c * 2) half.add(b[i]) })
+    require(half.size.toLong() == length * 2 && (0 until length.toInt()).all { half[it * 2] == tone(it.toLong()) * 0.5f && half[it * 2 + 1] == tone(it.toLong()) * 0.25f },
+        "LavaSR windows land in place, every sample once")
+    require(lavaRuns == 2 * Math.ceil(length.toDouble() / StudioVoice.stride).toInt(), "Each window runs once per channel")
+    val dual = object : PCMSource { override fun read(position: Long, into: FloatArray, offset: Int, frames: Int) {
+        stereo.read(position, into, offset, frames); for (i in 0 until frames) into[offset + i * 2 + 1] = into[offset + i * 2] } }
+    lavaRuns = 0
+    StudioVoice.process(dual, length, 1f, dsp, lava, { _, _ -> })
+    require(lavaRuns == Math.ceil(length.toDouble() / StudioVoice.stride).toInt(), "Dual mono runs the network once")
+
+    // VoiceFixer: a vocoder that returns its input window gives back the
+    // recording, through 44.1 kHz and the crossfades, at full amount.
+    val voiceFixer = object : VoiceFixerNetwork {
+        override fun run(mel: FloatArray, audio: FloatArray) {
+            val trim = (audio.size - StudioRestoration.context) / 2
+            for (j in audio.indices) { val k = j - trim; audio[j] = if (k in lastWindow.indices) lastWindow[k] else 0f }
+        }
+        override fun close() { }
+    }
+    val folder = java.nio.file.Files.createTempDirectory("studio").toFile()
+    val target = java.io.File(folder, "out.f32")
+    OfflineAudioPipeline.write(stereo, length, listOf(AudioEffect.make(EffectKind.studioRestoration).copy(amount = 1.0), AudioEffect.make(EffectKind.gain).copy(amount = -6.0)),
+        { error("no RNNoise") }, target, studio = StudioModels(dsp, null, voiceFixer, FloatArray(1025 * 128)))
+    val restored = FloatArray((length * 2).toInt()); ProcessedAudio(target).use { it.read(0, restored, 0, length.toInt()) }
+    require(target.length() == length * 8 && folder.listFiles()!!.size == 1, "VoiceFixer then gain leaves one file of the recording's length")
+    val gain = Math.pow(10.0, -6.0 / 20)
+    signal = 0.0; error = 0.0
+    for (p in 4800 until length - 4800) { val a = tone(p) * gain; signal += a * a; val e = restored[(p * 2).toInt()] - a; error += e * e }
+    require(10 * Math.log10(signal / error) > 50, "VoiceFixer windows land in place across crossfades (${10 * Math.log10(signal / error)} dB)")
+    folder.deleteRecursively()
 }

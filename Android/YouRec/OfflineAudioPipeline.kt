@@ -28,7 +28,7 @@ object OfflineAudioPipeline {
     const val frame = 480
     private const val channels = AudioMix.channels
     // Bump when processing math changes: cached results of older math are not reused.
-    const val cacheVersion = "android-audio-v1|rnnoise-adapter-1|eq-1|dfn3-onnx-ort1.31.1-chunk1500-warm300"
+    const val cacheVersion = "android-audio-v2|rnnoise-adapter-1|eq-1|dfn3-onnx-ort1.31.1-chunk1500-warm300|lava-onnx-ort1.31.1|voicefixer-onnx-ort1.31.1-kaiser32"
     /// Processed sound is a replaceable cache, outside every project. Set at launch.
     @Volatile var cacheFolder = File(System.getProperty("java.io.tmpdir") ?: ".", "Enhanced audio")
 
@@ -100,6 +100,15 @@ object OfflineAudioPipeline {
                 deepFilter: (() -> DeepFilterStream)? = null): Float {
         if (!effects.filter { it.enabled }.all { it.available }) throw AudioProcessingError.UnavailableModel()
         val chain = active(effects)
+        if (chain.any { windowed(it) }) throw AudioProcessingError.UnavailableModel()
+        return stream(input, length, chain, denoiser, output, progress, cancelled, deepFilter)
+    }
+    /// LavaSR and VoiceFixer look seconds ahead and behind, reflected at the
+    /// ends of the recording: they read their whole input, as on iPhone.
+    fun windowed(effect: AudioEffect) = effect.kind == EffectKind.studioVoice || effect.kind == EffectKind.studioRestoration
+    private fun stream(input: PCMSource, length: Long, chain: List<AudioEffect>, denoiser: () -> FrameDenoiser,
+                       output: (FloatArray, Int) -> Unit, progress: (Double) -> Unit, cancelled: () -> Boolean,
+                       deepFilter: (() -> DeepFilterStream)?): Float {
         val opened = ArrayList<AutoCloseable>()
         try {
             val stages = chain.map { effect ->
@@ -148,25 +157,102 @@ object OfflineAudioPipeline {
     }
 
     /// Write the processed sound to `destination` as little-endian float
-    /// stereo. A partial file is never left under the final name.
+    /// stereo. Runs of streaming stages go in one pass; LavaSR and VoiceFixer
+    /// each read the previous result from a file, as the iPhone app's stages do.
+    /// A partial file is never left under the final name.
     fun write(input: PCMSource, length: Long, effects: List<AudioEffect>, denoiser: () -> FrameDenoiser, destination: File,
-              progress: (Double) -> Unit = {}, cancelled: () -> Boolean = { false }, deepFilter: (() -> DeepFilterStream)? = null) {
+              progress: (Double) -> Unit = {}, cancelled: () -> Boolean = { false }, deepFilter: (() -> DeepFilterStream)? = null,
+              studio: StudioModels? = null) {
+        if (!effects.filter { it.enabled }.all { it.available }) throw AudioProcessingError.UnavailableModel()
+        val chain = active(effects)
+        val groups = ArrayList<List<AudioEffect>>()
+        for (effect in chain) {
+            if (windowed(effect) || groups.isEmpty() || groups.last().any { windowed(it) }) groups.add(listOf(effect))
+            else groups[groups.size - 1] = groups.last() + effect
+        }
+        if (groups.isEmpty()) groups.add(emptyList())
         destination.parentFile?.mkdirs()
-        val partial = File(destination.parentFile, destination.name + ".partial-" + UUID.randomUUID())
+        val temporary = ArrayList<File>()
+        var current: PCMSource = input
+        try {
+            for ((index, group) in groups.withIndex()) {
+                val target = if (index == groups.lastIndex) destination else File(destination.parentFile, destination.name + ".stage-" + UUID.randomUUID()).also { temporary.add(it) }
+                val report: (Double) -> Unit = { progress((index + it) / groups.size) }
+                val effect = group.singleOrNull()
+                when {
+                    effect?.kind == EffectKind.studioVoice -> {
+                        val models = studio?.takeIf { it.lava != null } ?: throw AudioProcessingError.UnavailableModel()
+                        store(target) { out -> StudioVoice.process(current, length, effect.amount.toFloat(), models.dsp, models.lava!!, out, report, cancelled) }
+                    }
+                    effect?.kind == EffectKind.studioRestoration -> {
+                        val models = studio?.takeIf { it.voiceFixer != null && it.bank != null } ?: throw AudioProcessingError.UnavailableModel()
+                        restore(current, length, effect.amount.toFloat(), models, target, report, cancelled)
+                    }
+                    else -> { val from = current; store(target) { out -> stream(from, length, group, denoiser, out, report, cancelled, deepFilter) } }
+                }
+                if (current !== input) (current as? ProcessedAudio)?.close()
+                if (index < groups.lastIndex) current = ProcessedAudio(target)
+            }
+        } finally {
+            if (current !== input) (current as? ProcessedAudio)?.close()
+            for (file in temporary) file.delete()
+        }
+    }
+
+    /// VoiceFixer at 44.1 kHz, then back to 48 kHz and blended with the original.
+    private fun restore(input: PCMSource, length: Long, amount: Float, models: StudioModels, target: File, progress: (Double) -> Unit, cancelled: () -> Boolean) {
+        val down = Resampler(48000, 44100); val up = Resampler(44100, 48000)
+        val lower = File(target.parentFile, target.name + ".44k-" + UUID.randomUUID())
+        val restored = File(target.parentFile, target.name + ".restored-" + UUID.randomUUID())
+        try {
+            store(lower) { out -> down.convert(input, length, out, cancelled) }
+            progress(0.05)
+            val frames = down.outputLength(length)
+            ProcessedAudio(lower).use { source ->
+                store(restored) { out -> StudioRestoration.restore(source, frames, models.dsp, models.bank!!, models.voiceFixer!!, out, { progress(0.05 + 0.85 * it) }, cancelled) }
+            }
+            ProcessedAudio(restored).use { wet ->
+                store(target) { out ->
+                    val dry = FloatArray(4096 * channels)
+                    var position = 0L
+                    fun mix(block: FloatArray, count: Int) {
+                        val n = minOf(count.toLong(), length - position).toInt()
+                        if (n <= 0) return
+                        input.read(position, dry, 0, n)
+                        for (i in 0 until n * channels) dry[i] += amount * (block[i] - dry[i])
+                        out(dry, n); position += n
+                    }
+                    up.convert(wet, frames, { block, count -> mix(block, count) }, cancelled)
+                    // A frame or two the resampler did not reach: restored sound there is silence.
+                    val silence = FloatArray(4096 * channels)
+                    while (position < length) mix(silence, minOf(4096L, length - position).toInt())
+                }
+            }
+            progress(1.0)
+        } finally { lower.delete(); restored.delete() }
+    }
+
+    /// Run `produce` into `target` through a partial file, renamed when complete.
+    private fun store(target: File, produce: ((FloatArray, Int) -> Unit) -> Unit) {
+        val partial = File(target.parentFile, target.name + ".partial-" + UUID.randomUUID())
         try {
             RandomAccessFile(partial, "rw").use { file ->
                 val channel = file.channel
-                val bytes = ByteBuffer.allocate(frame * channels * 4).order(ByteOrder.LITTLE_ENDIAN)
-                process(input, length, effects, denoiser, { block, count ->
+                var bytes = ByteBuffer.allocate(frame * channels * 4).order(ByteOrder.LITTLE_ENDIAN)
+                produce { block, count ->
+                    if (bytes.capacity() < count * channels * 4) bytes = ByteBuffer.allocate(count * channels * 4).order(ByteOrder.LITTLE_ENDIAN)
                     bytes.clear(); for (i in 0 until count * channels) bytes.putFloat(block[i]); bytes.flip()
                     while (bytes.hasRemaining()) channel.write(bytes)
-                }, progress, cancelled, deepFilter)
+                }
                 channel.force(false)
             }
-            if (!partial.renameTo(destination)) throw java.io.IOException("cannot store processed audio")
+            if (!partial.renameTo(target)) throw java.io.IOException("cannot store processed audio")
         } finally { partial.delete() }
     }
 }
+
+/// What LavaSR and VoiceFixer need: the iPhone app's DSP and the networks this build carries.
+class StudioModels(val dsp: StudioDSP, val lava: LavaNetwork?, val voiceFixer: VoiceFixerNetwork?, val bank: FloatArray?)
 
 /// Processed sound written by OfflineAudioPipeline.write. Reading outside it yields silence.
 class ProcessedAudio(file: File) : PCMSource, AutoCloseable {

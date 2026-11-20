@@ -188,12 +188,13 @@ class RenderSources(private val project: Project, private val folder: File, priv
             if (active.any { it.kind == EffectKind.voiceIsolation && it.model == AudioModel.rnnoise } && !SpeechDetector.available) throw AudioProcessingError.UnavailableModel()
             // One DeepFilterNet3 network serves every channel of every DeepFilterNet3 stage of this chain.
             val network = if (active.any { it.kind == EffectKind.voiceIsolation && it.model == AudioModel.deepFilter }) NeuralAssets.deepFilter() else null
+            val studio = try { StudioAssets.load(active) } catch (e: Exception) { network?.second?.close(); throw e }
             val decoded = DecodedAudio(file)
             try {
                 OfflineAudioPipeline.write(decoded, Math.ceil(source.duration * AudioMix.sampleRate).toLong(), request.effects, { RNNoiseDenoiser() },
                     processedFile(request.source, request.effects)!!, { progress((index + it) / requests.size) }, cancelled,
-                    network?.let { (dsp, model) -> { DeepFilterStream(dsp, model) } })
-            } finally { decoded.release(); network?.second?.close() }
+                    network?.let { (dsp, model) -> { DeepFilterStream(dsp, model) } }, studio)
+            } finally { decoded.release(); network?.second?.close(); studio?.lava?.close(); studio?.voiceFixer?.close() }
         }
         progress(1.0)
     }

@@ -57,6 +57,11 @@ class OnnxDeepFilterModel(encoder: ByteArray, erbDecoder: ByteArray, dfDecoder: 
 /// The app's bundled networks. Set at launch.
 object NeuralAssets {
     @Volatile var read: ((String) -> ByteArray)? = null
+    /// Whether an asset is in this build: the converted LavaSR and VoiceFixer
+    /// networks are present only when the build had them (scripts/neural).
+    @Volatile var has: (String) -> Boolean = { false }
+    /// An asset as a file of its own, copied once from the APK.
+    @Volatile var file: ((String) -> java.io.File)? = null
     /// DeepFilterNet3's DSP data and network, each checked against its hash.
     fun deepFilter(): Pair<DeepFilterDSP, OnnxDeepFilterModel> {
         val read = read ?: throw AudioProcessingError.UnavailableModel()

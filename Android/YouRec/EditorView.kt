@@ -697,7 +697,8 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         val stages = Design.column(context, spacing = 6f)
         lateinit var refresh: () -> Unit
-        add(choices(*listOf(EffectKind.voiceIsolation, EffectKind.highPass, EffectKind.equalizer, EffectKind.gain).map { kind ->
+        add(choices(*listOf(EffectKind.voiceIsolation, EffectKind.studioVoice, EffectKind.studioRestoration, EffectKind.highPass, EffectKind.equalizer, EffectKind.gain)
+            .filter { StudioAssets.carries(it) }.map { kind ->
             Design.button(context, "+ " + kind.stripName, Design.text, Design.raised, 13f) { chain = chain + AudioEffect.make(kind); refresh() }
                 .apply { contentDescription = "Add " + kind.title }
         }.toTypedArray()))
@@ -713,7 +714,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         fun replace(effect: AudioEffect) { chain = chain.map { if (it.id == effect.id) effect else it } }
         refresh = {
             stages.removeAllViews()
-            if (chain.isEmpty()) stages.addView(Design.label(context, "Add a filter above, in any order. Speech detail (LavaSR) and studio restoration (VoiceFixer) are not available on Android yet.", 13f, Design.secondary))
+            if (chain.isEmpty()) stages.addView(Design.label(context, "Add a filter above, in any order." + if (StudioAssets.carries(EffectKind.studioVoice) && StudioAssets.carries(EffectKind.studioRestoration)) "" else " This build lacks the LavaSR or VoiceFixer network (see scripts/neural).", 13f, Design.secondary))
             for ((index, effect) in chain.withIndex()) {
                 val head = Design.row(context, Design.label(context, "${index + 1} · " + effect.kind.title, 14f, bold = true), spacing = 4f)
                 (head.getChildAt(0).layoutParams as LayoutParams).apply { width = 0; weight = 1f }
@@ -751,6 +752,8 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                 stages.addView(Design.label(context, when (effect.kind) {
                     EffectKind.voiceIsolation -> if (effect.model == AudioModel.deepFilter) "DeepFilterNet3 reduces background noise more strongly and is slower to process. Amount blends the cleaned voice with the recording."
                         else "RNNoise reduces background noise. Amount blends the cleaned voice with the recording."
+                    EffectKind.studioVoice -> "LavaSR restores high-frequency speech detail. It does not simulate a studio microphone or remove room echo. Start low: clean recordings may need none."
+                    EffectKind.studioRestoration -> "VoiceFixer restores the full speech signal, reducing recording defects such as noise, room echo and muffling. Amount blends the restored voice with the recording. Neural resynthesis can alter vocal character: for speech, not music; compare with Bypass. VoiceFixer · Haohe Liu et al. · CC BY 4.0"
                     EffectKind.highPass -> "Removes low rumble below the cutoff."
                     EffectKind.equalizer -> "Boosts or cuts this frequency. Add another EQ stage for another band."
                     else -> "Adjusts the output level in decibels."

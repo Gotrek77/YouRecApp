@@ -36,6 +36,8 @@ android {
         release { isMinifyEnabled = false }
     }
     lint { abortOnError = false }
+    // Networks stay uncompressed in the APK: they are copied out once to be mapped.
+    androidResources { noCompress += listOf("onnx", "bin") }
 }
 
 dependencies {
@@ -44,9 +46,14 @@ dependencies {
 
 // The networks and their DSP data, as assets: upstream DeepFilterNet3's ONNX
 // graphs, and the iPhone app's DeepFilterNet3 filterbanks, read in place.
+// LavaSR and VoiceFixer as ONNX come from scripts/neural (CI converts them into
+// build/neural-models); without them the build lacks those two filters.
 val neuralAssets by tasks.registering(Copy::class) {
     from("ThirdParty/DeepFilterNet3") { include("*.onnx"); into("DeepFilterNet3") }
     from("../ThirdParty/DeepFilterNet3/DeepFilterNet3-DSP.json") { into("DeepFilterNet3") }
+    from(layout.buildDirectory.dir("neural-models")) { include("LavaSRv2.onnx"); into("LavaSR") }
+    from(layout.buildDirectory.dir("neural-models")) { include("VoiceFixer.onnx"); into("VoiceFixer") }
+    from("../ThirdParty/VoiceFixer/VoiceFixer-Mel.bin") { into("VoiceFixer") }
     into(layout.buildDirectory.dir("generated/neural-assets"))
 }
 tasks.named("preBuild") { dependsOn(neuralAssets) }
