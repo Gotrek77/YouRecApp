@@ -1405,9 +1405,21 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                     is EffectParameterKind.Picker -> {
                         val current = (value as? EffectValue.Choice)?.value
                         listed(Design.label(context, parameter.title, 13f))
-                        listed(choices(*(k.options.map { o -> choice(o, o == current, parameter.title + " " + o) { set(EffectValue.Choice(o), "$name: " + parameter.title) } } + listOfNotNull(diamond)).toTypedArray()))
+                        val offered = k.options.filter { it == current || !VideoEffectRendering.unavailable(kind, parameter.id, it) }
+                        listed(choices(*(offered.map { o -> choice(o, o == current, parameter.title + " " + o) { set(EffectValue.Choice(o), "$name: " + parameter.title) } } + listOfNotNull(diamond)).toTypedArray()))
                     }
-                    is EffectParameterKind.Color, is EffectParameterKind.Media -> listed(Design.label(context, parameter.title + " is kept as set on iPhone.", 12f, Design.secondary))
+                    is EffectParameterKind.Color -> {
+                        // Twelve hues around the wheel, full colour, and the one set now.
+                        val now = (value as? EffectValue.Color)?.value
+                        listed(Design.label(context, parameter.title, 13f))
+                        val swatches = (0 until 12).map { i -> android.graphics.Color.HSVToColor(floatArrayOf(i * 30f, 0.85f, 0.9f)) }.map { c ->
+                            EffectRGB(android.graphics.Color.red(c) / 255.0, android.graphics.Color.green(c) / 255.0, android.graphics.Color.blue(c) / 255.0) }
+                        fun swatch(rgb: EffectRGB, chosen: Boolean) = Design.button(context, if (chosen) "●" else " ", Design.text,
+                            android.graphics.Color.rgb((rgb.red * 255).toInt(), (rgb.green * 255).toInt(), (rgb.blue * 255).toInt()), 13f) {
+                            set(EffectValue.Color(rgb), "$name: " + parameter.title) }.apply { contentDescription = parameter.title + " " + EffectHues.name(rgb) + if (chosen) ", selected" else "" }
+                        listed(choices(*((listOfNotNull(now?.takeIf { it !in swatches }).map { swatch(it, true) } + swatches.map { swatch(it, it == now) }) + listOfNotNull(diamond)).toTypedArray()))
+                    }
+                    is EffectParameterKind.Media -> listed(Design.label(context, parameter.title + " is kept as set on iPhone.", 12f, Design.secondary))
                 }
             }
         }
@@ -1673,5 +1685,14 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         editor.suspend()
         if (project.edit.duration <= 0) return say("Add a recording before previewing or exporting.")
         showPanel(MovieExportPanel(context, store, navigation, project.id) { closePanel() })
+    }
+}
+
+/// Names for the hue swatches, read by TalkBack.
+object EffectHues {
+    fun name(rgb: EffectRGB): String {
+        val hsv = FloatArray(3); android.graphics.Color.RGBToHSV((rgb.red * 255).toInt(), (rgb.green * 255).toInt(), (rgb.blue * 255).toInt(), hsv)
+        val names = listOf("red", "orange", "yellow", "lime", "green", "spring green", "cyan", "azure", "blue", "violet", "magenta", "rose")
+        return names[(Math.round(hsv[0] / 30f) % 12)]
     }
 }

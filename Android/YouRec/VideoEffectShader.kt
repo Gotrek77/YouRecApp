@@ -141,15 +141,29 @@ class VideoEffectShader {
 
     /// Apply `effects` in order to the picture drawn after `begin`. Returns the target holding the result.
     fun apply(effects: List<VideoEffectSettings>, sourceTime: Double, fps: Double, picture: Target, frameTime: Double = sourceTime, holdTime: Double? = null,
-              targets: Map<java.util.UUID, Pair<Double, Double>> = emptyMap(), palettes: (VideoEffectSettings, Target) -> EffectPalette? = { _, _ -> null }): Target {
+              targets: Map<java.util.UUID, Pair<Double, Double>> = emptyMap(), palettes: (VideoEffectSettings, Target) -> EffectPalette? = { _, _ -> null },
+              history: (VideoEffectSettings, Matte) -> List<Matte> = { _, _ -> emptyList() }, rawOnly: java.util.UUID? = null): Target {
         var current = picture
         GLES20.glDisable(GLES20.GL_BLEND)
         for (effect in effects) {
             val u = VideoEffectRendering.uniforms(effect, sourceTime, fps, frameTime, holdTime, targets[effect.id])
             val inputs = ArrayList<Pair<String, Int>>()
             inputs.add("image" to current.texture)
+            // A temporal matte: this frame's raw matte, eased with those before it.
+            var matte: Target? = null
+            if (effect.usesTemporalMatte) {
+                val raw = raw(effect, u, current)
+                val own = Matte(raw, guide(raw))
+                if (effect.id == rawOnly) { free(current); return raw }
+                val earlier = history(effect, own)
+                val kind = VideoEffectMatteKind.of(effect.kind)
+                val window = (listOf(own) + earlier).take(kind.capacity)
+                matte = combine(window, VideoEffectTemporalWindow.priors(window.map { it.guide }, kind), kind)
+                free(raw)
+            }
             val auxiliary = encode(effect, u, current, sourceTime)
             for ((name, target) in auxiliary) inputs.add(name to target.texture)
+            matte?.let { inputs.add("mask" to it.texture) }
             val grain = u.kind == 5 || u.kind == 12 || u.kind == 16 || u.kind == 17
             if (grain) inputs.add("lattice" to latticeTexture())
             // Quantization reads its palette from the picture as it reaches it.
@@ -162,6 +176,7 @@ class VideoEffectShader {
                 GLES20.glUniform1f(p.u("time"), u.time)
                 GLES20.glUniform1f(p.u("intensity"), u.intensity)
                 GLES20.glUniform4fv(p.u("frameValues"), 2, values, 0)
+                GLES20.glUniform1f(p.u("useMask"), if (matte != null) 1f else 0f)
                 if (grain) { val (x, y) = VideoEffectRendering.latticeOffset(u.frame); GLES20.glUniform2f(p.u("latticeOffset"), x.toFloat(), y.toFloat()) }
                 if (effect.kind == VideoEffectID.quantization) {
                     val labs = FloatArray(64); val bands = FloatArray(15)
@@ -172,6 +187,7 @@ class VideoEffectShader {
                 }
             }
             for (target in auxiliary.values) free(target)
+            matte?.let { free(it) }
             free(current)
             current = output
         }
@@ -212,6 +228,38 @@ class VideoEffectShader {
             }
             else -> emptyMap()
         }
+    }
+
+    /// One frame's raw matte (R) and guide (G), and its 32×18 guide samples.
+    class Matte(val target: Target, val guide: FloatArray)
+    fun raw(effect: VideoEffectSettings, u: VideoEffectRendering.Uniforms, input: Target): Target {
+        val output = take(input.width, input.height)
+        run(pass("raw") { HEADER + RAW }, output, listOf("image" to input.texture)) { p ->
+            GLES20.glUniform4fv(p.u("p"), PARAMETERS, u.p, 0)
+            GLES20.glUniform1f(p.u("rawKind"), if (effect.kind == VideoEffectID.chromaKey) 1f else 0f)
+            GLES20.glUniform1f(p.u("screenTexture"), 0f)
+        }
+        return output
+    }
+    fun guide(raw: Target): FloatArray {
+        val small = take(32, 18)
+        run(pass("guide") { HEADER + GUIDE }, small, listOf("image" to raw.texture)) { }
+        val pixels = ByteBuffer.allocateDirect(32 * 18 * 4).order(ByteOrder.nativeOrder())
+        GLES20.glReadPixels(0, 0, 32, 18, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, pixels)
+        free(small)
+        return FloatArray(32 * 18) { (pixels.get(it * 4 + 1).toInt() and 255) / 255f }
+    }
+    private fun combine(window: List<Matte>, priors: List<Double>, kind: VideoEffectMatteKind): Target {
+        val first = window.first().target
+        val output = take(first.width, first.height)
+        val inputs = window.mapIndexed { i, m -> (if (i == 0) "image" else "m$i") to m.target.texture }
+        run(pass("window") { HEADER + WINDOW }, output, inputs) { p ->
+            val values = FloatArray(7); priors.take(7).forEachIndexed { i, v -> values[i] = v.toFloat() }
+            GLES20.glUniform1fv(p.u("priors"), 7, values, 0)
+            GLES20.glUniform1f(p.u("count"), window.size.toFloat())
+            GLES20.glUniform1f(p.u("motionGate"), if (kind == VideoEffectMatteKind.Key) 1f else 0f)
+        }
+        return output
     }
 
     /// The picture reduced to 64×36 (36×64 upright) as linear RGB samples, for palette analysis.
@@ -372,6 +420,80 @@ void main() {
     gl_FragColor = encode(result / max(total, 1e-6));
 }
 """
+        /// A temporal effect's raw matte in R, and in G the perceptual luma of
+        /// the 4×4 block around the pixel (the iPhone app's quarter-size guide):
+        /// one texture per frame, so eight frames fit GLES 2's eight units.
+        val RAW = """
+uniform vec4 p[$PARAMETERS];
+uniform float rawKind;
+vec3 hsv(vec3 c) {
+    float hi = max(c.r, max(c.g, c.b)), lo = min(c.r, min(c.g, c.b)), d = hi - lo, h = 0.0;
+    if (d > 1e-6) { if (hi == c.r) h = mod((c.g - c.b) / d + 6.0, 6.0); else if (hi == c.g) h = (c.b - c.r) / d + 2.0; else h = (c.r - c.g) / d + 4.0; }
+    return vec3(h / 6.0, hi > 1e-6 ? d / hi : 0.0, hi);
+}
+float hueDistance(float a, float b) { float d = abs(a - b); return min(d, 1.0 - d); }
+uniform sampler2D screen;
+uniform float screenTexture;
+void main() {
+    vec2 q = floor(gl_FragCoord.xy), uv = (q + .5) / size;
+    vec3 c = lin(texture2D(image, uv).rgb);
+    float a = 0.0;
+    if (rawKind < .5) {
+        // ve_isolationAlpha: closeness to the chosen hue, only on coloured pixels.
+        vec3 h = hsv(srgb(c)), target = hsv(srgb(p[1].xyz));
+        float r = p[2].x / 360.0, soft = max(.001, p[3].x * .1);
+        a = (1.0 - smoothstep(r, r + soft, hueDistance(h.x, target.x))) * smoothstep(.08, .2, h.y);
+    } else {
+        // ve_keyAlpha: colour difference against the screen colour, clipped.
+        vec3 s = screenTexture > .5 ? lin(texture2D(screen, vec2(.5)).rgb) : p[0].xyz;
+        bool blue = p[1].x > 1.5 || (p[1].x < .5 && s.b > s.g);
+        float key = blue ? c.b : c.g, other = blue ? c.g : c.b, sk = blue ? s.b : s.g, so = blue ? s.g : s.b;
+        float balance = p[4].x;
+        float d = key - (abs(balance - .5) < .0001 ? max(c.r, other) : balance * c.r + (1.0 - balance) * other);
+        float ds = sk - (abs(balance - .5) < .0001 ? max(s.r, so) : balance * s.r + (1.0 - balance) * so);
+        a = 1.0 - clamp(p[3].x * d / max(ds, .0001), 0.0, 1.0);
+        a = clamp((a - p[5].x) / max(.0001, p[6].x - p[5].x), 0.0, 1.0);
+    }
+    vec2 block = floor(q / 4.0) * 4.0; float sum = 0.0, n = 0.0;
+    for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++) {
+        vec2 at = block + vec2(float(x), float(y));
+        if (at.x < size.x && at.y < size.y) { sum += luma(lin(texture2D(image, (at + .5) / size).rgb)); n += 1.0; }
+    }
+    gl_FragColor = vec4(a, srgb(vec3(clamp(sum / max(n, 1.0), 0.0, 1.0))).x, 0.0, 1.0);
+}
+"""
+        /// The guide's 32×18 grid of the iPhone app's scene-cut test.
+        val GUIDE = """
+void main() { gl_FragColor = vec4(0.0, texture2D(image, gl_FragCoord.xy / size).g, 0.0, 1.0); }
+"""
+        /// ve_matteWindow: newest first, each earlier frame weighted by the prior
+        /// left over, a cut or (for keys) motion between guides cancelling it.
+        val WINDOW = """
+uniform sampler2D m1; uniform sampler2D m2; uniform sampler2D m3; uniform sampler2D m4; uniform sampler2D m5; uniform sampler2D m6; uniform sampler2D m7;
+uniform float priors[7];
+uniform float count;
+uniform float motionGate;
+vec2 at(int i, vec2 uv) {
+    if (i == 0) return texture2D(image, uv).rg; if (i == 1) return texture2D(m1, uv).rg; if (i == 2) return texture2D(m2, uv).rg; if (i == 3) return texture2D(m3, uv).rg;
+    if (i == 4) return texture2D(m4, uv).rg; if (i == 5) return texture2D(m5, uv).rg; if (i == 6) return texture2D(m6, uv).rg; return texture2D(m7, uv).rg;
+}
+void main() {
+    vec2 uv = gl_FragCoord.xy / size;
+    float sum = 0.0, remaining = 1.0;
+    vec2 current = at(0, uv);
+    for (int i = 0; i < 7; i++) {
+        if (float(i) + 1.0 >= count) break;
+        vec2 next = at(i + 1, uv);
+        float prior = priors[i];
+        if (motionGate > .5) prior *= 1.0 - smoothstep(.01, .02, abs(current.y - next.y));
+        sum += remaining * (1.0 - prior) * current.x; remaining *= prior;
+        current = next;
+    }
+    sum += remaining * current.x;
+    float a = clamp(sum, 0.0, 1.0);
+    gl_FragColor = vec4(a, a, a, 1.0);
+}
+"""
         /// A normalised dissolve in linear light (Step printing's smear).
         val BLEND = """
 uniform sampler2D next;
@@ -396,6 +518,8 @@ uniform vec4 frameValues[2];
 uniform vec4 paletteLab[16];
 uniform float bands[15];
 uniform float colorCount;
+uniform sampler2D mask;
+uniform float useMask;
 vec3 lab(vec3 c) {
     vec3 v = pow(max(vec3(dot(c, vec3(.4122214708, .5363325363, .0514459929)), dot(c, vec3(.2119034982, .6806995451, .1073969566)), dot(c, vec3(.0883024619, .2817188376, .6299787005))), 0.0), vec3(1.0 / 3.0));
     return vec3(dot(v, vec3(.2104542553, .793617785, -.0040720468)), dot(v, vec3(1.9779984951, -2.428592205, .4505937099)), dot(v, vec3(.0259040371, .7827717662, -.808675766)));
@@ -570,6 +694,11 @@ void main() {
     float sky = (1.0 - smoothstep(.25, .38, uv.y)) * smoothstep(.5, .85, y) * (1.0 - smoothstep(.08, .18, hueDistance(h.x, .61))); o *= 1.0 - .5 * sky;
     if (p[2].x > .5) o = mix(o, vec3(y * exp2(-.7 * darkness)), smoothstep(.94, .99, y) * .7);
     o *= 1.0 - .15 * smoothstep(.2, .75, length(uv - .5));
+#elif KIND == 4
+    float w;
+    if (useMask > .5) w = texture2D(mask, vec2(uv.x, 1.0 - uv.y)).r;
+    else { vec3 h = hsv(srgb(c)), target = hsv(srgb(p[1].xyz)); float r = p[2].x / 360.0, soft = max(.001, p[3].x * .1); w = (1.0 - smoothstep(r, r + soft, hueDistance(h.x, target.x))) * smoothstep(.08, .2, h.y); }
+    o = mix(vec3(y), c, w);
 #elif KIND == 5
     float l = sCurve(srgb(vec3(dot(c, vec3(.4, .5, .1)))).x, p[0].x);
     l = lin(vec3(l * (1.0 - 2.0 * p[1].x * (1.0 - l)))).x;

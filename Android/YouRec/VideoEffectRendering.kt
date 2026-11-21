@@ -16,7 +16,18 @@ object VideoEffectRendering {
         VideoEffectID.dayForNight, VideoEffectID.noir, VideoEffectID.expressionism, VideoEffectID.rgbOffset,
         VideoEffectID.negativeStrobe, VideoEffectID.kaleidoscope,
         VideoEffectID.halation, VideoEffectID.widescreen, VideoEffectID.sixteenMM, VideoEffectID.superEight,
-        VideoEffectID.undercranking, VideoEffectID.stepPrinting, VideoEffectID.freezeFrame, VideoEffectID.crashZoom)
+        VideoEffectID.undercranking, VideoEffectID.stepPrinting, VideoEffectID.freezeFrame, VideoEffectID.crashZoom, VideoEffectID.colorIsolation)
+
+    /// Choices of drawn effects this build cannot draw yet (they need a person mask).
+    fun unavailable(kind: VideoEffectID, parameter: String, choice: String): Boolean =
+        kind == VideoEffectID.colorIsolation && parameter == "mode" && choice == "The subject"
+    /// Why a project's effect cannot be drawn here, by name; null when it can.
+    fun refusal(effect: VideoEffectSettings): String? {
+        if (effect.kind !in drawn) return "Video effects: " + effect.kind.descriptor.displayName
+        for (p in effect.parameters) for (v in listOf(p.value) + p.keyframes.map { it.value })
+            if (v is EffectValue.Choice && unavailable(effect.kind, p.id, v.value)) return "Video effects: ${effect.kind.descriptor.displayName} (${p.title}: ${v.value})"
+        return null
+    }
 
     /// The iPhone app's pixel order: families in this order, each in the order
     /// VideoEffectSettings.ordered gives.

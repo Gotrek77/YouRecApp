@@ -226,6 +226,12 @@ def reference(kind, p, intensity, encoded, aux=None, values=None):
         o = o * (1 - .5 * sky)[..., None]
         if x[2] > .5: o = mix(o, yy * 2 ** (-.7 * dark), (smoothstep(.94, .99, y) * .7)[..., None])
         o = o * (1 - .15 * smoothstep(.2, .75, np.hypot(uv[..., 0] - .5, uv[..., 1] - .5)))[..., None]
+    elif kind == 4:
+        if "mask" in aux: w = aux["mask"][..., 0] / 255.0
+        else:
+            h = hsv(srgb(c)); target = hsv(srgb(p[1, :3]))[..., 0]; r = x[2] / 360; soft = max(.001, x[3] * .1)
+            w = (1 - smoothstep(r, r + soft, hue_distance(h[..., 0], target))) * smoothstep(.08, .2, h[..., 1])
+        o = mix(y[..., None], c, w[..., None])
     elif kind == 5:
         l = scurve(srgb(c @ np.array([.4, .5, .1])), x[0]); l = lin(l * (1 - 2 * x[1] * (1 - l)))[..., None]
         o = np.repeat(l, 3, -1)
@@ -350,6 +356,52 @@ def main():
         spec["cases"].append({"name": name, "fragment": shader, "width": w, "height": h, "textures": [texture("input", "image")],
                               "uniforms": [{"name": "size", "type": "2f", "value": [w, h]}, {"name": "sourceSize", "type": "2f", "value": [W, H]}] + extra, "output": out})
         checks.append((name, out, w, h, lambda ref=ref: np.round(ref() * 255), False))
+    # Temporal mattes: the raw isolation matte with its block guide, and the window.
+    RAW, WINDOW = HEADER + source("RAW"), HEADER + source("WINDOW")
+    hue = [0.0, 0.0, 0.0, 0.0]; target_rgb = lin(np.array([.75, .22, .17]))
+    raw_p = params([0, 0, 22, .4]); raw_p[1, :3] = target_rgb
+    out = os.path.join(WORK, "Raw-isolation.rgba")
+    spec["cases"].append({"name": "Raw isolation", "fragment": RAW, "width": W, "height": H, "textures": [texture("input", "image")],
+                          "uniforms": [{"name": "size", "type": "2f", "value": [W, H]}, {"name": "p", "type": "4fv", "value": raw_p.flatten().tolist()},
+                                       {"name": "rawKind", "type": "1f", "value": 0}, {"name": "screenTexture", "type": "1f", "value": 0}], "output": out})
+    def raw_reference():
+        c = lin(image / 255.0); h = hsv(srgb(c)); t = hsv(srgb(target_rgb))[0]
+        a = (1 - smoothstep(22 / 360, 22 / 360 + .04, hue_distance(h[..., 0], t))) * smoothstep(.08, .2, h[..., 1])
+        l = luma(c).reshape(H // 4, 4, W // 4, 4).mean((1, 3)).repeat(4, 0).repeat(4, 1)
+        return np.round(np.stack([a, srgb(np.clip(l, 0, 1)), np.zeros_like(a)], -1) * 255)
+    checks.append(("Raw isolation", out, W, H, raw_reference, False))
+    mattes = [smooth(W, H, 10 + i) for i in range(4)]
+    for i, m in enumerate(mattes): store("matte%d" % i, m)
+    for name, priors, gate in [("Window isolation", [1 / 3, 1 / 3, 0.0], 0), ("Window key motion", [.25, .25, .25], 1)]:
+        out = os.path.join(WORK, name.replace(" ", "-") + ".rgba")
+        textures = [texture("matte0", "image")] + [texture("matte%d" % i, "m%d" % i) for i in range(1, 4)]
+        spec["cases"].append({"name": name, "fragment": WINDOW, "width": W, "height": H, "textures": textures,
+                              "uniforms": [{"name": "size", "type": "2f", "value": [W, H]}, {"name": "priors", "type": "1fv", "value": priors + [0] * (7 - len(priors))},
+                                           {"name": "count", "type": "1f", "value": 4}, {"name": "motionGate", "type": "1f", "value": gate}], "output": out})
+        def window_reference(priors=priors, gate=gate):
+            r = [m[..., 0] / 255.0 for m in mattes]; g = [m[..., 1] / 255.0 for m in mattes]
+            total = 0; remaining = 1
+            for i in range(3):
+                prior = priors[i] * ((1 - smoothstep(.01, .02, np.abs(g[i] - g[i + 1]))) if gate else 1)
+                total = total + remaining * (1 - prior) * r[i]; remaining = remaining * prior
+            a = np.clip(total + remaining * r[3], 0, 1)
+            return np.round(np.stack([a, a, a], -1) * 255)
+        checks.append((name, out, W, H, window_reference, False))
+    # Colour isolation through its matte.
+    store("mask", smooth(W, H, 20))
+    iso_p = params([0, 0, 22, .4, 1.5]); iso_p[1, :3] = target_rgb
+    out = os.path.join(WORK, "Isolation-masked.rgba")
+    spec["cases"].append({"name": "Isolation masked", "fragment": "#define KIND 4\n" + fragment, "width": W, "height": H,
+                          "textures": [texture("input", "image"), texture("mask")],
+                          "uniforms": [{"name": "size", "type": "2f", "value": [W, H]}, {"name": "p", "type": "4fv", "value": iso_p.flatten().tolist()},
+                                       {"name": "intensity", "type": "1f", "value": 1}, {"name": "useMask", "type": "1f", "value": 1}], "output": out})
+    checks.append(("Isolation masked", out, W, H, lambda: np.round(reference(4, iso_p, 1, image.astype(float), {"mask": smooth(W, H, 20)}) * 255), False))
+    out = os.path.join(WORK, "Isolation-hue.rgba")
+    spec["cases"].append({"name": "Isolation hue", "fragment": "#define KIND 4\n" + fragment, "width": W, "height": H,
+                          "textures": [texture("input", "image")],
+                          "uniforms": [{"name": "size", "type": "2f", "value": [W, H]}, {"name": "p", "type": "4fv", "value": iso_p.flatten().tolist()},
+                                       {"name": "intensity", "type": "1f", "value": .8}, {"name": "useMask", "type": "1f", "value": 0}], "output": out})
+    checks.append(("Isolation hue", out, W, H, lambda: np.round(reference(4, iso_p, .8, image.astype(float), {}) * 255), False))
     BILATERAL = HEADER + source("BILATERAL")
     for name, sigma, direction in [("Bilateral horizontal 1.5", 1.5, (1, 0)), ("Bilateral vertical 4", 4.0, (0, 1))]:
         out = os.path.join(WORK, name.replace(" ", "-") + ".rgba")

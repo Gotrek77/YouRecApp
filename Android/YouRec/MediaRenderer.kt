@@ -36,7 +36,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
         if (source in failed) return null
         val file = file(source) ?: return null
         // Hardware decoders are a scarce system resource: keep four at most.
-        while (frames.size >= 4) { val oldest = frames.keys.first(); frames.remove(oldest)?.release() }
+        while (frames.size >= 6) { val oldest = frames.keys.first(); frames.remove(oldest)?.release() }
         val reader = try { FrameReader(file) } catch (e: Exception) {
             if (strict) throw ProjectError.InvalidMedia()
             // Remember the failure: retrying on every frame would stall the preview.
@@ -251,6 +251,76 @@ class RenderSources(private val project: Project, private val folder: File, priv
         val f = Fields.of(raw)
         EffectPaletteFrame(f.double("time"), EffectPalettes.locked(f.raw("palette")) ?: throw ProjectError.InvalidDocument())
     })
+    /// Raw mattes already made, by stream (source, clip, the effects up to the
+    /// temporal one, canvas) and frame time: sequential frames find their
+    /// history here; after a seek, missing frames are made again.
+    private val mattes = LinkedHashMap<String, java.util.TreeMap<Double, VideoEffectShader.Matte>>(4, 0.75f, true)
+    private fun matteStream(layer: RenderPlan.Layer, effect: VideoEffectSettings, width: Int, height: Int): String {
+        val clip = layer.picture.clip; val file = file(layer.picture.source)
+        val upstream = VideoEffectSettings.ordered(clip.videoEffects ?: emptyList()).let { all -> all.take(all.indexOfFirst { it.id == effect.id } + 1) }
+        return listOf("matte-android-v1", file?.name, file?.length(), clip.id, clip.color, clip.crop, clip.mirror, width, height,
+            upstream.map { String(JSON.write(ProjectCoding.encode(it))) }).toString()
+    }
+    /// The frame where an effect's matte history begins: its start, or the first
+    /// frame after its intensity last came up from zero.
+    private fun matteOrigin(effect: VideoEffectSettings, t: Double, frames: VideoEffectFrameIndex): Double? {
+        if (!effect.isActive(t)) return null
+        val zero = effect.parameters.firstOrNull { it.id == "intensity" }?.keyframes?.lastOrNull { it.time <= t && it.time >= effect.start && it.value == EffectValue.Number(0.0) }?.time ?: return effect.start
+        var index = frames.first(zero)
+        while (index < frames.times.size && frames.times[index] <= t) {
+            if (frames.times[index] > zero && effect.isActive(frames.times[index])) return frames.times[index]
+            index++
+        }
+        return null
+    }
+    private fun matteHistory(layer: RenderPlan.Layer, effect: VideoEffectSettings, time: Double, own: VideoEffectShader.Matte, shader: VideoEffectShader,
+                             program: FrameProgram, width: Int, height: Int, fps: Double): List<VideoEffectShader.Matte> {
+        val file = file(layer.picture.source) ?: return emptyList()
+        val frames = MediaFiles.frameIndex(file) ?: return emptyList()
+        val now = frames.times[frames.last(time)]
+        val key = matteStream(layer, effect, width, height)
+        val stream = mattes.getOrPut(key) { java.util.TreeMap() }
+        // Kept for the frames after this one.
+        if (stream[now] == null) { shader.pin(own.target, true); stream[now] = own; own.target.busy = true }
+        val kind = VideoEffectMatteKind.of(effect.kind)
+        val start = matteOrigin(effect, now, frames) ?: return emptyList()
+        val window = VideoEffectTemporalWindow.make(frames.times, now, start, kind) ?: return emptyList()
+        val result = ArrayList<VideoEffectShader.Matte>()
+        for (index in window.indices.dropLast(1)) {
+            val sample = maxOf(frames.times[index], start)
+            if (!effect.isActive(sample)) continue
+            val stored = stream[sample] ?: historic(layer, effect, sample, shader, program, width, height, fps)?.also { m -> shader.pin(m.target, true); stream[sample] = m }
+            stored?.let { result.add(it) }
+        }
+        // Only a window's worth around this frame is kept (full-size textures):
+        // the farthest from it go first, never one in use now.
+        val used = result.map { it.target }.toSet() + own.target
+        while (stream.size > kind.capacity + 1) {
+            val far = stream.entries.filter { it.value.target !in used }.maxByOrNull { Math.abs(it.key - now) } ?: break
+            stream.remove(far.key); shader.pin(far.value.target, false); shader.free(far.value.target)
+        }
+        while (mattes.size > 2) {
+            val oldest = mattes.keys.first { it != key }
+            mattes.remove(oldest)?.values?.forEach { shader.pin(it.target, false); shader.free(it.target) }
+        }
+        return result.reversed()
+    }
+    /// A raw matte of an earlier source frame: decoded on its own reader, framed
+    /// and put through the effects before the temporal one.
+    private fun historic(layer: RenderPlan.Layer, effect: VideoEffectSettings, time: Double, shader: VideoEffectShader, program: FrameProgram,
+                         width: Int, height: Int, fps: Double): VideoEffectShader.Matte? {
+        val clip = layer.picture.clip
+        val reader = frames(layer.picture.source, 5) ?: return null
+        if (!reader.show(time)) return null
+        val frame = CanvasSize(width.toDouble(), height.toDouble())
+        val source = CanvasSize(reader.video.displayWidth.toDouble(), reader.video.displayHeight.toDouble())
+        val picture = shader.picture(width, height)
+        program.draw(reader.texture, reader.matrix, clip.pictureTransform(source, frame), source, frame, grade(clip.color))
+        val upstream = VideoEffectRendering.active(clip, time, fps).let { all -> all.take(all.indexOfFirst { it.id == effect.id } + 1) }
+        if (upstream.none { it.id == effect.id }) { shader.free(picture); return null }
+        val raw = shader.apply(upstream, time, fps, picture, history = { e, own -> matteHistory(layer, e, time, own, shader, program, width, height, fps) }, rawOnly = effect.id)
+        return VideoEffectShader.Matte(raw, shader.guide(raw))
+    }
     private val clocks = HashMap<TimelineClip, VideoEffectSequenceClock>()
     private val blocks = HashMap<Pair<UUID, Int>, Pair<Any, VideoEffectShader.Target>>()
     /// The layer's picture with its effects, as the iPhone app's compositor
@@ -293,12 +363,12 @@ class RenderSources(private val project: Project, private val folder: File, priv
                 val px = subject.centerX * source.width; val py = subject.centerY * source.height
                 targets[effect.id] = (placed.x(px, py) / frame.width).coerceIn(0.0, 1.0) to (placed.y(px, py) / frame.height).coerceIn(0.0, 1.0)
             }
-            return shader.apply(effects, effectTime, fps, picture, frameTime, hold, targets) { effect, upstream ->
+            return shader.apply(effects, effectTime, fps, picture, frameTime, hold, targets, history = { effect, own -> matteHistory(layer, effect, selected, own, shader, program, width, height, fps) }, palettes = { effect, upstream ->
                 // The analysed palette where the track has reached; until then, this frame's own (as the iPhone app while analysing).
                 val analysed = paletteJobs[paletteKey(layer, effect, width, height)]?.track(effectTime)
                     ?: EffectPaletteAnalysis.analyze(shader.samples(upstream), effect.number("colors", effectTime).toInt(), seed = VideoEffectRendering.frameIndex(effectTime, 30.0).toLong())
                 EffectPalettes.display(effect, effectTime, analysed, EffectPalettes.locked(effect.lockedPalette))
-            }
+            })
         }
         if (plan == null) return one(sourceTime, false, Double.POSITIVE_INFINITY)
         if (plan.times.size == 1 || plan.smear <= 0) return one(plan.times.first(), plan.firstAtOrAfter, plan.before)
@@ -388,7 +458,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
         progress(1.0)
     }
     fun releaseFrames() { for (reader in frames.values) try { reader.release() } catch (e: Exception) { }; frames.clear(); failed.clear(); titles.release(); pictures.release(); releaseLooks()
-        compositor?.releaseProgram(); compositor = null; effectShader?.release(); effectShader = null; blocks.clear(); clocks.clear() }
+        compositor?.releaseProgram(); compositor = null; effectShader?.release(); effectShader = null; blocks.clear(); clocks.clear(); mattes.clear(); paletteJobs.clear() }
     fun releaseSound() { for (reader in sound.values) reader.release(); sound.clear()
         synchronized(processedSound) { for (reader in processedSound.values) reader.close(); processedSound.clear() } }
 

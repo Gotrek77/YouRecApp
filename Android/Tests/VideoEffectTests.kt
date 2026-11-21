@@ -49,6 +49,7 @@ fun videoEffectTests() {
     effectTimingTests()
     effectSubjectTests()
     effectPaletteTests()
+    effectMatteTests()
     println("Video effects: ok")
 }
 
@@ -249,4 +250,20 @@ fun effectPaletteTests() {
     require(EffectPalettes.display(effect, 0.0, palette, null)!!.colors == pop.sampled(2), "A Pop palette recolours the bands")
     require(EffectPalettes.sample(listOf(EffectRGB(0.0, 0.0, 0.0), EffectRGB(0.5, 0.5, 0.5), EffectRGB(0.52, 0.5, 0.5), EffectRGB(1.0, 0.0, 0.0)), 3).contains(EffectRGB(1.0, 0.0, 0.0)), "Reducing keeps the saturated entry")
     require(EffectPalettes.locked(mapOf("colors" to listOf(mapOf("red" to 0.0, "green" to 0.0, "blue" to 0.0), mapOf("red" to 1.0, "green" to 1.0, "blue" to 1.0)), "thresholds" to listOf(0.5)))?.colors?.size == 2, "The saved locked palette is read")
+}
+
+/// Temporal mattes: window length and weights, scene cuts, and what is refused.
+fun effectMatteTests() {
+    require(VideoEffectMatteKind.Isolation.capacity == 8 && VideoEffectMatteKind.Key.capacity == 6, "Window lengths as on iPhone")
+    val times = DoubleArray(100) { it / 30.0 }
+    val window = VideoEffectTemporalWindow.make(times, 1.0, 0.0, VideoEffectMatteKind.Isolation)!!
+    require(window.indices == (23..30).toList() && abs(window.weights.sum() - 1) < 1e-12 && window.tailBound > 0, "Eight frames, weights summing to one (${window.indices})")
+    val early = VideoEffectTemporalWindow.make(times, 2 / 30.0 + 0.001, 1 / 30.0, VideoEffectMatteKind.Key)!!
+    require(early.indices == listOf(1, 2) && early.tailBound == 0.0, "The window starts at the effect's frame (${early.indices})")
+    val gap = times.copyOf().also { for (i in 50 until 100) it[i] += 1.0 }
+    require(VideoEffectTemporalWindow.make(gap, gap[52], 0.0, VideoEffectMatteKind.Isolation)!!.indices.first() == 50, "A gap in the frames stops the history")
+    val flat = FloatArray(576) { 0.4f }; val other = FloatArray(576) { 0.9f }; val noisy = FloatArray(576) { if (it % 2 == 0) 0.42f else 0.38f }
+    require(VideoEffectTemporalWindow.priors(listOf(flat, noisy, other), VideoEffectMatteKind.Isolation) == listOf(1.0 / 3, 0.0), "A small change eases, a scene cut does not")
+    val subject = VideoEffectSettings(kind = VideoEffectID.colorIsolation).setting("mode", EffectValue.Choice("The subject"))
+    require(VideoEffectRendering.refusal(subject)!!.contains("The subject") && VideoEffectRendering.refusal(VideoEffectSettings(kind = VideoEffectID.colorIsolation)) == null, "Colour isolation by colour is drawn, by subject refused by name")
 }

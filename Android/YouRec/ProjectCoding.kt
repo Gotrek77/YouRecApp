@@ -267,7 +267,7 @@ internal object ProjectCoding {
             fields.stringOrNull("analysisFile"), fields.stringOrNull("analysisDataFile"), fields.uuidOrNull("capturedEffectID"),
             fields.listOrNull("palette")?.map { rgb(Fields.of(it)) }, fields.raw("lockedPalette"), fields.intOrNull("algorithm"),
             fields.listOrNull("strobeTimeMap")?.map { Fields.of(it).let { p -> StrobeTimePoint(p.double("source"), p.double("elapsed")) } },
-            fields.doubleOrNull("phaseOffset"), fields.doubleOrNull("releaseTime"))
+            fields.doubleOrNull("phaseOffset"), fields.doubleOrNull("releaseTime")).also { effect -> VideoEffectRendering.refusal(effect)?.let { unsupported(it) } }
     }
     private fun rgb(value: Fields) = EffectRGB(value.double("red"), value.double("green"), value.double("blue"))
     private fun encode(rgb: EffectRGB) = jsonObject("red" to rgb.red, "green" to rgb.green, "blue" to rgb.blue)
