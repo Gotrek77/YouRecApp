@@ -24,6 +24,8 @@ object VideoEffectRendering {
     /// Why a project's effect cannot be drawn here, by name; null when it can.
     fun refusal(effect: VideoEffectSettings): String? {
         if (effect.kind !in drawn) return "Video effects: " + effect.kind.descriptor.displayName
+        // Analysis the iPhone app recorded live with the take is not read here yet.
+        if (effect.analysisFile != null || effect.analysisDataFile != null) return "Video effects: ${effect.kind.descriptor.displayName} (analysis recorded live)"
         for (p in effect.parameters) for (v in listOf(p.value) + p.keyframes.map { it.value })
             if (v is EffectValue.Choice && unavailable(effect.kind, p.id, v.value)) return "Video effects: ${effect.kind.descriptor.displayName} (${p.title}: ${v.value})"
         return null

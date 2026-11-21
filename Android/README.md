@@ -69,13 +69,18 @@ capture, recording controls, the cut editor, export.
   after exposure, warmth and tint. Exposure and white balance are per-channel
   gains on display values: close to the iPhone result, not identical to it.
   **Effects** (video) on the selected clips or the whole project, with the
-  iPhone app's shader arithmetic ported to GLSL: Color Correction, Silent Tint,
+  iPhone app's shader arithmetic ported to GLSL (checked in WebGL against a
+  NumPy transcription of the Metal kernels): Color Correction, Silent Tint,
   Three-Strip, Bleach Bypass, Day for Night, Noir, Expressionism, RGB Offset,
-  Negative Strobe and Kaleidoscope. Each has its iPhone controls and
-  intensity; Animate adds keyframes at the playhead, the diamond adds or
-  removes one. Pictures between effect passes are 8-bit display values (the
-  iPhone app keeps 16-bit linear light), and grain repeats a fixed random tile
-  read from a different place each frame.
+  Negative Strobe, Color Isolation (by colour, with the temporal matte),
+  Kaleidoscope, Crash zoom (Follow face uses android.media.FaceDetector in
+  place of Vision), Halation, Widescreen, 16mm, Super 8 (with its cadence),
+  Undercranking, Step printing and Freeze frame (a hold inserted at the
+  playhead; effect speed and mute retime the clip and its sound as on
+  iPhone). Each has its iPhone controls and intensity; Animate adds keyframes
+  at the playhead, the diamond adds or removes one. Pictures between effect
+  passes are 8-bit display values (the iPhone app keeps 16-bit linear light),
+  and grain repeats a fixed random tile read from a different place each frame.
   **Transition** at the start, at a cut or at the end, in every iPhone style:
   Dissolve, Fade through a colour, Wipe (direction, soft or hard edge), Split
   screen (axis, divider, framing, whose sound), Hitchcock (shadows or highlights
@@ -146,10 +151,11 @@ policy older iPhone builds apply to newer projects.
 Title designs, looks and outlines, imported fonts,
 animated titles ·
 Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export · The other video
-effects (Color Isolation, Quantization, Night fix, Dolly zoom, Crash zoom,
-Widescreen, Freeze frame, Step printing, Undercranking, Halation, 16mm,
-Super 8, Chroma key, Background), animated Color Correction, colour and media
-controls · Dragging and pinching a placed picture in the preview,
+effects: Quantization (palettes and kernel ported; waits for Face detail's
+person mask), Chroma key, Background, Dolly zoom, Night fix, Color Isolation
+on the subject, Widescreen's oval bokeh (needs depth), and analysis recorded
+live on iPhone; animated Color Correction; effect media (backgrounds, clean
+plates) · Dragging and pinching a placed picture in the preview,
 and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
 animated Crop and Placement · Stabilization · Original
 recordings browser · OpenTimelineIO export · Dual-camera
