@@ -117,9 +117,9 @@ class RenderSources(private val project: Project, private val folder: File, priv
             val bound = IntArray(1); android.opengl.GLES20.glGetIntegerv(android.opengl.GLES20.GL_FRAMEBUFFER_BINDING, bound, 0)
             val scissor = android.opengl.GLES20.glIsEnabled(android.opengl.GLES20.GL_SCISSOR_TEST)
             if (scissor) android.opengl.GLES20.glDisable(android.opengl.GLES20.GL_SCISSOR_TEST)
-            shader.begin(width, height)
+            val picture = shader.begin(width, height)
             program.draw(reader.texture, reader.matrix, placed, source, frame, tone)
-            val result = shader.apply(effects, layer.picture.sourceTime, framesPerSecond)
+            val result = shader.apply(effects, layer.picture.sourceTime, framesPerSecond, picture).texture
             android.opengl.GLES20.glBindFramebuffer(android.opengl.GLES20.GL_FRAMEBUFFER, bound[0])
             android.opengl.GLES20.glViewport(0, 0, width, height)
             if (scissor) android.opengl.GLES20.glEnable(android.opengl.GLES20.GL_SCISSOR_TEST)

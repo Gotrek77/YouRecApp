@@ -41,9 +41,9 @@ fun videoEffectTests() {
     val unknown = mapOf("kind" to "futureEffect", "id" to UUID.randomUUID().toString())
     val decoded = ProjectCoding.videoEffects(listOf(JSON.parse(encoded.toByteArray()), unknown))
     require(decoded == listOf(effect), "A drawn effect round-trips; an unknown kind is skipped, as on iPhone")
-    val halation = String(JSON.write(ProjectCoding.encode(VideoEffectSettings(kind = VideoEffectID.halation))))
+    val halation = String(JSON.write(ProjectCoding.encode(VideoEffectSettings(kind = VideoEffectID.chromaKey))))
     requireFailure<ProjectError.UnsupportedTools>("An effect this build cannot draw is refused by name") { ProjectCoding.videoEffects(listOf(JSON.parse(halation.toByteArray()))) }
-    try { ProjectCoding.videoEffects(listOf(JSON.parse(halation.toByteArray()))) } catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains("Halation"), "The refusal names the effect") }
+    try { ProjectCoding.videoEffects(listOf(JSON.parse(halation.toByteArray()))) } catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains("Chroma"), "The refusal names the effect") }
     effectRenderingTests()
     effectEditingTests()
     println("Video effects: ok")
@@ -89,6 +89,17 @@ fun effectRenderingTests() {
     val mean = (0 until lattice.size / 4).sumOf { (lattice[it * 4 + 3].toInt() and 255).toDouble() } / (lattice.size / 4)
     require(abs(mean - 127.5) < 1.0, "Grain is centred ($mean)")
     require(VideoEffectRendering.latticeOffset(1) != VideoEffectRendering.latticeOffset(2), "Each frame reads the grain elsewhere")
+    // The iPhone shader's hashes on unsigned 32-bit arithmetic (values from an independent computation).
+    require(VideoEffectRendering.hash32(123456).toLong() and 0xffffffffL == 3173061056L, "hash32")
+    require(VideoEffectRendering.random01(4, 7, 3) == 0.7740641832351685 && VideoEffectRendering.random01(0, 12, 3) == 0.8658458590507507, "random01")
+    for (sigma in listOf(0.3f, 1f, 2.5f, 7f, 15.9f)) {
+        val w = VideoEffectRendering.gaussianWeights(sigma)
+        val sum = w[0] + 2 * (0 until w[1].toInt()).sumOf { w[3 + it * 2].toDouble() }
+        require(abs(sum - 1) < 1e-5 && w[1] <= 24, "Gaussian weights sum to one ($sigma: $sum)")
+    }
+    val weave = VideoEffectRendering.frameValues(VideoEffectRendering.uniforms(VideoEffectSettings(kind = VideoEffectID.sixteenMM), 1.0, 30.0))
+    val still = VideoEffectRendering.frameValues(VideoEffectRendering.uniforms(VideoEffectSettings(kind = VideoEffectID.sixteenMM).setting("weave", EffectValue.Number(0.0)), 1.0, 30.0))
+    require((weave[0] != 0f || weave[1] != 0f) && still[0] == 0f && still[1] == 0f && weave[2] == 1.006f, "Gate weave moves the picture by its amount")
 }
 
 /// The effects editor's changes: add, enable, controls with and without animation, keyframes, removal.

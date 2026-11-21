@@ -14,7 +14,8 @@ object VideoEffectRendering {
     val drawn: Set<VideoEffectID> = setOf(
         VideoEffectID.colorCorrection, VideoEffectID.silentTint, VideoEffectID.threeStrip, VideoEffectID.bleachBypass,
         VideoEffectID.dayForNight, VideoEffectID.noir, VideoEffectID.expressionism, VideoEffectID.rgbOffset,
-        VideoEffectID.negativeStrobe, VideoEffectID.kaleidoscope)
+        VideoEffectID.negativeStrobe, VideoEffectID.kaleidoscope,
+        VideoEffectID.halation, VideoEffectID.widescreen, VideoEffectID.sixteenMM, VideoEffectID.superEight)
 
     /// The iPhone app's pixel order: families in this order, each in the order
     /// VideoEffectSettings.ordered gives.
@@ -89,5 +90,71 @@ object VideoEffectRendering {
         var n = frame * -0x61c88647 + 0x3c6ef372
         n = n xor (n ushr 16); n *= 0x7feb352d; n = n xor (n ushr 15); n *= -0x7b3597b5; n = n xor (n ushr 16)
         return Pair(n and (latticeSize - 1), (n ushr 10) and (latticeSize - 1))
+    }
+
+    /// The iPhone app's shader hashes (VideoEffects.metal hash32, random01,
+    /// noise) on 32-bit unsigned arithmetic. Values that are the same for a
+    /// whole frame are computed here and handed to the shader.
+    fun hash32(value: Int): Int {
+        var n = value
+        n = n xor (n ushr 16); n *= 0x7feb352d; n = n xor (n ushr 15); n *= 0x846ca68b.toInt(); n = n xor (n ushr 16)
+        return n
+    }
+    fun random01(x: Int, y: Int, z: Int): Double =
+        (hash32(x xor hash32(y + 0x9e3779b9.toInt()) xor hash32(z + 0x85ebca6b.toInt())) ushr 8).toDouble() / 16777216.0
+    fun noise(px: Double, py: Double, frame: Int, seed: Int): Double {
+        val cx = floor(px).toInt(); val cy = floor(py).toInt()
+        var fx = px - floor(px); var fy = py - floor(py)
+        fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy)
+        val z = frame + seed
+        val a = random01(cx, cy, z); val b = random01(cx + 1, cy, z); val c = random01(cx, cy + 1, z); val d = random01(cx + 1, cy + 1, z)
+        val top = a + (b - a) * fx; val bottom = c + (d - c) * fx
+        return (top + (bottom - top) * fy) * 2 - 1
+    }
+
+    /// Per-frame values of one pass (eight floats, two vec4 in the shader):
+    /// camera movement in 1080p pixels (x, y), picture scale, and a per-effect
+    /// value; then a second per-effect group. See VideoEffectShader for their use.
+    fun frameValues(u: Uniforms): FloatArray {
+        val v = FloatArray(8); v[2] = 1f
+        fun p(i: Int) = u.p[i * 4].toDouble()
+        when (u.kind) {
+            14 -> { // Undercranking: a new weave position and exposure per cranked frame.
+                val frame = floor(u.time * p(0)).toInt()
+                v[0] = (noise(frame * .18, 3.0, 0, 7) * 2 * p(3)).toFloat(); v[1] = (noise(frame * .18, 8.0, 0, 11) * 3 * p(3)).toFloat(); v[2] = 1.01f
+                v[3] = (1 + (random01(4, 7, frame) * 2 - 1) * .08 * p(2)).toFloat()
+            }
+            16 -> {
+                v[0] = (noise(u.frame * .13, 2.0, 0, 7) * p(3) * 2).toFloat(); v[1] = (noise(u.frame * .13, 9.0, 0, 3) * p(3) * 2).toFloat(); v[2] = 1.006f
+            }
+            17 -> { // Super 8: weave, and a light leak from one side once in a while.
+                v[0] = (noise(u.frame * .16, 2.0, 0, 5) * 2 * p(2)).toFloat(); v[1] = (noise(u.frame * .16, 9.0, 0, 17) * 3 * p(2)).toFloat(); v[2] = 1.012f
+                val cycle = floor(u.time / 6.0); val phase = u.time - cycle * 6
+                val begin = random01(cycle.toInt(), 12, 3) * 4.5; val length = .5 + random01(cycle.toInt(), 4, 6)
+                v[3] = (if (phase >= begin && phase < begin + length) Math.sin((phase - begin) / length * Math.PI) else 0.0).toFloat()
+                v[4] = if (random01(cycle.toInt(), 7, 11) > .5) 1f else 0f
+            }
+        }
+        return v
+    }
+
+    /// MetalEffectRenderer.gaussian's normalised weights: [centre, pair count,
+    /// then 24 pairs of (offset in pixels, weight)], adjacent taps paired so
+    /// that one bilinear read takes both.
+    fun gaussianWeights(sigmaIn: Float): FloatArray {
+        val sigma = maxOf(0.25f, sigmaIn)
+        val radius = minOf(48, Math.ceil(sigma * 3.0).toInt())
+        val raw = FloatArray(radius + 1) { Math.exp(-(it * it).toDouble() / (2.0 * sigma * sigma)).toFloat() }
+        val total = raw[0] + 2 * raw.drop(1).sum()
+        val values = FloatArray(2 + 48)
+        values[0] = raw[0] / total; values[1] = ((radius + 1) / 2).toFloat()
+        var i = 1
+        while (i <= radius) {
+            val a = raw[i]; val b = if (i + 1 <= radius) raw[i + 1] else 0f
+            val pair = (i + 1) / 2 - 1
+            values[2 + pair * 2] = i + b / (a + b); values[3 + pair * 2] = (a + b) / total
+            i += 2
+        }
+        return values
     }
 }
