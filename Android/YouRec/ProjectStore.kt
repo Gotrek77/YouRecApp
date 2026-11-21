@@ -360,6 +360,25 @@ class ProjectStore(private val context: Context) {
     }
     /// Read a picked .cube file, check it and keep it in the project folder.
     /// The completion gets the LUT, or the reason it was refused.
+    /// A picture or movie for an effect (a background), copied into the project as it is.
+    fun importEffectMedia(uri: Uri, into: UUID, video: Boolean, completion: (String?, String?) -> Unit) {
+        val project = projects.firstOrNull { it.id == into } ?: return completion(null, null)
+        val original = (displayName(uri) ?: "").substringAfterLast('.', "").lowercase()
+        val ext = if (video) (original.takeIf { it in setOf("mov", "mp4", "m4v") } ?: "mp4") else (original.takeIf { it in setOf("png", "jpg", "jpeg", "webp", "heic", "heif") } ?: "jpg")
+        val target = File(folder(project), "effect-" + UUID.randomUUID().text + "." + ext)
+        worker.execute {
+            var failure: String? = null
+            val partial = File(target.parentFile, "." + target.name + ".importing")
+            try {
+                (context.contentResolver.openInputStream(uri) ?: throw java.io.IOException("The file could not be opened.")).use { input ->
+                    java.io.FileOutputStream(partial).use { output -> input.copyTo(output, 1 shl 16); output.fd.sync() }
+                }
+                if (video) MediaFiles.duration(partial, true)
+                RecoveryFile.move(partial, target)
+            } catch (e: Exception) { partial.delete(); failure = "This file could not be used as a background. " + (e.message ?: "") }
+            main.post { completion(if (failure == null) target.name else null, failure) }
+        }
+    }
     fun importLUT(uri: Uri, into: UUID, completion: (ImportedLUT?, String?) -> Unit) {
         val project = projects.firstOrNull { it.id == into } ?: return completion(null, null)
         val name = displayName(uri) ?: "Imported LUT"

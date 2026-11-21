@@ -206,7 +206,9 @@ class Project(var title: String) {
         set(value) { snapshots = value.map { EditSnapshot(it, 0) }; captureLedger = emptyList() }
     val edit: EditState get() = materialized(snapshots[historyCursor])
     /// LUT files any retained edit refers to: part of the project, like its recordings.
-    val effectFiles: List<String> get() = snapshots.flatMap { snapshot -> snapshot.state.clips.mapNotNull { it.color?.imported?.filename } }.distinct().sorted()
+    /// LUTs, and the files video effects use (backgrounds, recorded analysis), as the iPhone app's effectFiles.
+    val effectFiles: List<String> get() = (snapshots.flatMap { snapshot -> snapshot.state.clips.flatMap { clip -> listOfNotNull(clip.color?.imported?.filename) + (clip.videoEffects ?: emptyList()).flatMap { it.mediaFiles } } } +
+        sources.flatMap { source -> (source.videoEffects ?: emptyList()).flatMap { it.mediaFiles } }).distinct().sorted()
     /// Pictures placed over the video in any retained edit.
     val imageFiles: List<String> get() = snapshots.flatMap { snapshot -> snapshot.state.clips.flatMap { clip -> clip.images?.map { it.filename } ?: emptyList() } }.distinct().sorted()
     val mediaFiles: List<String> get() = sources.map { it.filename } + (imageFiles + effectFiles).distinct().sorted()

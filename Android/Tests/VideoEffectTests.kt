@@ -41,9 +41,9 @@ fun videoEffectTests() {
     val unknown = mapOf("kind" to "futureEffect", "id" to UUID.randomUUID().toString())
     val decoded = ProjectCoding.videoEffects(listOf(JSON.parse(encoded.toByteArray()), unknown))
     require(decoded == listOf(effect), "A drawn effect round-trips; an unknown kind is skipped, as on iPhone")
-    val halation = String(JSON.write(ProjectCoding.encode(VideoEffectSettings(kind = VideoEffectID.chromaKey))))
+    val halation = String(JSON.write(ProjectCoding.encode(VideoEffectSettings(kind = VideoEffectID.dollyZoom))))
     requireFailure<ProjectError.UnsupportedTools>("An effect this build cannot draw is refused by name") { ProjectCoding.videoEffects(listOf(JSON.parse(halation.toByteArray()))) }
-    try { ProjectCoding.videoEffects(listOf(JSON.parse(halation.toByteArray()))) } catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains("Chroma"), "The refusal names the effect") }
+    try { ProjectCoding.videoEffects(listOf(JSON.parse(halation.toByteArray()))) } catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains("Dolly"), "The refusal names the effect") }
     effectRenderingTests()
     effectEditingTests()
     effectTimingTests()
@@ -276,5 +276,9 @@ fun effectMatteTests() {
     val flat = FloatArray(576) { 0.4f }; val other = FloatArray(576) { 0.9f }; val noisy = FloatArray(576) { if (it % 2 == 0) 0.42f else 0.38f }
     require(VideoEffectTemporalWindow.priors(listOf(flat, noisy, other), VideoEffectMatteKind.Isolation) == listOf(1.0 / 3, 0.0), "A small change eases, a scene cut does not")
     val subject = VideoEffectSettings(kind = VideoEffectID.colorIsolation).setting("mode", EffectValue.Choice("The subject"))
-    require(VideoEffectRendering.refusal(subject)!!.contains("The subject") && VideoEffectRendering.refusal(VideoEffectSettings(kind = VideoEffectID.colorIsolation)) == null, "Colour isolation by colour is drawn, by subject refused by name")
+    require(VideoEffectRendering.refusal(subject) == null && VideoEffectRendering.refusal(VideoEffectSettings(kind = VideoEffectID.colorIsolation)) == null, "Colour isolation by colour and by subject are drawn")
+    val sound = VideoEffectSettings(kind = VideoEffectID.autoBackground).setting("backgroundAudio", EffectValue.Toggle(true))
+    require(VideoEffectRendering.refusal(sound)!!.contains("Background sound") && VideoEffectRendering.refusal(VideoEffectSettings(kind = VideoEffectID.chromaKey)) == null, "A background's own sound is refused by name")
+    val plate = VideoEffectSettings(kind = VideoEffectID.chromaKey).setting("cleanPlate", EffectValue.Media("plate.png"))
+    require(VideoEffectRendering.refusal(plate)!!.contains("Clean plate"), "A clean plate is refused by name")
 }

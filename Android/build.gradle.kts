@@ -50,6 +50,7 @@ dependencies {
 // build/neural-models); without them the build lacks those two filters.
 val neuralAssets by tasks.registering(Copy::class) {
     from("ThirdParty/DeepFilterNet3") { include("*.onnx"); into("DeepFilterNet3") }
+    from("ThirdParty/MediaPipe") { include("*.onnx"); into("MediaPipe") }
     from("../ThirdParty/DeepFilterNet3/DeepFilterNet3-DSP.json") { into("DeepFilterNet3") }
     from(layout.buildDirectory.dir("neural-models")) { include("LavaSRv2.onnx"); into("LavaSR") }
     from(layout.buildDirectory.dir("neural-models")) { include("VoiceFixer.onnx"); into("VoiceFixer") }

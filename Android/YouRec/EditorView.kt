@@ -1395,6 +1395,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                     }
                     is EffectParameterKind.Toggle -> {
                         val on = (value as? EffectValue.Toggle)?.value ?: false
+                        if (VideoEffectRendering.unavailableToggle(parameter.id) && !on) continue
                         listed(Design.row(context, choice(parameter.title + if (on) ": on" else ": off", on, parameter.title) { set(EffectValue.Toggle(!on), "$name: " + parameter.title) }, *listOfNotNull(diamond).toTypedArray()))
                     }
                     is EffectParameterKind.Stepper -> {
@@ -1419,7 +1420,29 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                             set(EffectValue.Color(rgb), "$name: " + parameter.title) }.apply { contentDescription = parameter.title + " " + EffectHues.name(rgb) + if (chosen) ", selected" else "" }
                         listed(choices(*((listOfNotNull(now?.takeIf { it !in swatches }).map { swatch(it, true) } + swatches.map { swatch(it, it == now) }) + listOfNotNull(diamond)).toTypedArray()))
                     }
-                    is EffectParameterKind.Media -> listed(Design.label(context, parameter.title + " is kept as set on iPhone.", 12f, Design.secondary))
+                    is EffectParameterKind.Media -> {
+                        if (parameter.id == "cleanPlate") continue
+                        // The background's picture or movie, copied into the project.
+                        val file = (value as? EffectValue.Media)?.file
+                        fun choose(video: Boolean) {
+                            val id = projectID ?: return
+                            navigation.pickMedia(if (video) "video/*" else "image/*") { uri ->
+                                if (uri == null) return@pickMedia
+                                say("Adding background…")
+                                store.importEffectMedia(uri, id, video) { name, failure ->
+                                    if (name == null) { say(failure ?: "This file could not be used."); return@importEffectMedia }
+                                    val now = this@EditorView.project ?: return@importEffectMedia
+                                    val edit = TimelineEditing.settingVideoEffects(selection(now.edit), now.edit, editor.playhead) { c, src ->
+                                        VideoEffectEditing.setting(VideoEffectEditing.setting(c, kind, "background", EffectValue.Choice(if (video) "Video" else "Image"), src, false), kind, parameter.id, EffectValue.Media(name), src, false) }
+                                    if (edit != now.edit) commit(edit, "Background media")
+                                    openEffects()
+                                }
+                            }
+                        }
+                        listed(Design.row(context, Design.label(context, parameter.title + if (file != null) " · set" else "", 13f).also { it.layoutParams = Design.weighted() },
+                            Design.button(context, "Picture…", Design.text, Design.raised, 13f) { choose(false) }.apply { contentDescription = "Choose a background picture" },
+                            Design.button(context, "Movie…", Design.text, Design.raised, 13f) { choose(true) }.apply { contentDescription = "Choose a background movie" }))
+                    }
                 }
             }
         }

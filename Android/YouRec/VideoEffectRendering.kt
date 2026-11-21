@@ -16,20 +16,25 @@ object VideoEffectRendering {
         VideoEffectID.dayForNight, VideoEffectID.noir, VideoEffectID.expressionism, VideoEffectID.rgbOffset,
         VideoEffectID.negativeStrobe, VideoEffectID.kaleidoscope,
         VideoEffectID.halation, VideoEffectID.widescreen, VideoEffectID.sixteenMM, VideoEffectID.superEight,
-        VideoEffectID.undercranking, VideoEffectID.stepPrinting, VideoEffectID.freezeFrame, VideoEffectID.crashZoom, VideoEffectID.colorIsolation)
+        VideoEffectID.undercranking, VideoEffectID.stepPrinting, VideoEffectID.freezeFrame, VideoEffectID.crashZoom, VideoEffectID.colorIsolation, VideoEffectID.quantization,
+        VideoEffectID.chromaKey, VideoEffectID.autoBackground)
 
     /// Choices of drawn effects this build cannot draw yet (they need a person mask).
     fun unavailable(kind: VideoEffectID, parameter: String, choice: String): Boolean =
-        kind == VideoEffectID.colorIsolation && parameter == "mode" && choice == "The subject" ||
         // A hold's sound is silent here; carrying the take's sound through it is not ported yet.
         kind == VideoEffectID.freezeFrame && parameter == "audio" && choice != "Cut"
+    /// Switches of drawn effects not ported yet: a background video's own sound.
+    fun unavailableToggle(parameter: String) = parameter == "backgroundAudio"
     /// Why a project's effect cannot be drawn here, by name; null when it can.
     fun refusal(effect: VideoEffectSettings): String? {
         if (effect.kind !in drawn) return "Video effects: " + effect.kind.descriptor.displayName
         // Analysis the iPhone app recorded live with the take is not read here yet.
         if (effect.analysisFile != null || effect.analysisDataFile != null) return "Video effects: ${effect.kind.descriptor.displayName} (analysis recorded live)"
-        for (p in effect.parameters) for (v in listOf(p.value) + p.keyframes.map { it.value })
+        for (p in effect.parameters) for (v in listOf(p.value) + p.keyframes.map { it.value }) {
             if (v is EffectValue.Choice && unavailable(effect.kind, p.id, v.value)) return "Video effects: ${effect.kind.descriptor.displayName} (${p.title}: ${v.value})"
+            if (v is EffectValue.Toggle && v.value && unavailableToggle(p.id) || v is EffectValue.Media && v.file != null && p.id == "cleanPlate")
+                return "Video effects: ${effect.kind.descriptor.displayName} (${p.title})"
+        }
         return null
     }
 

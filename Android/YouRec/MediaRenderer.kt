@@ -238,7 +238,8 @@ class RenderSources(private val project: Project, private val folder: File, priv
         val picture = shader.picture(w, h)
         program.draw(reader.texture, reader.matrix, clip.pictureTransform(source, canvas), source, canvas, grade(clip.color))
         val prefix = VideoEffectRendering.active(clip, time, fps).takeWhile { it.id != effect.id }
-        val result = shader.apply(prefix, time, fps, picture)
+        val placed = clip.pictureTransform(source, canvas)
+        val result = shader.apply(prefix, time, fps, picture, person = { personMask(layer.picture.source, reader, time, placed, source, program, shader, w, h) })
         val palette = EffectPaletteAnalysis.analyze(shader.samples(result), count, job.previous, job.frames.lastOrNull()?.let { time - it.time } ?: 0.2,
             VideoEffectRendering.frameIndex(time, 30.0).toLong())
         shader.free(result)
@@ -318,8 +319,83 @@ class RenderSources(private val project: Project, private val folder: File, priv
         program.draw(reader.texture, reader.matrix, clip.pictureTransform(source, frame), source, frame, grade(clip.color))
         val upstream = VideoEffectRendering.active(clip, time, fps).let { all -> all.take(all.indexOfFirst { it.id == effect.id } + 1) }
         if (upstream.none { it.id == effect.id }) { shader.free(picture); return null }
-        val raw = shader.apply(upstream, time, fps, picture, history = { e, own -> matteHistory(layer, e, time, own, shader, program, width, height, fps) }, rawOnly = effect.id)
+        val placed = clip.pictureTransform(source, frame)
+        val raw = shader.apply(upstream, time, fps, picture, history = { e, own -> matteHistory(layer, e, time, own, shader, program, width, height, fps) }, rawOnly = effect.id,
+            person = { personMask(layer.picture.source, reader, time, placed, source, program, shader, width, height) })
         return VideoEffectShader.Matte(raw, shader.guide(raw))
+    }
+    /// Person masks already found, by source file and frame time (256×256, top row first).
+    private val personMasks = object : LinkedHashMap<Pair<String, Long>, FloatArray>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<String, Long>, FloatArray>?) = size > 24
+    }
+    /// The person in the frame `reader` holds, placed on a w×h canvas by `placed`.
+    private fun personMask(source: UUID, reader: FrameReader, time: Double, placed: Affine, sourceSize: CanvasSize, program: FrameProgram,
+                           shader: VideoEffectShader, w: Int, h: Int): VideoEffectShader.Target? {
+        val file = file(source) ?: return null
+        val key = (file.path + "|" + file.length()) to Math.round(time * 1_000_000)
+        val values = personMasks[key] ?: run {
+            // The upright source frame, whole, at the model's 256×256.
+            val n = PersonSegmenter.size
+            val small = shader.picture(n, n)
+            program.draw(reader.texture, reader.matrix, Affine.scale(n / sourceSize.width, n / sourceSize.height), sourceSize, CanvasSize(n.toDouble(), n.toDouble()))
+            val rgb = shader.pixels(small); shader.free(small)
+            PersonSegmenter.mask(rgb)?.also { personMasks[key] = it }
+        } ?: return null
+        val uploaded = shader.upload(values, PersonSegmenter.size)
+        val placedMask = shader.place(uploaded, placed, sourceSize, w, h)
+        shader.free(uploaded)
+        return placedMask
+    }
+    /// Effect media (Background and Chroma Key's Image or Video), in the project folder.
+    private val mediaImages = LinkedHashMap<String, Pair<Int, CanvasSize>>()
+    private val mediaReaders = LinkedHashMap<String, FrameReader>()
+    private fun effectMedia(effect: VideoEffectSettings, time: Double, shader: VideoEffectShader, program: FrameProgram, w: Int, h: Int): VideoEffectShader.Target? {
+        val name = (effect.value("media", time) as? EffectValue.Media)?.file ?: return null
+        val file = File(folder, name); if (!file.exists()) { if (strict) throw ProjectError.MissingMedia(); return null }
+        val canvas = CanvasSize(w.toDouble(), h.toDouble())
+        fun placement(size: CanvasSize): Affine {
+            val fill = effect.choice("fit", time) != "Fit"
+            val scale = (if (fill) maxOf(w / size.width, h / size.height) else minOf(w / size.width, h / size.height)) * effect.number("backgroundZoom", time)
+            return Affine(a = scale, d = scale, tx = (w - size.width * scale) * effect.number("backgroundX", time), ty = (h - size.height * scale) * effect.number("backgroundY", time))
+        }
+        if (effect.choice("background", time) == "Image") {
+            val entry = mediaImages[file.path] ?: run {
+                val bitmap = PhotoClip.decodeFile(file, 4096) ?: return null
+                val ids = IntArray(1); android.opengl.GLES20.glGenTextures(1, ids, 0)
+                android.opengl.GLES20.glBindTexture(android.opengl.GLES20.GL_TEXTURE_2D, ids[0])
+                for ((k, v) in listOf(android.opengl.GLES20.GL_TEXTURE_MIN_FILTER to android.opengl.GLES20.GL_LINEAR, android.opengl.GLES20.GL_TEXTURE_MAG_FILTER to android.opengl.GLES20.GL_LINEAR,
+                    android.opengl.GLES20.GL_TEXTURE_WRAP_S to android.opengl.GLES20.GL_CLAMP_TO_EDGE, android.opengl.GLES20.GL_TEXTURE_WRAP_T to android.opengl.GLES20.GL_CLAMP_TO_EDGE))
+                    android.opengl.GLES20.glTexParameteri(android.opengl.GLES20.GL_TEXTURE_2D, k, v)
+                android.opengl.GLUtils.texImage2D(android.opengl.GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+                val size = CanvasSize(bitmap.width.toDouble(), bitmap.height.toDouble()); bitmap.recycle()
+                while (mediaImages.size >= 4) { val oldest = mediaImages.keys.first(); mediaImages.remove(oldest)?.let { android.opengl.GLES20.glDeleteTextures(1, intArrayOf(it.first), 0) } }
+                (ids[0] to size).also { mediaImages[file.path] = it }
+            }
+            return shader.placed(entry.first, entry.second, placement(entry.second), w, h, topFirst = true)
+        }
+        // A video loops, its end dissolving into its start (EffectBackgroundLoop).
+        fun reader(slot: String): FrameReader? = mediaReaders["${file.path}|$slot"] ?: try {
+            while (mediaReaders.size >= 4) { val oldest = mediaReaders.keys.first(); mediaReaders.remove(oldest)?.release() }
+            FrameReader(file).also { mediaReaders["${file.path}|$slot"] = it }
+        } catch (e: Exception) { if (strict) throw ProjectError.InvalidMedia(); null }
+        val head = reader("head") ?: return null
+        val duration = MediaFiles.duration(file, true)
+        val overlap = minOf(0.2, duration / 2); val period = duration - overlap
+        val t = maxOf(0.0, time - effect.start); val cycle = Math.floor(t / period); val phase = t - cycle * period
+        fun frame(r: FrameReader, at: Double): VideoEffectShader.Target? {
+            if (!r.show(at)) return null
+            val size = CanvasSize(r.video.displayWidth.toDouble(), r.video.displayHeight.toDouble())
+            val target = shader.target(w, h)
+            program.draw(r.texture, r.matrix, placement(size), size, canvas)
+            return target
+        }
+        val incoming = frame(head, phase) ?: return null
+        if (cycle > 0 && phase < overlap) {
+            val tail = reader("tail") ?: return incoming
+            val outgoing = frame(tail, period + phase) ?: return incoming
+            return shader.blend(outgoing, incoming, minOf(1.0, phase / overlap).toFloat())
+        }
+        return incoming
     }
     private val clocks = HashMap<TimelineClip, VideoEffectSequenceClock>()
     private val blocks = HashMap<Pair<UUID, Int>, Pair<Any, VideoEffectShader.Target>>()
@@ -363,7 +439,9 @@ class RenderSources(private val project: Project, private val folder: File, priv
                 val px = subject.centerX * source.width; val py = subject.centerY * source.height
                 targets[effect.id] = (placed.x(px, py) / frame.width).coerceIn(0.0, 1.0) to (placed.y(px, py) / frame.height).coerceIn(0.0, 1.0)
             }
-            return shader.apply(effects, effectTime, fps, picture, frameTime, hold, targets, history = { effect, own -> matteHistory(layer, effect, selected, own, shader, program, width, height, fps) }, palettes = { effect, upstream ->
+            return shader.apply(effects, effectTime, fps, picture, frameTime, hold, targets, history = { effect, own -> matteHistory(layer, effect, selected, own, shader, program, width, height, fps) },
+                person = { personMask(layer.picture.source, reader, selected, placed, source, program, shader, width, height) },
+                media = { effect, w, h -> effectMedia(effect, effectTime, shader, program, w, h) }, palettes = { effect, upstream ->
                 // The analysed palette where the track has reached; until then, this frame's own (as the iPhone app while analysing).
                 val analysed = paletteJobs[paletteKey(layer, effect, width, height)]?.track(effectTime)
                     ?: EffectPaletteAnalysis.analyze(shader.samples(upstream), effect.number("colors", effectTime).toInt(), seed = VideoEffectRendering.frameIndex(effectTime, 30.0).toLong())
@@ -458,7 +536,9 @@ class RenderSources(private val project: Project, private val folder: File, priv
         progress(1.0)
     }
     fun releaseFrames() { for (reader in frames.values) try { reader.release() } catch (e: Exception) { }; frames.clear(); failed.clear(); titles.release(); pictures.release(); releaseLooks()
-        compositor?.releaseProgram(); compositor = null; effectShader?.release(); effectShader = null; blocks.clear(); clocks.clear(); mattes.clear(); paletteJobs.clear() }
+        compositor?.releaseProgram(); compositor = null; effectShader?.release(); effectShader = null; blocks.clear(); clocks.clear(); mattes.clear(); paletteJobs.clear()
+        for (reader in mediaReaders.values) try { reader.release() } catch (e: Exception) { }; mediaReaders.clear()
+        for (entry in mediaImages.values) android.opengl.GLES20.glDeleteTextures(1, intArrayOf(entry.first), 0); mediaImages.clear() }
     fun releaseSound() { for (reader in sound.values) reader.release(); sound.clear()
         synchronized(processedSound) { for (reader in processedSound.values) reader.close(); processedSound.clear() } }
 

@@ -145,7 +145,7 @@ def shoulder(v, maximum):
     return np.where(v <= .8, v, .8 + .2 * a * t / (1 + (a - 1) * t))
 
 def color_correction(c, p):
-    exposure, contrast, shadows, highlights, blacks, whites, pivot, temperature, tint, saturation, vibrance, hue = p
+    exposure, contrast, shadows, highlights, blacks, whites, pivot, temperature, tint, saturation, vibrance, hue = p[:12]
     gains = np.exp2(np.array([.45 * temperature + .2 * tint, -.2 * tint, -.45 * temperature + .2 * tint]))
     c = c * gains / (gains @ LUMA) * 2 ** exposure
     before = luma(c); v = srgb(np.maximum(before, 0))
@@ -402,6 +402,60 @@ def main():
                           "uniforms": [{"name": "size", "type": "2f", "value": [W, H]}, {"name": "p", "type": "4fv", "value": iso_p.flatten().tolist()},
                                        {"name": "intensity", "type": "1f", "value": .8}, {"name": "useMask", "type": "1f", "value": 0}], "output": out})
     checks.append(("Isolation hue", out, W, H, lambda: np.round(reference(4, iso_p, .8, image.astype(float), {}) * 255), False))
+    # Background and Chroma Key: straight colour unmixed, despill, match, wrap, views.
+    def keyed_reference(kind, values, view=0):
+        p = params(values); x = p[:, 0]
+        c = lin(image / 255.0); a = smooth(W, H, 20)[..., 0] / 255.0; bg = lin(auxiliary["background"] / 255.0)
+        uv = coordinates(); bgs = sample(auxiliary["background"], uv)
+        screen = lin(np.array([.1, .8, .2])) if kind == 18 else sample(auxiliary["aux"], uv)
+        straight = np.clip((c - (1 - a[..., None]) * screen) / np.maximum(a, 1e-4)[..., None], 0, 1)
+        if kind == 18:
+            blue = x[1] > 1.5 or (x[1] < .5 and screen[2] > screen[1]); ch = 2 if blue else 1
+            limit = (straight[..., 0] + straight[..., 1 if blue else 2]) * .525; before = straight[..., ch].copy()
+            straight[..., ch] = np.minimum(before, mix(before, limit, x[9])); straight = straight + ((before - straight[..., ch])[..., None]) * np.array([.3, .6, .1]) * .5
+            wrap, v = x[10], x[13]
+        else: wrap, v = x[2], x[4]
+        o = straight * a[..., None] + bgs * (1 - a[..., None]) + sample(auxiliary["extra"], uv) * (a * (1 - a) * 4 * wrap * .25)[..., None]
+        if v == 1: o = np.repeat(a[..., None], 3, -1)
+        if v == 2: o = c
+        return np.round(srgb(np.clip(o, 0, 1)) * 255)
+    for name, kind, values, in [("Chroma key", 18, [0, 1, 1, 1, .5, .05, .9, .3, 0, .8, .4] + [0] * 15), ("Chroma key matte view", 18, [0] * 13 + [1] + [0] * 12),
+                                ("Background replace", 19, [.3, 0, .5, 12, 0])]:
+        p = params(values)
+        if kind == 18: p[0, :3] = lin(np.array([.1, .8, .2]))
+        out = os.path.join(WORK, name.replace(" ", "-") + ".rgba")
+        textures = [texture("input", "image"), texture("mask"), texture("background"), texture("extra", "wrapImage"), texture("aux")]
+        spec["cases"].append({"name": name, "fragment": "#define KIND %d\n" % kind + fragment, "width": W, "height": H, "textures": textures,
+                              "uniforms": [{"name": "size", "type": "2f", "value": [W, H]}, {"name": "p", "type": "4fv", "value": p.flatten().tolist()},
+                                           {"name": "intensity", "type": "1f", "value": 1}, {"name": "screenColor", "type": "3f", "value": p[0, :3].tolist()},
+                                           {"name": "matchSubject", "type": "4f", "value": [0, 0, 0, 0]}], "output": out})
+        checks.append((name, out, W, H, lambda kind=kind, values=values: keyed_reference(kind, values, params(values)[13 if kind == 18 else 4, 0]), False))
+    # Authored backgrounds and the mask passes.
+    GENERATE, MORPH, PLACE, EXPOSE = HEADER + source("GENERATE"), HEADER + source("MORPH"), HEADER + source("PLACE"), HEADER + source("EXPOSE")
+    for name, mode in [("Studio", 1), ("Window", 2)]:
+        out = os.path.join(WORK, name + ".rgba")
+        spec["cases"].append({"name": name, "fragment": GENERATE, "width": W, "height": H, "textures": [],
+                              "uniforms": [{"name": "size", "type": "2f", "value": [W, H]}, {"name": "mode", "type": "1f", "value": mode}, {"name": "color", "type": "3f", "value": [0, 0, 0]}], "output": out})
+        def generated(mode=mode):
+            x, y = grid(W, H); t = np.clip(np.hypot(x + .5 - .3 * W, y + .5 - .3 * H) / (W * .8), 0, 1)[..., None]
+            c = mix(lin(np.array([.65, .58, .48])), lin(np.array([.08, .10, .14])), t)
+            if mode == 2:
+                u, v = (x + .5) / W, (y + .5) / H; bar = (v > .17) & (v < .82) & (((u > .64) & (u < .74)) | ((u > .80) & (u < .90)))
+                c = np.where(bar[..., None], lin(np.array([.62, .73, .83])), c)
+            return np.round(srgb(np.clip(c, 0, 1)) * 255)
+        checks.append((name, out, W, H, generated, False))
+    for name, radius, direction in [("Grow", 3.0, (1, 0)), ("Shrink", -2.0, (0, 1))]:
+        out = os.path.join(WORK, name + ".rgba")
+        spec["cases"].append({"name": name, "fragment": MORPH, "width": W, "height": H, "textures": [texture("mask", "image")],
+                              "uniforms": [{"name": "size", "type": "2f", "value": [W, H]}, {"name": "morph", "type": "4f", "value": [radius, direction[0], direction[1], 0]}], "output": out})
+        def morphed(radius=radius, direction=direction):
+            m = smooth(W, H, 20).astype(float); x, y = grid(W, H); uv = np.stack([(x + .5) / W, (y + .5) / H], -1)
+            d = np.array(direction) / np.array([W, H]); a = sample(m, uv)[..., 0]
+            f = np.maximum if radius >= 0 else np.minimum
+            for i in range(-int(abs(radius)), int(abs(radius)) + 1): a = f(a, sample(m, uv + d * i)[..., 0])
+            for k in (-1, 1): a = f(a, sample(m, uv + d * abs(radius) * k)[..., 0])
+            return np.round(np.repeat(srgb(a)[..., None], 3, -1) * 255)
+        checks.append((name, out, W, H, morphed, False))
     BILATERAL = HEADER + source("BILATERAL")
     for name, sigma, direction in [("Bilateral horizontal 1.5", 1.5, (1, 0)), ("Bilateral vertical 4", 4.0, (0, 1))]:
         out = os.path.join(WORK, name.replace(" ", "-") + ".rgba")

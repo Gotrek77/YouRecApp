@@ -38,6 +38,7 @@ const fs = require('fs');
         if (at === null) continue;
         if (u.type === '1f') gl.uniform1f(at, u.value);
         else if (u.type === '2f') gl.uniform2f(at, u.value[0], u.value[1]);
+        else if (u.type === '3f') gl.uniform3f(at, u.value[0], u.value[1], u.value[2]);
         else if (u.type === '4f') gl.uniform4f(at, u.value[0], u.value[1], u.value[2], u.value[3]);
         else if (u.type === '1fv') gl.uniform1fv(at, new Float32Array(u.value));
         else if (u.type === '2fv') gl.uniform2fv(at, new Float32Array(u.value));

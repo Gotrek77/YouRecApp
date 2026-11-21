@@ -24,15 +24,18 @@ object PhotoClip {
     private const val longest = 3840
 
     /// The picture upright, at most 3840 pixels on its longer side.
-    fun decode(context: Context, uri: Uri, longest: Int = PhotoClip.longest): Bitmap {
+    fun decode(context: Context, uri: Uri, longest: Int = PhotoClip.longest): Bitmap = decode({ context.contentResolver.openInputStream(uri) }, longest)
+    /// A picture file of the project (an effect's background), upright; null if unreadable.
+    fun decodeFile(file: java.io.File, longest: Int = PhotoClip.longest): Bitmap? = try { decode({ java.io.FileInputStream(file) }, longest) } catch (e: Exception) { null }
+    private fun decode(open: () -> java.io.InputStream?, longest: Int): Bitmap {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        open()?.use { BitmapFactory.decodeStream(it, null, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw ProjectError.InvalidMedia()
         var sample = 1
         while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= longest) sample *= 2
-        val decoded = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) }
+        val decoded = open()?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) }
             ?: throw ProjectError.InvalidMedia()
-        val orientation = try { context.contentResolver.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) } }
+        val orientation = try { open()?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) } }
             catch (e: Exception) { null } ?: ExifInterface.ORIENTATION_NORMAL
         val turn = Matrix()
         when (orientation) {
