@@ -106,6 +106,13 @@ def tool(label):
         else:
             adb("shell", "input", "swipe", "900", y, "300", y, "300")    # then forward, one step at a time
         time.sleep(0.8)
+    # Seen but never reported enabled: say what the dump held, then tap it anyway.
+    matches = [n for n in nodes() if n[0] == label or n[1] == label]
+    if matches:
+        note("tool '%s' reported as %s; tapping it" % (label, [(n[2], n[3]) for n in matches]))
+        node = matches[-1]
+        adb("shell", "input", "tap", str(node[3][0]), str(node[3][1]))
+        time.sleep(1); return True
     fail("the '%s' tool was not found. On screen: %s" % (label, describe()))
     return False
 

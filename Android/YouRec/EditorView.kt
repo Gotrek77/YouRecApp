@@ -1325,7 +1325,9 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if (edit != now.edit) commit(edit, message)
             if (reopen) openEffects()
         }
-        val content = Design.column(context, Design.label(context, "Effects · " + scopeTitle(project.edit), 15f, bold = true), spacing = 4f)
+        // Done sits by the title: the list below scrolls and can be taller than the screen.
+        val content = Design.column(context, Design.row(context, Design.label(context, "Effects · " + scopeTitle(project.edit), 15f, bold = true).also { it.layoutParams = Design.weighted() },
+            Design.button(context, "Done", Design.accent) { closePanel() }), spacing = 4f)
         fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         fun choice(title: String, chosen: Boolean, description: String, action: () -> Unit) = Design.button(context, title, if (chosen) Design.background else Design.text, if (chosen) Design.accent else Design.raised, 13f) { action() }
             .apply { contentDescription = description + if (chosen) ", selected" else "" }
@@ -1433,7 +1435,6 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             addView(list); post { scrollTo(0, effectsScroll) }
             setOnScrollChangeListener { _, _, y, _, _ -> effectsScroll = y }
         }.also { it.layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Design.dp(context, 260f)) })
-        add(Design.row(context, Design.button(context, "Done", Design.accent) { closePanel() }).apply { setPadding(0, Design.dp(context, 8f), 0, 0) })
         showPanel(content)
     }
 
