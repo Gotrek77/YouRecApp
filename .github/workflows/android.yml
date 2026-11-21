@@ -78,6 +78,36 @@ jobs:
           REPOSITORY: ${{ inputs.publish_models }}
         run: python Android/scripts/neural/publish-huggingface.py "$REPOSITORY" huggingface
 
+  # Subtitles: antirez's Qwen3-ASR in C through the app's JNI bridge and SGEMM,
+  # against qwen-asr's own build and reference transcript, with the official
+  # Qwen3-ASR-0.6B weights the app downloads.
+  speech-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: work/qwen3-asr-0.6b
+          key: speech-model-qwen3-asr-0.6b-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Model files
+        run: |
+          python -m pip install --quiet huggingface_hub==0.36.0
+          python Android/scripts/speech/fetch-model.py work/qwen3-asr-0.6b
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Qwen3-ASR on this computer
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq libopenblas-dev
+          git clone --quiet https://github.com/antirez/qwen-asr work/qwen-asr
+          git -C work/qwen-asr checkout --quiet 924694251d9e0f18e5d86bbd06aa3ab5f870002d
+          cd Android && ./scripts/speech/run-speech.sh ../work/qwen3-asr-0.6b ../work/qwen-asr ../work/speech
+
   build:
     needs: neural-models
     runs-on: ubuntu-latest
