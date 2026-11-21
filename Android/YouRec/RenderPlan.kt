@@ -18,7 +18,8 @@ class RenderPlan(edit: EditState) {
         return captionCues.filter { t >= it.start && t < it.end }.map { it.overlay(settings) }
     }
 
-    data class Picture(val item: UUID, val source: UUID, val sourceTime: Double, val interval: EditInterval, val clip: TimelineClip)
+    /// `elapsed` is the time since the start of the clip's place on the timeline (a freeze's push-in runs on it).
+    data class Picture(val item: UUID, val source: UUID, val sourceTime: Double, val interval: EditInterval, val clip: TimelineClip, val elapsed: Double = 0.0)
     /// One picture to draw. `slot` tells apart two pictures on screen at once from the same recording.
     data class Layer(val picture: Picture, val placement: VideoPlacement?, val slot: Int)
     /// One frame inside a transition: the outgoing and incoming pictures (null
@@ -36,7 +37,7 @@ class RenderPlan(edit: EditState) {
             fun at(id: UUID?, frozen: Boolean): Picture? {
                 val item = pictures.firstOrNull { it.id == id } ?: return null
                 val local = if (time in item.interval) time - item.start else if (frozen) item.mapping.duration - EditTime.ticks(1) else return null
-                return item.mapping.source(local)?.let { Picture(item.id, item.content.sourceID, it, item.interval, item.content) }
+                return item.mapping.source(local)?.let { Picture(item.id, item.content.sourceID, it, item.interval, item.content, local.seconds) }
             }
             // A still holds the outgoing picture's last frame after it ends.
             val first = at(relation.outgoing, relation.settings.style == TransitionStyle.Still)
@@ -51,7 +52,7 @@ class RenderPlan(edit: EditState) {
     fun layers(time: EditTime): List<Layer> {
         val active = pictures.filter { time in it.interval }
         if (active.isEmpty()) return transition(time)?.let { listOfNotNull(it.first, it.second) } ?: emptyList()
-        fun picture(item: VideoTimelineItem) = item.mapping.source(time - item.start)?.let { Picture(item.id, item.content.sourceID, it, item.interval, item.content) }
+        fun picture(item: VideoTimelineItem) = item.mapping.source(time - item.start)?.let { Picture(item.id, item.content.sourceID, it, item.interval, item.content, (time - item.start).seconds) }
         val ids = active.map { it.id }
         val region = if (active.size > 1) timeline.placements.firstOrNull { it.participants == ids.toSet() } else null
         // Inside a transition both partners are decoded; the transition mixes them.

@@ -213,6 +213,15 @@ def reference(kind, p, intensity, encoded, aux=None, values=None):
         v = np.clip(1 - np.clip(np.hypot(d[..., 0], d[..., 1]) / 1.25, 0, 1) ** 2.5, 0, 1)
         o = np.repeat((l * mix(1, v, x[1]))[..., None], 3, -1)
         if x[3] > .5: o = o * lin(np.array([.82, .84, .52]))
+    elif kind == 9:
+        target = values[:2]; point = (uv - target) / values[2] + target
+        o = sum(sample(encoded, point + (point - target) * values[3] * (i / 7 - .5)) for i in range(8)) / 8
+    elif kind == 12:
+        o = sample(encoded, moved(uv))
+        if x[2] > .5:
+            o = mix(luma(o)[..., None], o, .95); o = o * (1 - .12 * smoothstep(.25, .7, np.hypot(uv[..., 0] - .5, uv[..., 1] - .5)))[..., None]; o = np.clip(o, 0, 1)
+    elif kind == 14:
+        o = sample(encoded, moved(uv)) * values[3]
     elif kind == 11:
         ratio = [2.39, 2.20, 1.85, 1.33][int(x[0] + .5)]; aspect = W / H
         bar = (np.abs(uv[..., 1] - .5) > .5 * aspect / ratio) if aspect < ratio else (np.abs(uv[..., 0] - .5) > .5 * ratio / aspect)
@@ -253,6 +262,9 @@ CASES = [
     ("Widescreen black bars", 11, [0, 0, .6, 1, 0], 1), ("Widescreen blur fill", 11, [3, 1, .4, 0, 0], .8),
     ("Halation", 15, [.7, .6, .4, 1], 1), ("16mm", 16, [.5, 1, .4, .5, 1, 0], 1, [3.0, -2.0, 1.006, 0, 0, 0, 0, 0]),
     ("16mm B&W", 16, [.5, 2, .0, .5, 0, 1], .7, [-1.5, 4.0, 1.006, 0, 0, 0, 0, 0]),
+    ("Crash zoom", 9, [2.5, .18, 1, 0, .6, .3, .6], 1, [.3, .6, 1.8, .05, 0, 0, 0, 0]),
+    ("Freeze print", 12, [3, .05, 1], 1, [0, 0, 1.03, 0, 0, 0, 0, 0]),
+    ("Undercranking", 14, [16, 1.25, .5, .4], 1, [2.5, -3.0, 1.01, 1.05, 0, 0, 0, 0]),
     ("Super 8 leak", 17, [.5, .7, .5, 1, .8, 1], 1, [2.0, 3.0, 1.012, .8, 1, 0, 0, 0]),
 ]
 

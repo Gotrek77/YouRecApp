@@ -58,10 +58,12 @@ data class SourcePlaybackMap(val runs: List<PlaybackRun>) {
         // Round cumulative boundaries, not each run's length, to carry the
         // rounding residual across a long sequence of pause cuts.
         private fun runs(clip: TimelineClip): List<PlaybackRun> {
+            // A freeze is one silent run holding its frame.
+            clip.frozenFrame?.let { return listOf(PlaybackRun(EditTime.seconds(it.duration), it.sourceTime, it.sourceTime, silent = true)) }
             var total = 0.0; var prior = EditTime.zero
             return clip.playbackSpans.map { span ->
                 total += span.duration
-                val boundary = EditTime.seconds(total); val run = PlaybackRun(boundary - prior, span.start, span.end)
+                val boundary = EditTime.seconds(total); val run = PlaybackRun(boundary - prior, span.start, span.end, clip.mutesSourceAudio((span.start + span.end) / 2))
                 prior = boundary; run
             }.filter { it.duration > EditTime.zero }
         }

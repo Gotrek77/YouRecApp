@@ -13,7 +13,7 @@ import java.nio.FloatBuffer
 /// decodes to linear, applies the effect's arithmetic and encodes again.
 class VideoEffectShader {
     /// One render target: a texture of display-encoded RGBA and its framebuffer.
-    class Target(val texture: Int, val buffer: Int, val width: Int, val height: Int) { var busy = false }
+    class Target(val texture: Int, val buffer: Int, val width: Int, val height: Int) { var busy = false; var pinned = false }
     private val pool = ArrayList<Target>()
     private var lattice = 0
     private val programs = HashMap<String, Pass>()
@@ -52,18 +52,31 @@ class VideoEffectShader {
         return Target(ids[0], fbo[0], w, h).also { it.busy = true; pool.add(it) }
     }
 
-    /// The framebuffer to draw the layer's picture into, cleared, at the canvas size.
-    fun begin(w: Int, h: Int): Target {
-        for (t in pool) t.busy = false
-        // Targets of a size no longer drawn (a changed canvas) are given back.
-        val stale = pool.filter { it.width > w || it.height > h }
+    /// Start a new frame: every target not kept by `pin` is free again.
+    fun reset(w: Int, h: Int) {
+        for (t in pool) t.busy = t.pinned
+        // Targets larger than the canvas (a changed canvas) are given back.
+        val stale = pool.filter { !it.pinned && (it.width > w || it.height > h) }
         for (t in stale) { GLES20.glDeleteFramebuffers(1, intArrayOf(t.buffer), 0); GLES20.glDeleteTextures(1, intArrayOf(t.texture), 0) }
         pool.removeAll(stale)
+    }
+    /// The framebuffer to draw one source picture into, cleared, at the canvas size.
+    fun picture(w: Int, h: Int): Target {
         val target = take(w, h)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.buffer)
         GLES20.glViewport(0, 0, w, h)
         GLES20.glClearColor(0f, 0f, 0f, 1f); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         return target
+    }
+    /// Keep a result across frames (a Step printing block), or let it go.
+    fun pin(target: Target, kept: Boolean) { target.pinned = kept; target.busy = kept }
+    fun free(target: Target) { if (!target.pinned) target.busy = false }
+    /// `sum` mixed toward `next` by `amount`, in linear light. Both inputs are freed.
+    fun blend(sum: Target, next: Target, amount: Float): Target {
+        val output = take(sum.width, sum.height)
+        run(pass("blend") { HEADER + BLEND }, output, listOf("image" to sum.texture, "next" to next.texture)) { p -> GLES20.glUniform1f(p.u("amount"), amount) }
+        free(sum); free(next)
+        return output
     }
 
     /// Run `pass` into `output`, reading `inputs` (sampler name to target) on successive units.
@@ -127,11 +140,11 @@ class VideoEffectShader {
     }
 
     /// Apply `effects` in order to the picture drawn after `begin`. Returns the target holding the result.
-    fun apply(effects: List<VideoEffectSettings>, sourceTime: Double, fps: Double, picture: Target): Target {
+    fun apply(effects: List<VideoEffectSettings>, sourceTime: Double, fps: Double, picture: Target, frameTime: Double = sourceTime, holdTime: Double? = null): Target {
         var current = picture
         GLES20.glDisable(GLES20.GL_BLEND)
         for (effect in effects) {
-            val u = VideoEffectRendering.uniforms(effect, sourceTime, fps)
+            val u = VideoEffectRendering.uniforms(effect, sourceTime, fps, frameTime, holdTime)
             val inputs = ArrayList<Pair<String, Int>>()
             inputs.add("image" to current.texture)
             val auxiliary = encode(effect, u, current, sourceTime)
@@ -148,8 +161,8 @@ class VideoEffectShader {
                 GLES20.glUniform4fv(p.u("frameValues"), 2, values, 0)
                 if (grain) { val (x, y) = VideoEffectRendering.latticeOffset(u.frame); GLES20.glUniform2f(p.u("latticeOffset"), x.toFloat(), y.toFloat()) }
             }
-            for (target in auxiliary.values) target.busy = false
-            current.busy = false
+            for (target in auxiliary.values) free(target)
+            free(current)
             current = output
         }
         current.busy = true
@@ -307,6 +320,15 @@ void main() {
         vec2 offset = direction * pairs[i].x;
         result += (lin(texture2D(image, uv + offset).rgb) + lin(texture2D(image, uv - offset).rgb)) * pairs[i].y; }
     gl_FragColor = encode(result);
+}
+"""
+        /// A normalised dissolve in linear light (Step printing's smear).
+        val BLEND = """
+uniform sampler2D next;
+uniform float amount;
+void main() {
+    vec2 uv = gl_FragCoord.xy / size;
+    gl_FragColor = encode(mix(lin(texture2D(image, uv).rgb), lin(texture2D(next, uv).rgb), amount));
 }
 """
         /// The effect pass; KIND is the effect's shader index. Spatial
@@ -498,6 +520,16 @@ void main() {
     float v = clamp(1.0 - pow(clamp(length(d) / 1.25, 0.0, 1.0), 2.5), 0.0, 1.0);
     l *= mix(1.0, v, p[1].x); o = vec3(l);
     if (p[3].x > .5) o *= lin(vec3(.82, .84, .52));
+#elif KIND == 9
+    // Crash zoom: the target stays put; eight samples along the zoom's motion.
+    vec2 target = frameValues[0].xy, point = (uv - target) / frameValues[0].z + target;
+    o = vec3(0.0);
+    for (int i = 0; i < 8; i++) o += sampleImage(point + (point - target) * frameValues[0].w * (float(i) / 7.0 - .5)) / 8.0;
+#elif KIND == 12
+    o = sampleImage(moved(uv));
+    if (p[2].x > .5) { o = mix(vec3(luma(o)), o, .95); o *= 1.0 - .12 * smoothstep(.25, .7, length(uv - .5)); o = grain(o, q / pixelScale, .3, 1.5, false); }
+#elif KIND == 14
+    o = sampleImage(moved(uv)) * frameValues[0].w;
 #elif KIND == 11
     float ratio = p[0].x < .5 ? 2.39 : p[0].x < 1.5 ? 2.20 : p[0].x < 2.5 ? 1.85 : 1.33, aspect = size.x / size.y;
     bool bar = aspect < ratio ? abs(uv.y - .5) > .5 * aspect / ratio : abs(uv.x - .5) > .5 * ratio / aspect;

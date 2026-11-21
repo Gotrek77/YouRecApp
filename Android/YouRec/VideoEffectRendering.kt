@@ -15,7 +15,8 @@ object VideoEffectRendering {
         VideoEffectID.colorCorrection, VideoEffectID.silentTint, VideoEffectID.threeStrip, VideoEffectID.bleachBypass,
         VideoEffectID.dayForNight, VideoEffectID.noir, VideoEffectID.expressionism, VideoEffectID.rgbOffset,
         VideoEffectID.negativeStrobe, VideoEffectID.kaleidoscope,
-        VideoEffectID.halation, VideoEffectID.widescreen, VideoEffectID.sixteenMM, VideoEffectID.superEight)
+        VideoEffectID.halation, VideoEffectID.widescreen, VideoEffectID.sixteenMM, VideoEffectID.superEight,
+        VideoEffectID.undercranking, VideoEffectID.stepPrinting, VideoEffectID.freezeFrame)
 
     /// The iPhone app's pixel order: families in this order, each in the order
     /// VideoEffectSettings.ordered gives.
@@ -32,6 +33,8 @@ object VideoEffectRendering {
             // A ranged effect shows only inside its windows (ScopedEffect.resolvingEffects).
             if (windows?.get(effect.id)?.none { sourceTime >= it.start && sourceTime < it.end } == true) return@filter false
             when (effect.kind) {
+                // Step printing chooses source frames (VideoEffectSamplePlan); it has no pixel pass.
+                VideoEffectID.stepPrinting, VideoEffectID.nightFix -> false
                 VideoEffectID.negativeStrobe -> effect.strobeShowsNegative(sourceTime, fps)
                 VideoEffectID.rgbOffset -> RGBChannel.values().any { effect.number(it.x, sourceTime) != 0.0 || effect.number(it.y, sourceTime) != 0.0 }
                 else -> true
@@ -44,12 +47,15 @@ object VideoEffectRendering {
     /// `p` holds 40 four-component values, parameter i (catalogue order, without
     /// intensity) in p[i]; a number, a toggle (0/1) or a choice (its index) in
     /// x, a colour as linear RGB with 1 in w.
-    class Uniforms(val kind: Int, val frame: Int, val time: Float, val intensity: Float, val duration: Float, val fps: Float, val p: FloatArray)
+    class Uniforms(val kind: Int, val frame: Int, val time: Float, val intensity: Float, val duration: Float, val fps: Float, val p: FloatArray,
+                   val released: Boolean = false, val targetX: Float? = null, val targetY: Float? = null)
 
     fun frameIndex(time: Double, fps: Double): Int = max(0, floor(max(0.0, time) * fps + 0.000001).toInt())
     fun linear(x: Double): Double = if (x <= 0.04045) x / 12.92 else ((x + 0.055) / 1.055).pow(2.4)
 
-    fun uniforms(settings: VideoEffectSettings, sourceTime: Double, fps: Double): Uniforms {
+    /// `frameTime` numbers the frame (grain and weave advance with it); a
+    /// freeze's own time is `holdTime`, how far into the hold this frame is.
+    fun uniforms(settings: VideoEffectSettings, sourceTime: Double, fps: Double, frameTime: Double = sourceTime, holdTime: Double? = null): Uniforms {
         val p = FloatArray(40 * 4)
         for ((index, definition) in settings.kind.descriptor.parameters.withIndex()) {
             when (val value = settings.value(definition.id, sourceTime) ?: definition.value) {
@@ -65,8 +71,9 @@ object VideoEffectRendering {
         }
         settings.releaseTime?.let { p[39 * 4] = max(0.0, it - settings.start + (settings.phaseOffset ?: 0.0)).toFloat() }
         val intensity = if (settings.kind.descriptor.supportsIntensity) settings.number("intensity", sourceTime).toFloat() else 1f
-        return Uniforms(settings.kind.shaderIndex, frameIndex(sourceTime, fps), max(0.0, sourceTime - settings.start + (settings.phaseOffset ?: 0.0)).toFloat(),
-            intensity, (settings.end - settings.start).toFloat(), fps.toFloat(), p)
+        val time = if (settings.kind == VideoEffectID.freezeFrame && holdTime != null) holdTime else max(0.0, sourceTime - settings.start + (settings.phaseOffset ?: 0.0))
+        return Uniforms(settings.kind.shaderIndex, frameIndex(frameTime, fps), time.toFloat(),
+            intensity, (settings.end - settings.start).toFloat(), fps.toFloat(), p, settings.releaseTime != null)
     }
 
     /// The film grain lattice: random values in -1...1, colour in RGB (a
@@ -126,6 +133,17 @@ object VideoEffectRendering {
             }
             16 -> {
                 v[0] = (noise(u.frame * .13, 2.0, 0, 7) * p(3) * 2).toFloat(); v[1] = (noise(u.frame * .13, 9.0, 0, 3) * p(3) * 2).toFloat(); v[2] = 1.006f
+            }
+            12 -> v[2] = (1 + p(1) * (u.time / maxOf(.001, p(0))).coerceIn(0.0, 1.0)).toFloat()  // Freeze frame: push-in over the hold.
+            9 -> { // Crash zoom: the snap, a small overshoot, an optional return; blur follows the zoom's speed.
+                val t = u.time.toDouble(); val speed = maxOf(.001, p(1)); val amount = p(0)
+                val release = if (u.released) u.p[39 * 4].toDouble() else speed + .08 + p(2)
+                var z: Double; var velocity = 0.0
+                if (t < speed) { val f = (t / speed).coerceIn(0.0, 1.0); z = 1 + (amount - 1) * Math.pow(f, 5.0); velocity = 5 * Math.pow(f, 4.0) / speed }
+                else if (t < speed + .08) { val f = (t - speed) / .08; z = amount * (1 + .03 * Math.sin(f * Math.PI)); velocity = .03 * Math.PI / .08 * Math.cos(f * Math.PI) }
+                else if ((p(3) > .5 || u.released) && t > release) { val f = ((t - release) / speed).coerceIn(0.0, 1.0); z = amount + (1 - amount) * f * f * (3 - 2 * f); velocity = -6 * f * (1 - f) / speed }
+                else z = amount
+                v[0] = u.targetX ?: p(5).toFloat(); v[1] = u.targetY ?: p(6).toFloat(); v[2] = z.toFloat(); v[3] = minOf(.12, Math.abs(velocity) * .002 * p(4)).toFloat()
             }
             17 -> { // Super 8: weave, and a light leak from one side once in a while.
                 v[0] = (noise(u.frame * .16, 2.0, 0, 5) * 2 * p(2)).toFloat(); v[1] = (noise(u.frame * .16, 9.0, 0, 17) * 3 * p(2)).toFloat(); v[2] = 1.012f

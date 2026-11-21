@@ -46,6 +46,7 @@ fun videoEffectTests() {
     try { ProjectCoding.videoEffects(listOf(JSON.parse(halation.toByteArray()))) } catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains("Chroma"), "The refusal names the effect") }
     effectRenderingTests()
     effectEditingTests()
+    effectTimingTests()
     println("Video effects: ok")
 }
 
@@ -137,4 +138,64 @@ fun effectEditingTests() {
     val seen = ArrayList<Double?>()
     val changed = TimelineEditing.settingVideoEffects(edit.timeline.selection(emptySet()), edit, 1.0) { c, source -> seen.add(source); VideoEffectEditing.adding(c, VideoEffectID.silentTint) }
     require(changed.timeline.video.all { VideoEffectEditing.effect(it.content, VideoEffectID.silentTint) != null } && seen.filterNotNull() == listOf(1.0) && seen.size == 2, "Whole project; source time only under the playhead ($seen)")
+}
+
+/// Time effects: the source clock, cadence holds, step blocks and freezes.
+fun effectTimingTests() {
+    val source = UUID.randomUUID()
+    var crank = VideoEffectSettings(kind = VideoEffectID.undercranking, start = 0.0, end = 10.0)
+    val clip = TimelineClip(sourceID = source, start = 0.0, end = 10.0, videoEffects = listOf(crank))
+    require(abs(clip.duration - 8.0) < 1e-9 && abs(clip.sourceTime(4.0) - 5.0) < 1e-9 && abs(clip.timelineTime(5.0) - 4.0) < 1e-9, "Undercranking's speed-up shortens the clip (${clip.duration})")
+    require(SourcePlaybackMap(clip).runs.none { it.silent }, "Sound plays unless muted")
+    crank = crank.setting("mute", EffectValue.Toggle(true))
+    require(SourcePlaybackMap(clip.copy(videoEffects = listOf(crank))).runs.all { it.silent }, "Mute silences the clip's own sound")
+    require(TimelineClip(sourceID = source, start = 0.0, end = 10.0, videoEffects = listOf(crank.copy(enabled = false))).duration == 10.0, "A disabled effect does not retime")
+    // Animated speed is subdivided where it changes; the integral matches.
+    val ramp = VideoEffectSettings(kind = VideoEffectID.stepPrinting, start = 0.0, end = 10.0).let { e ->
+        e.copy(parameters = e.parameters.map { if (it.id == "speed") it.settingKeyframe(0.0, EffectValue.Number(0.5)).settingKeyframe(10.0, EffectValue.Number(1.0)) else it }) }
+    val ramped = TimelineClip(sourceID = source, start = 0.0, end = 10.0, videoEffects = listOf(ramp))
+    require(ramped.playbackSpans.size == 1 && abs(ramped.duration - 20.0) < 1e-9, "Stepper speed holds between keys (${ramped.duration})")
+
+    // Cadence: the default 16 fps cranked at 1.25× speed holds each source frame for 1/12.8 s.
+    val held = TimelineClip(sourceID = source, start = 0.0, end = 10.0, videoEffects = listOf(VideoEffectSettings(kind = VideoEffectID.undercranking, start = 0.0, end = 10.0)))
+    val clock = VideoEffectSequenceClock(held)
+    val hold = clock.hold(0.5)!!
+    require(hold.index == 6 && abs(hold.boundary - 6 / 12.8) < 1e-9, "Cadence hold ($hold)")
+    val plan = VideoEffectSamplePlan.make(held, 0.5, 30.0, clock)!!
+    require(plan.times.single() == hold.boundary && plan.firstAtOrAfter, "A cranked frame shows the frame at its boundary")
+    require(VideoEffectSamplePlan.make(TimelineClip(sourceID = source, start = 0.0, end = 10.0), 0.5, 30.0, VideoEffectSequenceClock(TimelineClip(sourceID = source, start = 0.0, end = 10.0))) == null, "No time effect, no plan")
+
+    // Step printing: blocks of whole source frames; the smear's normalised dissolves.
+    val frames = VideoEffectFrameIndex(DoubleArray(300) { it / 30.0 })
+    val step = VideoEffectSettings(kind = VideoEffectID.stepPrinting, start = 0.0, end = 10.0).setting("step", EffectValue.Number(3.0)).setting("smear", EffectValue.Number(0.7))
+    val stepped = TimelineClip(sourceID = source, start = 0.0, end = 10.0, videoEffects = listOf(step))
+    val block = VideoEffectSamplePlan.make(stepped, 0.14, 30.0, VideoEffectSequenceClock(stepped), frames)!!
+    require(block.times == listOf(3 / 30.0, 4 / 30.0, 5 / 30.0) && block.smear == 0.7, "Step block (${block.times})")
+    val mixes = block.mixes
+    require(mixes.size == 2 && abs(mixes[0] - (0.7 / 3) / (0.3 + 0.7 / 3 * 2)) < 1e-12 && abs(mixes[1] - 0.7 / 3) < 1e-12, "Smear weights ($mixes)")
+    require(frames.block(9.99, 0.0, 3, 0.0, 10.0, false).all { it <= 299 / 30.0 }, "A block never reads past the clip")
+
+    // A freeze: one silent run holding one frame, in the project form.
+    val frozen = TimelineClip(sourceID = source, start = 2.0, end = 2.0 + 1 / 30.0, frozenFrame = FrozenFrameSegment(2.0, 3.0),
+        videoEffects = listOf(VideoEffectSettings(kind = VideoEffectID.freezeFrame, start = 2.0, end = 2.0 + 1 / 30.0)))
+    val map = SourcePlaybackMap(frozen)
+    require(frozen.duration == 3.0 && frozen.sourceTime(1.7) == 2.0 && map.runs.single().isHold && map.runs.single().silent && map.duration == EditTime.seconds(3.0), "A freeze holds its frame silently for its duration")
+    require(VideoEffectSamplePlan.make(frozen, 2.0, 30.0, VideoEffectSequenceClock(frozen))!!.times == listOf(2.0), "A freeze shows its frame")
+    val coded = ProjectCoding.clip(Fields.of(JSON.parse(JSON.write(ProjectCoding.encode(frozen)))))
+    require(coded == frozen, "A freeze round-trips in the iPhone app's form")
+
+    // The Freeze frame command: a hold at the playhead, later footage moved by its length, then lengthened and shortened.
+    val take = TimelineClip(sourceID = source, start = 0.0, end = 6.0)
+    val edit = EditState(TrackTimeline(listOf(VideoTimelineItem(UUID.randomUUID(), EditTime.zero, take))))
+    val (frozenEdit, holdID) = TimelineEditing.freezing(edit, 2.0)!!
+    val holdItem = frozenEdit.timeline.video.first { it.id == holdID }
+    require(holdItem.start == EditTime.seconds(2.0) && holdItem.content.frozenFrame?.sourceTime == 2.0 && holdItem.mapping.duration == EditTime.seconds(3.0), "The hold sits at the playhead")
+    require(frozenEdit.timeline.duration == EditTime.seconds(9.0) && frozenEdit.timeline.video.size == 3, "The footage after it moves by three seconds (${frozenEdit.timeline.duration.seconds})")
+    require(frozenEdit.timeline.video.first { it.start == EditTime.seconds(5.0) }.mapping.source(EditTime.zero) == 2.0, "Nothing is replaced: the take continues from the frozen frame")
+    val longer = TimelineEditing.settingHold(frozenEdit, holdID, 5.0)
+    require(longer.timeline.duration == EditTime.seconds(11.0) && longer.timeline.video.first { it.id == holdID }.content.videoEffects!!.first { it.kind == VideoEffectID.freezeFrame }.number("hold") == 5.0, "A longer hold pushes the rest")
+    val shorter = TimelineEditing.settingHold(frozenEdit, holdID, 1.0)
+    require(shorter.timeline.duration == EditTime.seconds(7.0) && shorter.timeline.video.none { it.start < EditTime.seconds(3.0) && it.end > EditTime.seconds(3.0) && it.id != holdID && it.start != EditTime.zero }, "A shorter hold closes up (${shorter.timeline.duration.seconds})")
+    shorter.timeline.validate(listOf(SourceMedia(source, "a.mp4", 6.0)))
+    require(TimelineEditing.freezing(frozenEdit, 3.0) == null, "A hold is not frozen again")
 }

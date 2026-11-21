@@ -103,23 +103,25 @@ class RenderSources(private val project: Project, private val folder: File, priv
     /// One picture with its grade, images and titles. False if it could not be shown.
     private fun drawLayer(layer: RenderPlan.Layer, program: FrameProgram, width: Int, height: Int, overlays: Boolean = true, framesPerSecond: Double = 30.0): Boolean {
         val frame = CanvasSize(width.toDouble(), height.toDouble())
-        val reader = frames(layer.picture.source, layer.slot)
-        if (reader == null || !reader.show(layer.picture.sourceTime)) return false
+        val reader = frames(layer.picture.source, layer.slot) ?: return false
+        val clip = layer.picture.clip
+        // Time effects choose which source frames to show; the others show the frame at the time.
+        val planned = VideoEffectSamplePlan.needed(clip)
+        if (!planned && !reader.show(layer.picture.sourceTime)) return false
         val source = CanvasSize(reader.video.displayWidth.toDouble(), reader.video.displayHeight.toDouble())
-        var placed = layer.picture.clip.pictureTransform(source, frame)
+        var placed = clip.pictureTransform(source, frame)
         val placement = layer.placement
-        val tone = grade(layer.picture.clip.color)
+        val tone = grade(clip.color)
         // Effects see the graded, framed picture at the canvas size, before it is
         // placed in a window and before its images and titles, as on the iPhone.
-        val effects = VideoEffectRendering.active(layer.picture.clip, layer.picture.sourceTime, framesPerSecond)
-        if (effects.isNotEmpty()) {
+        if (planned || VideoEffectRendering.active(clip, layer.picture.sourceTime, framesPerSecond).isNotEmpty()) {
             val shader = effectShader ?: VideoEffectShader().also { effectShader = it }
             val bound = IntArray(1); android.opengl.GLES20.glGetIntegerv(android.opengl.GLES20.GL_FRAMEBUFFER_BINDING, bound, 0)
             val scissor = android.opengl.GLES20.glIsEnabled(android.opengl.GLES20.GL_SCISSOR_TEST)
             if (scissor) android.opengl.GLES20.glDisable(android.opengl.GLES20.GL_SCISSOR_TEST)
-            val picture = shader.begin(width, height)
-            program.draw(reader.texture, reader.matrix, placed, source, frame, tone)
-            val result = shader.apply(effects, layer.picture.sourceTime, framesPerSecond, picture).texture
+            shader.reset(width, height)
+            val result = effected(layer, reader, shader, program, placed, source, frame, tone, framesPerSecond)?.texture
+            if (result == null) { android.opengl.GLES20.glBindFramebuffer(android.opengl.GLES20.GL_FRAMEBUFFER, bound[0]); if (scissor) android.opengl.GLES20.glEnable(android.opengl.GLES20.GL_SCISSOR_TEST); return false }
             android.opengl.GLES20.glBindFramebuffer(android.opengl.GLES20.GL_FRAMEBUFFER, bound[0])
             android.opengl.GLES20.glViewport(0, 0, width, height)
             if (scissor) android.opengl.GLES20.glEnable(android.opengl.GLES20.GL_SCISSOR_TEST)
@@ -160,6 +162,55 @@ class RenderSources(private val project: Project, private val folder: File, priv
         drawOverlays(layer, width, height, placement.transform(frame))
         android.opengl.GLES20.glDisable(android.opengl.GLES20.GL_SCISSOR_TEST)
         return true
+    }
+    private val clocks = HashMap<TimelineClip, VideoEffectSequenceClock>()
+    private val blocks = HashMap<Pair<UUID, Int>, Pair<Any, VideoEffectShader.Target>>()
+    /// The layer's picture with its effects, as the iPhone app's compositor
+    /// processes it: each source frame the time effects choose is graded,
+    /// framed and put through the pixel effects at its own time; a Step
+    /// printing block is smeared together and kept while the block lasts.
+    private fun effected(layer: RenderPlan.Layer, reader: FrameReader, shader: VideoEffectShader, program: FrameProgram, placed: Affine,
+                         source: CanvasSize, frame: CanvasSize, tone: FrameGrade?, fps: Double): VideoEffectShader.Target? {
+        val clip = layer.picture.clip; val sourceTime = layer.picture.sourceTime; val frozen = clip.frozenFrame
+        val width = frame.width.toInt(); val height = frame.height.toInt()
+        val composition = layer.picture.interval.start.seconds + layer.picture.elapsed
+        val index = if (VideoEffectSamplePlan.needed(clip)) file(layer.picture.source)?.let { MediaFiles.frameIndex(it) } else null
+        val plan = if (VideoEffectSamplePlan.needed(clip)) {
+            if (clocks.size > 32) clocks.clear()
+            VideoEffectSamplePlan.make(clip, sourceTime, maxOf(1, reader.video.frameRate).toDouble(), clocks.getOrPut(clip) { VideoEffectSequenceClock(clip) }, index)
+        } else null
+        fun one(time: Double, firstAtOrAfter: Boolean, before: Double): VideoEffectShader.Target? {
+            // The source frame itself: the first at or after a cadence boundary, never one past the clip.
+            var selected = time
+            if (index != null && plan != null) {
+                var i = minOf(index.times.size - 1, if (firstAtOrAfter) index.first(time) else index.last(time))
+                while (i > 0 && index.times[i] >= before) i--
+                selected = index.times[i]
+            }
+            if (!reader.show(selected)) return null
+            val picture = shader.picture(width, height)
+            program.draw(reader.texture, reader.matrix, placed, source, frame, tone)
+            // A cadence hold freezes the whole look at the held frame; a freeze's
+            // own grain animates on the timeline and its push-in on the hold.
+            val effectTime = if (frozen == null) selected else sourceTime
+            val frameTime = if (frozen == null) selected else composition
+            val hold = frozen?.let { it.offset + layer.picture.elapsed }
+            return shader.apply(VideoEffectRendering.active(clip, effectTime, fps), effectTime, fps, picture, frameTime, hold)
+        }
+        if (plan == null) return one(sourceTime, false, Double.POSITIVE_INFINITY)
+        if (plan.times.size == 1 || plan.smear <= 0) return one(plan.times.first(), plan.firstAtOrAfter, plan.before)
+        val key = layer.picture.item to layer.slot
+        val identity = Triple(clip, plan.times, fps)
+        blocks[key]?.let { (kept, target) -> if (kept == identity) return target }
+        var sum = one(plan.times.first(), plan.firstAtOrAfter, plan.before) ?: return null
+        for ((time, amount) in plan.times.drop(1).zip(plan.mixes)) {
+            val next = one(time, plan.firstAtOrAfter, plan.before) ?: return null
+            sum = shader.blend(sum, next, amount.toFloat())
+        }
+        blocks[key]?.second?.let { shader.pin(it, false); it.busy = false }
+        shader.pin(sum, true)
+        blocks[key] = identity to sum
+        return sum
     }
     private fun drawOverlays(layer: RenderPlan.Layer, width: Int, height: Int, placement: Affine?) {
         for (image in layer.picture.clip.visibleImages(layer.picture.sourceTime)) pictures.draw(image, width, height, placement)
@@ -234,7 +285,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
         progress(1.0)
     }
     fun releaseFrames() { for (reader in frames.values) try { reader.release() } catch (e: Exception) { }; frames.clear(); failed.clear(); titles.release(); pictures.release(); releaseLooks()
-        compositor?.releaseProgram(); compositor = null; effectShader?.release(); effectShader = null }
+        compositor?.releaseProgram(); compositor = null; effectShader?.release(); effectShader = null; blocks.clear(); clocks.clear() }
     fun releaseSound() { for (reader in sound.values) reader.release(); sound.clear()
         synchronized(processedSound) { for (reader in processedSound.values) reader.close(); processedSound.clear() } }
 

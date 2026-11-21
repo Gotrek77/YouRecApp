@@ -1336,14 +1336,27 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         val effects = VideoEffectSettings.ordered(reference.content.videoEffects ?: emptyList())
         for (effect in effects) {
             val kind = effect.kind; val name = kind.descriptor.displayName
-            listed(Design.row(context, Design.label(context, name, 14f, bold = true).also { it.layoutParams = Design.weighted() },
+            if (kind == VideoEffectID.freezeFrame) {
+                // A hold is a piece of the timeline: removing it closes up the footage after it.
+                listed(Design.row(context, Design.label(context, "$name · hold frame", 14f, bold = true).also { it.layoutParams = Design.weighted() },
+                    Design.button(context, "Remove hold", Design.recording, Design.raised, 13f) {
+                        val now = this.project ?: return@button
+                        val (edit, _) = TimelineEditing.deleting(now.edit.timeline.selection(setOf(reference.id)), now.edit)
+                        commit(edit, "Hold removed"); openEffects()
+                    }))
+            } else listed(Design.row(context, Design.label(context, name, 14f, bold = true).also { it.layoutParams = Design.weighted() },
                 choice(if (effect.enabled) "On" else "Off", effect.enabled, "$name enabled") { apply(name + if (effect.enabled) " off" else " on") { c, _ -> VideoEffectEditing.enabling(c, kind, !effect.enabled) } },
                 Design.button(context, "Reset", Design.text, Design.raised, 13f) { apply("$name reset") { c, _ -> VideoEffectEditing.resetting(c, kind) } },
                 Design.button(context, "Remove", Design.recording, Design.raised, 13f) { apply("$name removed") { c, _ -> VideoEffectEditing.removing(c, kind) } }))
             for (parameter in effect.parameters) {
                 val value = effect.value(parameter.id, time) ?: parameter.value
-                fun set(newValue: EffectValue, message: String, reopen: Boolean = true) =
+                fun set(newValue: EffectValue, message: String, reopen: Boolean = true) {
+                    if (kind == VideoEffectID.freezeFrame && parameter.id == "hold" && newValue is EffectValue.Number) {
+                        val now = this.project ?: return
+                        commit(TimelineEditing.settingHold(now.edit, reference.id, newValue.value), message); if (reopen) openEffects(); return
+                    }
                     apply(message, reopen) { c, s -> VideoEffectEditing.setting(c, kind, parameter.id, newValue, s, effectsAnimate) }
+                }
                 val keyed = source != null && parameter.keyframes.any { kotlin.math.abs(it.time - source) < 1.0 / 60 }
                 val diamond = if (source != null && parameter.animatable && (effectsAnimate || parameter.keyframes.isNotEmpty()))
                     Design.button(context, if (keyed) "◆" else "◇", Design.text, Design.raised, 13f) {
@@ -1398,12 +1411,19 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         }
         if (effects.isEmpty()) listed(Design.label(context, "No effects on " + scopeTitle(project.edit) + ". Add one below.", 13f, Design.secondary))
         // Effects to add, by family, three to a row.
-        val missing = VideoEffectCatalog.all.filter { it.id in VideoEffectRendering.drawn && effects.none { e -> e.kind == it.id } }
+        val missing = VideoEffectCatalog.all.filter { it.id in VideoEffectRendering.drawn && effects.none { e -> e.kind == it.id } && (reference.content.frozenFrame == null || it.family != EffectFamily.Time) }
         for ((family, group) in missing.groupBy { it.family }) {
             listed(Design.label(context, "Add · " + family.title, 13f, Design.secondary).apply { setPadding(0, Design.dp(context, 6f), 0, 0) })
             for (row in group.chunked(3)) listed(LinearLayout(context).apply {
                 orientation = HORIZONTAL
-                for (d in row) addView(Design.button(context, d.displayName, Design.text, Design.raised, 13f) { apply(d.displayName + " added") { c, _ -> VideoEffectEditing.adding(c, d.id) } }
+                for (d in row) addView(Design.button(context, d.displayName, Design.text, Design.raised, 13f) {
+                    if (d.id == VideoEffectID.freezeFrame) {
+                        // A hold of the frame under the playhead, inserted there.
+                        val now = this@EditorView.project ?: return@button
+                        val made = TimelineEditing.freezing(now.edit, editor.playhead)
+                        if (made == null) { say("Move the playhead outside a transition, onto one picture, to freeze one frame."); return@button }
+                        commit(made.first, "Freeze frame added"); openEffects()
+                    } else apply(d.displayName + " added") { c, _ -> VideoEffectEditing.adding(c, d.id) } }
                     .apply { contentDescription = "Add " + d.displayName }, Design.weighted(1f).apply { rightMargin = Design.dp(context, 6f); bottomMargin = Design.dp(context, 6f) })
                 repeat(3 - row.size) { addView(View(context), Design.weighted(1f)) }
             })

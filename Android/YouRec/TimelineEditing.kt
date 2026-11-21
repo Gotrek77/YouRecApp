@@ -110,6 +110,50 @@ object TimelineEditing {
         })
         return result
     }
+    /// Freeze frame, as on iPhone: a hold of the frame under the playhead is
+    /// inserted there (three seconds), never replacing the footage after it.
+    /// Null inside a transition or where pictures overlap: no single frame to hold.
+    fun freezing(state: EditState, time: Double): Pair<EditState, UUID>? {
+        val position = if (time >= state.timeline.duration.seconds - frame / 2) state.timeline.duration.seconds - frame else maxOf(0.0, quantize(time))
+        val at = EditTime.seconds(position)
+        val active = state.timeline.video.filter { at in it.interval }
+        if (active.size != 1 || insideTransition(state, position)) return null
+        val item = active.single()
+        val clip = item.content
+        if (clip.frozenFrame != null) return null
+        val sourceTime = minOf(clip.end - frame, maxOf(clip.start, item.mapping.source(at - item.start) ?: return null))
+        val result = split(state, position)
+        val point = EditTime.seconds(quantize(position))
+        val effect = VideoEffectSettings(kind = VideoEffectID.freezeFrame, start = sourceTime, end = minOf(clip.end, sourceTime + frame))
+        val hold = clip.copy(id = UUID.randomUUID(), start = sourceTime, end = minOf(clip.end, sourceTime + frame), pauses = null, speed = null,
+            frozenFrame = FrozenFrameSegment(sourceTime, effect.number("hold")),
+            videoEffects = (clip.videoEffects ?: emptyList()).filter { it.kind.descriptor.family != EffectFamily.Time } + effect, effectWindows = null)
+        val length = EditTime.seconds(hold.duration)
+        result.timeline.insertTime(length, point)
+        result.timeline.video = result.timeline.video + VideoTimelineItem(UUID.randomUUID(), point, hold, item.layer)
+        return result to hold.id
+    }
+    /// A hold made longer or shorter: later footage moves with its end.
+    fun settingHold(state: EditState, id: UUID, seconds: Double): EditState {
+        val item = state.timeline.video.firstOrNull { it.id == id } ?: return state
+        val frozen = item.content.frozenFrame ?: return state
+        val duration = seconds.coerceIn(0.5, 10.0)
+        val delta = EditTime.seconds(duration) - item.mapping.duration
+        if (delta == EditTime.zero) return state
+        val content = item.content.copy(frozenFrame = frozen.copy(duration = duration), videoEffects = item.content.videoEffects?.map {
+            if (it.kind == VideoEffectID.freezeFrame) it.setting("hold", EffectValue.Number(duration)) else it })
+        if (delta > EditTime.zero) {
+            val result = state.copy()
+            result.timeline.insertTime(delta, item.end)
+            result.timeline.replaceContents(mapOf(id to content))
+            return result
+        }
+        // Shorter: the hold ends earlier and the footage after it closes up.
+        val result = state.copy(); result.timeline.replaceContents(mapOf(id to content))
+        val end = item.start + EditTime.seconds(duration)
+        if (result.timeline.gap(end) != null) result.timeline.closeGap(end)
+        return result
+    }
     /// The picture a title made at this time would sit on: the front one.
     fun pictureAt(time: Double, state: EditState): VideoTimelineItem? {
         val at = EditTime.seconds(time)

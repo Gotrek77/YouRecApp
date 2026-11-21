@@ -412,6 +412,32 @@ object MediaFiles {
         val displayWidth: Int get() = if (rotation % 180 == 0) width else height
         val displayHeight: Int get() = if (rotation % 180 == 0) height else width
     }
+    private val frameIndices = object : LinkedHashMap<String, VideoEffectFrameIndex>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, VideoEffectFrameIndex>?) = size > 8
+    }
+    /// The presentation times of a movie's frames, from its samples (nothing is
+    /// decoded), as the iPhone app's VideoEffectFrameAnalysis. Null if unreadable.
+    fun frameIndex(file: File): VideoEffectFrameIndex? {
+        val key = file.path + "|" + file.length() + "|" + file.lastModified()
+        synchronized(frameIndices) { frameIndices[key]?.let { return it } }
+        val extractor = MediaExtractor()
+        val times = java.util.TreeSet<Long>()
+        try {
+            extractor.setDataSource(file.path)
+            val index = track(extractor, "video/"); if (index < 0) return null
+            extractor.selectTrack(index)
+            while (true) {
+                val t = extractor.sampleTime
+                if (t < 0) break
+                times.add(t)
+                if (times.size > 3_000_000 || !extractor.advance()) break
+            }
+        } catch (e: Exception) { return null } finally { extractor.release() }
+        val result = VideoEffectFrameIndex(times.map { it / 1_000_000.0 }.toDoubleArray())
+        if (!result.valid) return null
+        synchronized(frameIndices) { frameIndices[key] = result }
+        return result
+    }
     fun track(extractor: MediaExtractor, prefix: String): Int =
         (0 until extractor.trackCount).firstOrNull { extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith(prefix) == true } ?: -1
     /// The longest track, in seconds. Throws for a file that is not usable media.

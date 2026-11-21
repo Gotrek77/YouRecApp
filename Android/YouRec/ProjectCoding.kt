@@ -17,7 +17,7 @@ internal object ProjectCoding {
     // TimelineClip
     private val clipTools = mapOf("stabilization" to "Stabilization",
         "openingTransition" to "Transitions", "transition" to "Transitions",
-        "frozenFrame" to "Freeze frame", "colorRegions" to "Color",
+        "colorRegions" to "Color",
         "framingVariants" to "Crop, Mirror or Stabilization on a range")
     fun clip(value: Fields): TimelineClip {
         for ((key, tool) in clipTools) if (present(value.raw(key))) unsupported(tool)
@@ -66,7 +66,8 @@ internal object ProjectCoding {
             (0 until pairs.size / 2).associate { Fields.uuid(pairs[it * 2]) to (pairs[it * 2 + 1] as? List<*> ?: throw ProjectError.InvalidDocument()).map { i -> Fields.of(i).let { w -> SourceInterval(w.double("start"), w.double("end")) } } }
         }
         return TimelineClip(value.uuid("id"), value.uuid("sourceID"), value.double("start"), value.double("end"), speed, crop, mirror, texts, color, pauses, images,
-            value.listOrNull("videoEffects")?.let(::videoEffects), windows)
+            value.listOrNull("videoEffects")?.let(::videoEffects), windows,
+            value.fieldsOrNull("frozenFrame")?.let { FrozenFrameSegment(it.double("sourceTime"), it.double("duration"), it.doubleOrNull("offset") ?: 0.0).also { f -> if (!f.valid) throw ProjectError.InvalidDocument() } })
     }
     fun encode(clip: TimelineClip) = jsonObject("id" to clip.id.text, "sourceID" to clip.sourceID.text, "start" to clip.start, "end" to clip.end,
         "speed" to clip.speed?.let { jsonObject("id" to it.id.text, "rate" to it.rate) },
@@ -85,6 +86,7 @@ internal object ProjectCoding {
         "texts" to clip.texts?.map { jsonObject("id" to it.id.text, "text" to it.text, "start" to it.start, "end" to it.end, "x" to it.x, "y" to it.y,
             "size" to it.size, "style" to it.style.name.lowercase(), "color" to it.color.name.lowercase()) },
         "videoEffects" to clip.videoEffects?.map { encode(it) },
+        "frozenFrame" to clip.frozenFrame?.let { jsonObject("sourceTime" to it.sourceTime, "duration" to it.duration, "offset" to it.offset) },
         "effectWindows" to clip.effectWindows?.entries?.sortedBy { it.key.text }?.flatMap { listOf(it.key.text, it.value.map { i -> jsonObject("start" to i.start, "end" to i.end) }) })
 
     private fun map(value: Fields) = SourcePlaybackMap(list(value.list("runs")) {

@@ -32,13 +32,13 @@ data class TimelineClip(val id: UUID = UUID.randomUUID(), val sourceID: UUID, va
                         val speed: SpeedSettings? = null, val crop: CropSettings? = null, val mirror: MirrorSettings? = null,
                         val texts: List<TextOverlay>? = null, val color: ColorSettings? = null, val pauses: PauseSettings? = null,
                         val images: List<ImageOverlay>? = null, val videoEffects: List<VideoEffectSettings>? = null,
-                        val effectWindows: Map<UUID, List<SourceInterval>>? = null) {
+                        val effectWindows: Map<UUID, List<SourceInterval>>? = null, val frozenFrame: FrozenFrameSegment? = null) {
     fun visibleImages(sourceTime: Double) = images?.filter { it.start <= sourceTime && sourceTime < it.end } ?: emptyList()
     /// The titles to draw while this clip shows one source time.
     fun visibleTexts(sourceTime: Double) = texts?.filter { it.hasText && it.start <= sourceTime && sourceTime < it.end } ?: emptyList()
     /// Source seconds played per timeline second.
     val rate: Double get() = (speed?.rate ?: 1.0).coerceIn(0.125, 6.0)
-    val duration: Double get() = playbackSpans.sumOf { it.duration }
+    val duration: Double get() = frozenFrame?.duration ?: playbackSpans.sumOf { it.duration }
     /// The source this clip plays: its range less any pause cuts.
     val keptIntervals: List<SourceInterval> get() {
         val result = ArrayList<SourceInterval>(); var cursor = start
@@ -51,9 +51,46 @@ data class TimelineClip(val id: UUID = UUID.randomUUID(), val sourceID: UUID, va
         if (cursor < end) result.add(SourceInterval(cursor, end))
         return result
     }
-    val playbackSpans: List<PlaybackSpan> get() = keptIntervals.map { PlaybackSpan(it.start, it.end, rate) }
+    /// The product of Undercranking's and Step printing's speed at a source time.
+    fun sequenceRate(at: Double): Double = (videoEffects ?: emptyList()).filter { it.enabled && it.start <= at && it.end > at }
+        .fold(1.0) { result, effect -> if (effect.kind == VideoEffectID.undercranking || effect.kind == VideoEffectID.stepPrinting) result * effect.number("speed", at) else result }
+    /// A freeze set to Cut, or Undercranking with Mute, silences the clip's own sound.
+    fun mutesSourceAudio(at: Double): Boolean {
+        if (frozenFrame != null && videoEffects?.firstOrNull { it.kind == VideoEffectID.freezeFrame }?.choice("audio", at) == "Cut") return true
+        return videoEffects?.any { it.enabled && it.kind == VideoEffectID.undercranking && it.start <= at && it.end > at && it.toggle("mute", at) } == true
+    }
+    /// One source clock for duration, seeking, sound and pictures, as the iPhone
+    /// app's effectPlaybackSpans: the clip's speed times the effects' speed, over
+    /// the kept source. Animated speed is subdivided only where it changes by
+    /// more than 1%, on the effect's own grid, so a split cannot move it.
+    val playbackSpans: List<PlaybackSpan> get() {
+        val kept = keptIntervals
+        val effects = (videoEffects ?: emptyList()).filter { it.enabled && (it.kind == VideoEffectID.undercranking || it.kind == VideoEffectID.stepPrinting) && it.start < end && it.end > start }
+        if (effects.isEmpty()) return kept.map { PlaybackSpan(it.start, it.end, rate) }
+        val points = mutableListOf(minOf(start, effects.minOf { it.start }), maxOf(end, effects.maxOf { it.end }))
+        for (effect in effects) {
+            points += listOf(effect.start, effect.end)
+            points += effect.parameters.filter { it.id == "speed" || it.id == "mute" }.flatMap { p -> p.keyframes.map { it.time } }
+        }
+        val boundaries = points.toSortedSet().toList()
+        val result = ArrayList<PlaybackSpan>()
+        fun value(t: Double) = minOf(6.0, maxOf(0.125, (speed?.rate ?: 1.0) * sequenceRate(t)))
+        fun add(a: Double, b: Double, depth: Int = 0) {
+            if (kept.none { it.start < b && it.end > a }) return
+            val r0 = value(a + 0.0000001); val r1 = value(b - 0.0000001)
+            if (depth < 12 && b - a > 1.0 / 30 && Math.abs(Math.log(r1 / r0)) > 0.01) {
+                val middle = (a + b) / 2; add(a, middle, depth + 1); add(middle, b, depth + 1)
+            } else {
+                val rate = value((a + b) / 2)
+                for (interval in kept) if (interval.start < b && interval.end > a) result.add(PlaybackSpan(maxOf(a, interval.start), minOf(b, interval.end), rate))
+            }
+        }
+        for ((a, b) in boundaries.zipWithNext()) if (b > a) add(a, b)
+        return result
+    }
     /// Source seconds at a time into the clip.
     fun sourceTime(offset: Double): Double {
+        frozenFrame?.let { return it.sourceTime }
         val spans = playbackSpans
         var remaining = maxOf(0.0, offset)
         for ((index, span) in spans.withIndex()) {
@@ -63,7 +100,17 @@ data class TimelineClip(val id: UUID = UUID.randomUUID(), val sourceID: UUID, va
         return end
     }
     /// Time into the clip at which a source second plays (or would, if it were not cut).
-    fun timelineTime(source: Double) = playbackSpans.sumOf { maxOf(0.0, minOf(it.end, source) - it.start) / it.rate }
+    fun timelineTime(source: Double): Double {
+        frozenFrame?.let { return if (source <= it.sourceTime) 0.0 else it.duration }
+        return playbackSpans.sumOf { maxOf(0.0, minOf(it.end, source) - it.start) / it.rate }
+    }
+}
+
+/// A hold: an inserted timeline segment showing one original frame. It never
+/// removes or replaces the footage after it. `offset` is how far into the hold
+/// this piece starts (a split hold keeps its push-in going).
+data class FrozenFrameSegment(val sourceTime: Double, val duration: Double, val offset: Double = 0.0) {
+    val valid: Boolean get() = sourceTime.isFinite() && sourceTime >= 0 && duration.isFinite() && duration > 0 && duration <= 10 && offset.isFinite() && offset >= 0 && offset <= 10
 }
 
 data class CanvasSize(val width: Double, val height: Double)
