@@ -467,7 +467,14 @@ def effects():
         return False
     if reveal("Add Auto Background") and tap("Add Auto Background", 5):
         if wait("Auto Background enabled", 10):
-            note("Background added: " + describe())
+            # Drawn in the preview with the person mask (ONNX segmentation, guided
+            # filter); removed again, as segmenting every frame of the export on
+            # the emulator's software encoder would outlast the export's wait.
+            time.sleep(3)
+            shot("editor-auto-background")
+            if crashed(): return False
+            tap("Remove", 5); time.sleep(1)
+            note("Background drawn and removed: " + describe())
         else:
             fail("Effects: Add Auto Background did nothing. On screen: " + describe())
     else:
