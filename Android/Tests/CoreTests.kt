@@ -28,6 +28,7 @@ fun main(arguments: Array<String>) {
     censorTests()
     enhanceTests()
     subtitleTests()
+    videoEffectTests()
     transitionTests()
     insertionTests()
     horizonTests()
@@ -113,7 +114,6 @@ private fun persistenceTests(root: File) {
     @Suppress("UNCHECKED_CAST")
     for ((words, change) in listOf<Pair<String, (MutableMap<String, Any?>) -> Unit>>(
         "Color" to { (firstOf(it, "video")["content"] as MutableMap<String, Any?>)["colorRegions"] = listOf(mapOf("start" to 0)) },
-        "range" to { (firstOf(it, "video")["content"] as MutableMap<String, Any?>)["effectWindows"] = listOf("A", listOf<Any?>()) },
         "range" to { (firstOf(it, "video")["content"] as MutableMap<String, Any?>)["framingVariants"] = listOf(mapOf("crop" to mapOf("x" to 0))) },
         "spanning" to { firstOf(it, "video")["spanningEffects"] = listOf("A") },
         "spanning" to { firstOf(it, "audio")["spanningEffects"] = listOf("A") })) {

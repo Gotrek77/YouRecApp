@@ -26,12 +26,13 @@ data class CaptureEvent(val id: UUID = UUID.randomUUID(), val time: Double, val 
 
 data class SourceMedia(val id: UUID = UUID.randomUUID(), val filename: String, val duration: Double, val recordedAt: Moment = Moment.now(),
                        val events: List<CaptureEvent>? = null, val sha256: String? = null, val audioOnly: Boolean? = null,
-                       val isStillPhoto: Boolean? = null, val originalName: String? = null)
+                       val isStillPhoto: Boolean? = null, val originalName: String? = null, val videoEffects: List<VideoEffectSettings>? = null)
 
 data class TimelineClip(val id: UUID = UUID.randomUUID(), val sourceID: UUID, val start: Double, val end: Double,
                         val speed: SpeedSettings? = null, val crop: CropSettings? = null, val mirror: MirrorSettings? = null,
                         val texts: List<TextOverlay>? = null, val color: ColorSettings? = null, val pauses: PauseSettings? = null,
-                        val images: List<ImageOverlay>? = null) {
+                        val images: List<ImageOverlay>? = null, val videoEffects: List<VideoEffectSettings>? = null,
+                        val effectWindows: Map<UUID, List<SourceInterval>>? = null) {
     fun visibleImages(sourceTime: Double) = images?.filter { it.start <= sourceTime && sourceTime < it.end } ?: emptyList()
     /// The titles to draw while this clip shows one source time.
     fun visibleTexts(sourceTime: Double) = texts?.filter { it.hasText && it.start <= sourceTime && sourceTime < it.end } ?: emptyList()
@@ -200,7 +201,7 @@ class Project(var title: String) {
         // Recording here: the take goes in at the chosen time, and the next take of
         // the same session follows it. The whole session is one undo step.
         sources = sources + source
-        val clip = TimelineClip(sourceID = source.id, start = 0.0, end = source.duration)
+        val clip = TimelineClip(sourceID = source.id, start = 0.0, end = source.duration, videoEffects = source.videoEffects)
         captureLedger = captureLedger + CaptureLedgerEntry(clip, true)
         val continuing = recordingInsertionStep == historyCursor && historyCursor > 0 && historyCursor == snapshots.size - 1
         val previous = recordingSite
@@ -247,7 +248,7 @@ class Project(var title: String) {
         sources = sources + source; updatedAt = Moment.now()
     }
     private fun includeRecording(source: SourceMedia) {
-        captureLedger = captureLedger + CaptureLedgerEntry(TimelineClip(sourceID = source.id, start = 0.0, end = source.duration), false)
+        captureLedger = captureLedger + CaptureLedgerEntry(TimelineClip(sourceID = source.id, start = 0.0, end = source.duration, videoEffects = source.videoEffects), false)
         updatedAt = Moment.now()
     }
     fun undo() { if (canUndo) { historyCursor -= 1; updatedAt = Moment.now() } }

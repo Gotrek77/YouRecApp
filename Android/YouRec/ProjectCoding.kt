@@ -17,8 +17,8 @@ internal object ProjectCoding {
     // TimelineClip
     private val clipTools = mapOf("stabilization" to "Stabilization",
         "openingTransition" to "Transitions", "transition" to "Transitions",
-        "videoEffects" to "Video effects", "frozenFrame" to "Freeze frame", "colorRegions" to "Color",
-        "effectWindows" to "effects limited to a range", "framingVariants" to "Crop, Mirror or Stabilization on a range")
+        "frozenFrame" to "Freeze frame", "colorRegions" to "Color",
+        "framingVariants" to "Crop, Mirror or Stabilization on a range")
     fun clip(value: Fields): TimelineClip {
         for ((key, tool) in clipTools) if (present(value.raw(key))) unsupported(tool)
         // The tools themselves are edited here; their animated and ranged forms are not yet.
@@ -60,7 +60,13 @@ internal object ProjectCoding {
             ImageOverlay(image.uuid("id"), image.string("filename"), image.double("start"), image.double("end"), image.double("x"), image.double("y"),
                 image.double("width"), image.double("opacity"))
         } }
-        return TimelineClip(value.uuid("id"), value.uuid("sourceID"), value.double("start"), value.double("end"), speed, crop, mirror, texts, color, pauses, images)
+        // Swift writes a dictionary keyed by identity as a flat list: key, value, key, value.
+        val windows = value.listOrNull("effectWindows")?.let { pairs ->
+            if (pairs.size % 2 != 0) throw ProjectError.InvalidDocument()
+            (0 until pairs.size / 2).associate { Fields.uuid(pairs[it * 2]) to (pairs[it * 2 + 1] as? List<*> ?: throw ProjectError.InvalidDocument()).map { i -> Fields.of(i).let { w -> SourceInterval(w.double("start"), w.double("end")) } } }
+        }
+        return TimelineClip(value.uuid("id"), value.uuid("sourceID"), value.double("start"), value.double("end"), speed, crop, mirror, texts, color, pauses, images,
+            value.listOrNull("videoEffects")?.let(::videoEffects), windows)
     }
     fun encode(clip: TimelineClip) = jsonObject("id" to clip.id.text, "sourceID" to clip.sourceID.text, "start" to clip.start, "end" to clip.end,
         "speed" to clip.speed?.let { jsonObject("id" to it.id.text, "rate" to it.rate) },
@@ -77,7 +83,9 @@ internal object ProjectCoding {
         "images" to clip.images?.map { jsonObject("id" to it.id.text, "filename" to it.filename, "start" to it.start, "end" to it.end, "x" to it.x, "y" to it.y,
             "width" to it.width, "opacity" to it.opacity) },
         "texts" to clip.texts?.map { jsonObject("id" to it.id.text, "text" to it.text, "start" to it.start, "end" to it.end, "x" to it.x, "y" to it.y,
-            "size" to it.size, "style" to it.style.name.lowercase(), "color" to it.color.name.lowercase()) })
+            "size" to it.size, "style" to it.style.name.lowercase(), "color" to it.color.name.lowercase()) },
+        "videoEffects" to clip.videoEffects?.map { encode(it) },
+        "effectWindows" to clip.effectWindows?.entries?.sortedBy { it.key.text }?.flatMap { listOf(it.key.text, it.value.map { i -> jsonObject("start" to i.start, "end" to i.end) }) })
 
     private fun map(value: Fields) = SourcePlaybackMap(list(value.list("runs")) {
         PlaybackRun(time(it.fields("duration")), it.double("sourceStart"), it.double("sourceEnd"), it.bool("silent"))
@@ -231,13 +239,82 @@ internal object ProjectCoding {
     private fun event(value: Fields) = CaptureEvent(value.uuid("id"), value.double("time"), value.string("kind"), value.string("detail"))
     private fun encode(event: CaptureEvent) = jsonObject("id" to event.id.text, "time" to event.time, "kind" to event.kind, "detail" to event.detail)
     fun source(value: Fields): SourceMedia {
-        if (present(value.raw("videoEffects"))) unsupported("Video effects")
         return SourceMedia(value.uuid("id"), value.string("filename"), value.double("duration"), Moment(value.double("recordedAt")),
-            value.listOrNull("events")?.let { list(it, ::event) }, value.stringOrNull("sha256"), value.boolOrNull("audioOnly"), value.boolOrNull("isStillPhoto"), value.stringOrNull("originalName"))
+            value.listOrNull("events")?.let { list(it, ::event) }, value.stringOrNull("sha256"), value.boolOrNull("audioOnly"), value.boolOrNull("isStillPhoto"), value.stringOrNull("originalName"),
+            value.listOrNull("videoEffects")?.let(::videoEffects))
     }
     fun encode(source: SourceMedia) = jsonObject("id" to source.id.text, "filename" to source.filename, "duration" to source.duration,
         "recordedAt" to source.recordedAt.reference, "events" to source.events?.map { encode(it) }, "sha256" to source.sha256,
-        "audioOnly" to source.audioOnly, "isStillPhoto" to source.isStillPhoto, "originalName" to source.originalName)
+        "audioOnly" to source.audioOnly, "isStillPhoto" to source.isStillPhoto, "originalName" to source.originalName,
+        "videoEffects" to source.videoEffects?.map { encode(it) })
+
+    // Video effects, in the iPhone app's form. Unknown kinds are skipped, as
+    // the iPhone app skips them; a known effect this build cannot draw yet is
+    // refused by name rather than opened and silently not drawn.
+    fun videoEffects(values: List<Any?>): List<VideoEffectSettings> = values.mapNotNull { raw ->
+        val fields = Fields.of(raw)
+        val kind = VideoEffectID.of(fields.string("kind")) ?: return@mapNotNull null
+        if (kind !in VideoEffectRendering.drawn) unsupported("Video effects: " + kind.descriptor.displayName)
+        if (present(fields.raw("motion"))) unsupported("animated Color Correction")
+        val reference = VideoEffectSettings.defaults(kind)
+        val stored = list(fields.list("parameters"), ::effectParameter)
+        // Bounds, labels and choices belong to the catalogue; stored values and animation are kept.
+        val parameters = stored.map { old -> reference.firstOrNull { it.id == old.id }?.copy(value = old.value, keyframes = old.keyframes) ?: old } +
+            reference.filter { p -> stored.none { it.id == p.id } }
+        VideoEffectSettings(fields.uuid("id"), kind, fields.bool("enabled"), fields.int("version"), fields.double("start"), fields.double("end"), parameters,
+            fields.stringOrNull("analysisFile"), fields.stringOrNull("analysisDataFile"), fields.uuidOrNull("capturedEffectID"),
+            fields.listOrNull("palette")?.map { rgb(Fields.of(it)) }, fields.raw("lockedPalette"), fields.intOrNull("algorithm"),
+            fields.listOrNull("strobeTimeMap")?.map { Fields.of(it).let { p -> StrobeTimePoint(p.double("source"), p.double("elapsed")) } },
+            fields.doubleOrNull("phaseOffset"), fields.doubleOrNull("releaseTime"))
+    }
+    private fun rgb(value: Fields) = EffectRGB(value.double("red"), value.double("green"), value.double("blue"))
+    private fun encode(rgb: EffectRGB) = jsonObject("red" to rgb.red, "green" to rgb.green, "blue" to rgb.blue)
+    // Swift's form for enums with associated values: {"case": {"_0": value}} or {"case": {"label": value}}.
+    private fun effectValue(value: Fields): EffectValue {
+        fun only(name: String) = value.fields(name)
+        return when {
+            value.has("number") -> EffectValue.Number(only("number").double("_0"))
+            value.has("toggle") -> EffectValue.Toggle(only("toggle").bool("_0"))
+            value.has("choice") -> EffectValue.Choice(only("choice").string("_0"))
+            value.has("color") -> EffectValue.Color(rgb(only("color").fields("_0")))
+            value.has("media") -> EffectValue.Media(only("media").stringOrNull("_0"))
+            else -> throw ProjectError.InvalidDocument()
+        }
+    }
+    private fun encode(value: EffectValue): Map<String, Any?> = when (value) {
+        is EffectValue.Number -> jsonObject("number" to jsonObject("_0" to value.value))
+        is EffectValue.Toggle -> jsonObject("toggle" to jsonObject("_0" to value.value))
+        is EffectValue.Choice -> jsonObject("choice" to jsonObject("_0" to value.value))
+        is EffectValue.Color -> jsonObject("color" to jsonObject("_0" to encode(value.value)))
+        is EffectValue.Media -> jsonObject("media" to jsonObject("_0" to value.file))
+    }
+    private fun parameterKind(value: Fields): EffectParameterKind = when {
+        value.has("slider") -> value.fields("slider").let { EffectParameterKind.Slider(it.double("min"), it.double("max"), it.double("defaultValue"), it.double("step")) }
+        value.has("toggle") -> EffectParameterKind.Toggle(value.fields("toggle").bool("defaultValue"))
+        value.has("stepper") -> value.fields("stepper").let { s -> EffectParameterKind.Stepper(s.list("values").map { Fields.double(it) }, s.double("defaultValue")) }
+        value.has("color") -> EffectParameterKind.Color(rgb(value.fields("color").fields("defaultValue")))
+        value.has("picker") -> value.fields("picker").let { p -> EffectParameterKind.Picker(p.list("options").map { it as? String ?: throw ProjectError.InvalidDocument() }, p.string("defaultValue")) }
+        value.has("media") -> value.fields("media").let { EffectParameterKind.Media(it.bool("image"), it.bool("video")) }
+        else -> throw ProjectError.InvalidDocument()
+    }
+    private fun encode(kind: EffectParameterKind): Map<String, Any?> = when (kind) {
+        is EffectParameterKind.Slider -> jsonObject("slider" to jsonObject("min" to kind.min, "max" to kind.max, "defaultValue" to kind.defaultValue, "step" to kind.step))
+        is EffectParameterKind.Toggle -> jsonObject("toggle" to jsonObject("defaultValue" to kind.defaultValue))
+        is EffectParameterKind.Stepper -> jsonObject("stepper" to jsonObject("values" to kind.values, "defaultValue" to kind.defaultValue))
+        is EffectParameterKind.Color -> jsonObject("color" to jsonObject("defaultValue" to encode(kind.defaultValue)))
+        is EffectParameterKind.Picker -> jsonObject("picker" to jsonObject("options" to kind.options, "defaultValue" to kind.defaultValue))
+        is EffectParameterKind.Media -> jsonObject("media" to jsonObject("image" to kind.image, "video" to kind.video))
+    }
+    private fun effectParameter(value: Fields) = EffectParameter(value.string("id"), value.string("title"), parameterKind(value.fields("kind")),
+        effectValue(value.fields("value")), value.listOrNull("keyframes")?.let { keys -> list(keys) { EffectKeyframe(it.uuid("id"), it.double("time"), effectValue(it.fields("value"))) } } ?: emptyList(),
+        value.boolOrNull("animatable") ?: true)
+    private fun encode(p: EffectParameter) = jsonObject("id" to p.id, "title" to p.title, "kind" to encode(p.kind), "value" to encode(p.value),
+        "keyframes" to p.keyframes.map { jsonObject("id" to it.id.text, "time" to it.time, "value" to encode(it.value)) }, "animatable" to p.animatable)
+    fun encode(effect: VideoEffectSettings) = jsonObject("id" to effect.id.text, "kind" to effect.kind.name, "enabled" to effect.enabled, "version" to effect.version,
+        "start" to effect.start, "end" to effect.end, "parameters" to effect.parameters.map { encode(it) }, "analysisFile" to effect.analysisFile,
+        "analysisDataFile" to effect.analysisDataFile, "capturedEffectID" to effect.capturedEffectID?.text, "palette" to effect.palette?.map { encode(it) },
+        "lockedPalette" to effect.lockedPalette, "algorithm" to effect.algorithm, "strobeTimeMap" to effect.strobeTimeMap?.map { jsonObject("source" to it.source, "elapsed" to it.elapsed) },
+        "phaseOffset" to effect.phaseOffset, "releaseTime" to effect.releaseTime)
 
     private fun settings(value: Fields?): ExportSettings {
         if (value == null) return ExportSettings()

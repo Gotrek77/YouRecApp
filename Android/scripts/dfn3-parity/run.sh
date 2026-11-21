@@ -8,7 +8,7 @@ WORK=${1:-$(mktemp -d "${TMPDIR:-/tmp}/dfn3-parity.XXXXXX")}; mkdir -p "$WORK"
 ORT=$WORK/onnxruntime-1.31.1.jar
 [ -f "$ORT" ] || curl -sSfL -o "$ORT" https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime/1.31.1/onnxruntime-1.31.1.jar
 DSP=../ThirdParty/DeepFilterNet3/DeepFilterNet3-DSP.json
-CORE="YouRec/JSON.kt YouRec/TrackTimeline.kt YouRec/Project.kt YouRec/ProjectCoding.kt YouRec/TimelineEditing.kt YouRec/ZoomTransition.kt YouRec/RenderPlan.kt YouRec/TakeJournal.kt YouRec/VideoTools.kt YouRec/ColorGrading.kt YouRec/TimelinePaste.kt YouRec/ProjectArchive.kt YouRec/CoverFramePool.kt YouRec/AudioCensor.kt YouRec/AudioDSP.kt YouRec/OfflineAudioPipeline.kt YouRec/DeepFilterNet.kt YouRec/StudioAudio.kt YouRec/StudioModelPack.kt YouRec/Subtitles.kt YouRec/DeepFilterOnnx.kt YouRec/PauseCuts.kt YouRec/Transitions.kt YouRec/HorizonLevel.kt"
+CORE="YouRec/JSON.kt YouRec/TrackTimeline.kt YouRec/Project.kt YouRec/ProjectCoding.kt YouRec/TimelineEditing.kt YouRec/ZoomTransition.kt YouRec/RenderPlan.kt YouRec/TakeJournal.kt YouRec/VideoTools.kt YouRec/ColorGrading.kt YouRec/TimelinePaste.kt YouRec/ProjectArchive.kt YouRec/CoverFramePool.kt YouRec/AudioCensor.kt YouRec/AudioDSP.kt YouRec/OfflineAudioPipeline.kt YouRec/DeepFilterNet.kt YouRec/StudioAudio.kt YouRec/StudioModelPack.kt YouRec/Subtitles.kt YouRec/VideoEffectModel.kt YouRec/VideoEffectRendering.kt YouRec/DeepFilterOnnx.kt YouRec/PauseCuts.kt YouRec/Transitions.kt YouRec/HorizonLevel.kt"
 ${KOTLINC:-kotlinc} -nowarn $CORE scripts/dfn3-parity/Harness.kt -cp "$ORT" -include-runtime -d "$WORK/harness.jar"
 python3 - "$WORK" <<'PY'
 import sys, numpy as np
