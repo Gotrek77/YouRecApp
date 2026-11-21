@@ -17,8 +17,8 @@ object StudioModelPack {
     }
     /// Public Hugging Face repository and revision holding the files of
     /// scripts/neural (see its README). Null until they are published.
-    val repository: String? = null
-    val revision: String? = null
+    val repository: String? = "gpatane/yourec-android-models"
+    val revision: String? = "a1d17af6651ecfc485e82a6df7bb66243ac5949f"
     // Filled from the CI conversion (scripts/neural, job neural-models).
     val lava = Entry("LavaSR/LavaSRv2.onnx", 55970417, "50b59eae6f4276af5ea12df8c90cdb509dd4798b374a2dd76086ae91add1d65a")
     val voiceFixer: Entry? = Entry("VoiceFixer/VoiceFixer.onnx", 207547354, "81c95a294d3bb7c9f1e6146732fb112570a9cdab54ef268b76a068724f0cee52")

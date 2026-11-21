@@ -59,6 +59,11 @@ attribution, `SHA256SUMS`, `conversion.json`). To publish it:
 
 Until then the app offers only what its build carries.
 
+Published: https://huggingface.co/gpatane/yourec-android-models at revision
+`a1d17af6651ecfc485e82a6df7bb66243ac5949f` (both graphs match the pinned sizes
+and SHA-256). CI (`check-download.py`) downloads them as the app does on every
+run and fails if a byte differs.
+
 ## Measured (CI, run 51)
 
 - LavaSR: 55970417 bytes, SHA-256 `50b59eae…1d65a` (the same in every conversion
