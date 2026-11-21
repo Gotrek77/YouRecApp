@@ -465,13 +465,13 @@ def effects():
     the whole project through the Effects panel. True once Noir is applied."""
     if not tool("Effects"):
         return False
-    if reveal("Add Background") and tap("Add Background", 5):
-        if wait("Background enabled", 10):
+    if reveal("Add Auto Background") and tap("Add Auto Background", 5):
+        if wait("Auto Background enabled", 10):
             note("Background added: " + describe())
         else:
-            fail("Effects: Add Background did nothing. On screen: " + describe())
+            fail("Effects: Add Auto Background did nothing. On screen: " + describe())
     else:
-        fail("Effects: no Add Background. On screen: " + describe())
+        fail("Effects: no Add Auto Background. On screen: " + describe())
     if not reveal("Add Noir") or not tap("Add Noir", 10):
         return False
     if not wait("Noir enabled", 5):
