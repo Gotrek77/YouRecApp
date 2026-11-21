@@ -96,7 +96,7 @@ jobs:
       - name: Model files
         run: |
           python -m pip install --quiet huggingface_hub==0.36.0
-          python Android/scripts/speech/fetch-model.py work/qwen3-asr-0.6b
+          python Android/scripts/speech/fetch-model.py work/qwen3-asr-0.6b 5eb144179a02acc5e5ba31e748d22b0cf3e303b0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

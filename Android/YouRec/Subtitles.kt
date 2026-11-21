@@ -8,6 +8,8 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 
+class SubtitleError(message: String) : Exception(message)
+
 /// Times are estimates, anchored in the original sound. Each audio item owns
 /// its words by value: splits, moves, copies and Undo cannot share mutable text.
 data class SubtitleWord(val id: UUID = UUID.randomUUID(), val phraseID: UUID = UUID.randomUUID(), val text: String, val start: Double, val end: Double)

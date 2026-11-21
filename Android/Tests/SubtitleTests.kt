@@ -64,5 +64,35 @@ fun subtitleTests() {
         @Suppress("UNCHECKED_CAST") ((raw["timeline"] as MutableMap<String, Any?>)["subtitles"] as MutableMap<String, Any?>)["appearance"] = mapOf("x" to 1)
         ProjectCoding.editState(Fields.of(raw))
     }
+    transcriberTests()
     println("Subtitles: ok")
+}
+
+/// The transcriber with a stand-in model: the project's sound at 16 kHz,
+/// sections found by level, words timed within the speech of each.
+private fun transcriberTests() {
+    val take = SourceMedia(filename = "talk.mov", duration = 20.0)
+    val project = Project("Transcriber QA"); project.addRecording(take)
+    // Speech-like bursts at 2–4 s and 10–12 s of the source; silence elsewhere.
+    val voice = object : PCMSource {
+        override fun read(position: Long, into: FloatArray, offset: Int, frames: Int) {
+            for (i in 0 until frames) { val t = (position + i) / 48000.0
+                val v = if (t in 2.0..4.0 || t in 10.0..12.0) (Math.sin(2 * Math.PI * 220 * t) * 0.3).toFloat() else 0f
+                into[offset + i * 2] = v; into[offset + i * 2 + 1] = v }
+        }
+    }
+    val mix = AudioMix(project.edit.timeline) { voice }
+    val scratch = java.io.File.createTempFile("speech", ".f32")
+    val range = 1.0..15.0
+    val levels = SubtitleTranscriber.extract(mix, range, scratch)
+    require(scratch.length() == Math.ceil(14.0 * 16000).toLong() * 4 && levels.size == Math.ceil(14.0 * 16000 / 320).toInt(), "16 kHz mono and 20 ms levels for the range")
+    val heard = ArrayList<Int>()
+    val recognizer = object : SpeechRecognizer {
+        override fun transcribe(samples: FloatArray, language: String?): String { heard.add(samples.size); require(language == "Italian"); return "ciao a tutti" }
+        override fun close() { }
+    }
+    val words = SubtitleTranscriber.transcribe(scratch, levels, range, "Italian", recognizer)
+    require(heard.size == 2 && words.size == 6, "Each speech section is transcribed once (${heard.size} sections, ${words.size} words)")
+    require(words.take(3).all { it.start >= 1.9 && it.end <= 4.2 } && words.drop(3).all { it.start >= 9.9 && it.end <= 12.2 }, "Words fall within their speech, in project time (${words.map { it.start to it.end }})")
+    scratch.delete()
 }
