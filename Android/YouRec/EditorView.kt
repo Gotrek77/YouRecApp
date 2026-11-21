@@ -1449,7 +1449,8 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         if (effects.isEmpty()) listed(Design.label(context, "No effects on " + scopeTitle(project.edit) + ". Add one below.", 13f, Design.secondary))
         // Effects to add, by family, three to a row.
         val missing = VideoEffectCatalog.all.filter { it.id in VideoEffectRendering.drawn && effects.none { e -> e.kind == it.id } && (reference.content.frozenFrame == null || it.family != EffectFamily.Time) }
-        for ((family, group) in missing.groupBy { it.family }) {
+        // Families in their order on the picture: Background first, as the iPhone app applies them.
+        for ((family, group) in missing.groupBy { it.family }.toSortedMap(compareBy { it.ordinal })) {
             listed(Design.label(context, "Add · " + family.title, 13f, Design.secondary).apply { setPadding(0, Design.dp(context, 6f), 0, 0) })
             for (row in group.chunked(3)) listed(LinearLayout(context).apply {
                 orientation = HORIZONTAL
