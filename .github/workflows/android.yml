@@ -5,6 +5,11 @@ on:
   push:
     paths: ['Android/**', '.github/workflows/android.yml']
   workflow_dispatch:
+    inputs:
+      publish_models:
+        description: 'Publish LavaSR and VoiceFixer to this Hugging Face model repository (owner/name; needs the HF_TOKEN secret). Empty: do not publish.'
+        required: false
+        default: ''
 
 jobs:
   # LavaSR and VoiceFixer as ONNX, converted from the pinned upstream
@@ -64,6 +69,14 @@ jobs:
           name: huggingface-upload
           path: huggingface
           retention-days: 30
+      # Only on a manual run that names a repository: the folder above becomes
+      # one commit of a public model repository, for the app's download on request.
+      - name: Publish to Hugging Face
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_models != ''
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          REPOSITORY: ${{ inputs.publish_models }}
+        run: python Android/scripts/neural/publish-huggingface.py "$REPOSITORY" huggingface
 
   build:
     needs: neural-models
