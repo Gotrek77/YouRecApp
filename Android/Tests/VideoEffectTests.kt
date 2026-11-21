@@ -47,6 +47,7 @@ fun videoEffectTests() {
     effectRenderingTests()
     effectEditingTests()
     effectTimingTests()
+    effectSubjectTests()
     println("Video effects: ok")
 }
 
@@ -198,4 +199,23 @@ fun effectTimingTests() {
     require(shorter.timeline.duration == EditTime.seconds(7.0) && shorter.timeline.video.none { it.start < EditTime.seconds(3.0) && it.end > EditTime.seconds(3.0) && it.id != holdID && it.start != EditTime.zero }, "A shorter hold closes up (${shorter.timeline.duration.seconds})")
     shorter.timeline.validate(listOf(SourceMedia(source, "a.mp4", 6.0)))
     require(TimelineEditing.freezing(frozenEdit, 3.0) == null, "A hold is not frozen again")
+}
+
+/// Follow face: the track's interpolation and gaps, the choice among faces, crash zoom's aim.
+fun effectSubjectTests() {
+    val a = EffectSubjectSample(1.0, 0.1, 0.1, 0.2, 0.2, 0.9, true); val b = EffectSubjectSample(1.2, 0.3, 0.1, 0.2, 0.2, 0.9, true)
+    val track = EffectSubjectTrack(listOf(a, b))
+    require(abs(track.sample(1.1)!!.centerX - 0.3) < 1e-12 && track.sample(0.9) == null && track.sample(1.8) == null && track.sample(1.5) == b, "Track samples interpolate, hold, and lapse after half a second")
+    require(EffectSubjectTrack(listOf(a.copy(lost = true), b)).sample(1.1) == null, "A lost sample is a gap")
+    val chooser = EffectSubjectChooser(0.8, 0.5)
+    val left = EffectSubjectSample(0.0, 0.0, 0.4, 0.2, 0.2, 0.9, true); val right = EffectSubjectSample(0.0, 0.7, 0.4, 0.2, 0.2, 0.9, true)
+    require(chooser.update(listOf(left, right), 0.0)?.x == 0.7, "The face under the seed point is chosen")
+    val moved = chooser.update(listOf(left, right.copy(x = 0.72)), 1.0 / 15)!!
+    require(moved.x > 0.7 && moved.x < 0.72, "The centre eases toward the new position (${moved.x})")
+    require(chooser.update(listOf(left), 2.0 / 15) == null, "Another face is not jumped to while the subject is recent")
+    val crash = VideoEffectRendering.uniforms(VideoEffectSettings(kind = VideoEffectID.crashZoom), 10.0, 30.0, target = 0.25 to 0.75)
+    val v = VideoEffectRendering.frameValues(crash)
+    require(v[0] == 0.25f && v[1] == 0.75f && abs(v[2] - 2.5f) < 1e-6 && v[3] == 0f, "Crash zoom aims at the subject and holds its zoom (${v.toList()})")
+    val snap = VideoEffectRendering.frameValues(VideoEffectRendering.uniforms(VideoEffectSettings(kind = VideoEffectID.crashZoom), 0.09, 30.0))
+    require(snap[2] > 1f && snap[2] < 2.5f && snap[3] > 0f && snap[0] == 0.5f, "During the push the zoom grows with motion blur")
 }

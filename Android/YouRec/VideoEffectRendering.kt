@@ -16,7 +16,7 @@ object VideoEffectRendering {
         VideoEffectID.dayForNight, VideoEffectID.noir, VideoEffectID.expressionism, VideoEffectID.rgbOffset,
         VideoEffectID.negativeStrobe, VideoEffectID.kaleidoscope,
         VideoEffectID.halation, VideoEffectID.widescreen, VideoEffectID.sixteenMM, VideoEffectID.superEight,
-        VideoEffectID.undercranking, VideoEffectID.stepPrinting, VideoEffectID.freezeFrame)
+        VideoEffectID.undercranking, VideoEffectID.stepPrinting, VideoEffectID.freezeFrame, VideoEffectID.crashZoom)
 
     /// The iPhone app's pixel order: families in this order, each in the order
     /// VideoEffectSettings.ordered gives.
@@ -55,7 +55,7 @@ object VideoEffectRendering {
 
     /// `frameTime` numbers the frame (grain and weave advance with it); a
     /// freeze's own time is `holdTime`, how far into the hold this frame is.
-    fun uniforms(settings: VideoEffectSettings, sourceTime: Double, fps: Double, frameTime: Double = sourceTime, holdTime: Double? = null): Uniforms {
+    fun uniforms(settings: VideoEffectSettings, sourceTime: Double, fps: Double, frameTime: Double = sourceTime, holdTime: Double? = null, target: Pair<Double, Double>? = null): Uniforms {
         val p = FloatArray(40 * 4)
         for ((index, definition) in settings.kind.descriptor.parameters.withIndex()) {
             when (val value = settings.value(definition.id, sourceTime) ?: definition.value) {
@@ -73,7 +73,7 @@ object VideoEffectRendering {
         val intensity = if (settings.kind.descriptor.supportsIntensity) settings.number("intensity", sourceTime).toFloat() else 1f
         val time = if (settings.kind == VideoEffectID.freezeFrame && holdTime != null) holdTime else max(0.0, sourceTime - settings.start + (settings.phaseOffset ?: 0.0))
         return Uniforms(settings.kind.shaderIndex, frameIndex(frameTime, fps), time.toFloat(),
-            intensity, (settings.end - settings.start).toFloat(), fps.toFloat(), p, settings.releaseTime != null)
+            intensity, (settings.end - settings.start).toFloat(), fps.toFloat(), p, settings.releaseTime != null, target?.first?.toFloat(), target?.second?.toFloat())
     }
 
     /// The film grain lattice: random values in -1...1, colour in RGB (a

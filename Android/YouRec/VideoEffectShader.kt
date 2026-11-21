@@ -140,11 +140,12 @@ class VideoEffectShader {
     }
 
     /// Apply `effects` in order to the picture drawn after `begin`. Returns the target holding the result.
-    fun apply(effects: List<VideoEffectSettings>, sourceTime: Double, fps: Double, picture: Target, frameTime: Double = sourceTime, holdTime: Double? = null): Target {
+    fun apply(effects: List<VideoEffectSettings>, sourceTime: Double, fps: Double, picture: Target, frameTime: Double = sourceTime, holdTime: Double? = null,
+              targets: Map<java.util.UUID, Pair<Double, Double>> = emptyMap()): Target {
         var current = picture
         GLES20.glDisable(GLES20.GL_BLEND)
         for (effect in effects) {
-            val u = VideoEffectRendering.uniforms(effect, sourceTime, fps, frameTime, holdTime)
+            val u = VideoEffectRendering.uniforms(effect, sourceTime, fps, frameTime, holdTime, targets[effect.id])
             val inputs = ArrayList<Pair<String, Int>>()
             inputs.add("image" to current.texture)
             val auxiliary = encode(effect, u, current, sourceTime)

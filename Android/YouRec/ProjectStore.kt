@@ -39,6 +39,7 @@ class ProjectStore(private val context: Context) {
     private val preferences = context.getSharedPreferences("yourec", Context.MODE_PRIVATE).also { EditingPreferences.photosFollow = it.getBoolean("photosFollow", false) }
     init {
         OfflineAudioPipeline.cacheFolder = File(context.cacheDir, "Enhanced audio")
+        VideoEffectAnalysis.cacheFolder = File(context.cacheDir, "Effect analysis")
         val assets = context.applicationContext.assets
         NeuralAssets.read = { name -> assets.open(name).use { it.readBytes() } }
         val extracted = File(context.filesDir, "Neural")

@@ -195,7 +195,17 @@ class RenderSources(private val project: Project, private val folder: File, priv
             val effectTime = if (frozen == null) selected else sourceTime
             val frameTime = if (frozen == null) selected else composition
             val hold = frozen?.let { it.offset + layer.picture.elapsed }
-            return shader.apply(VideoEffectRendering.active(clip, effectTime, fps), effectTime, fps, picture, frameTime, hold)
+            val effects = VideoEffectRendering.active(clip, effectTime, fps)
+            // Follow face: the tracked subject, carried from the recording into the canvas by the clip's framing.
+            val targets = HashMap<UUID, Pair<Double, Double>>()
+            for (effect in effects) {
+                if (effect.kind != VideoEffectID.crashZoom || !effect.toggle("trackFace", effectTime)) continue
+                val file = file(layer.picture.source) ?: continue
+                val subject = VideoEffectAnalysis.subject(file, clip, effect, strict)?.sample(selected) ?: continue
+                val px = subject.centerX * source.width; val py = subject.centerY * source.height
+                targets[effect.id] = (placed.x(px, py) / frame.width).coerceIn(0.0, 1.0) to (placed.y(px, py) / frame.height).coerceIn(0.0, 1.0)
+            }
+            return shader.apply(effects, effectTime, fps, picture, frameTime, hold, targets)
         }
         if (plan == null) return one(sourceTime, false, Double.POSITIVE_INFINITY)
         if (plan.times.size == 1 || plan.smear <= 0) return one(plan.times.first(), plan.firstAtOrAfter, plan.before)
