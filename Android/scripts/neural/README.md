@@ -58,3 +58,15 @@ attribution, `SHA256SUMS`, `conversion.json`). To publish it:
    the pinned hashes match `SHA256SUMS`.
 
 Until then the app offers only what its build carries.
+
+## Measured (CI, run 51)
+
+- LavaSR: 55970417 bytes, SHA-256 `50b59eae…1d65a` (the same in every conversion
+  so far); ONNX Runtime vs PyTorch max error 0.00073 on outputs up to 13.6 (the
+  iPhone's Core ML conversion: 0.00073). End to end through the app's pipeline:
+  correlation 0.999 with the clean voice, level unchanged, 0.7 s for 12 s of sound.
+- VoiceFixer with float16 weights: 207547354 bytes, SHA-256 `81c95a29…0cee52`;
+  49.9 dB against PyTorch (float32 weights: 92.7 dB). End to end against
+  upstream's own `VoiceFixer.restore_inmem` on the same noisy input: log-mel
+  similarity 0.966 (the noisy input itself: 0.536), mean difference 3.2 dB,
+  level 0.028 vs 0.025. 23 s for 12 s of sound on a 4-core CI machine.
