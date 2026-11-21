@@ -448,9 +448,31 @@ def enhance():
     note("after Enhance (%.0f s of processing): %s" % (time.time() - began, describe()))
     return True
 
+def reveal(label, tries=10):
+    """Scroll the open panel's list until `label` is on screen."""
+    for attempt in range(tries):
+        node = find(label)
+        if node:
+            return node
+        title = find("Effects · ")
+        y = title[3][1] + 500 if title else 1700
+        adb("shell", "input", "swipe", "540", str(y + 300), "540", str(y), "400")
+        time.sleep(0.8)
+    return None
+
 def effects():
-    """Noir on the whole project through the Effects panel. True once applied."""
-    if not tool("Effects") or not tap("Add Noir", 10):
+    """Background (person mask: ONNX segmentation, guided filter) and Noir on
+    the whole project through the Effects panel. True once Noir is applied."""
+    if not tool("Effects"):
+        return False
+    if reveal("Add Background") and tap("Add Background", 5):
+        if wait("Background enabled", 10):
+            note("Background added: " + describe())
+        else:
+            fail("Effects: Add Background did nothing. On screen: " + describe())
+    else:
+        fail("Effects: no Add Background. On screen: " + describe())
+    if not reveal("Add Noir") or not tap("Add Noir", 10):
         return False
     if not wait("Noir enabled", 5):
         fail("Effects: Add Noir did nothing. On screen: " + describe())
