@@ -116,7 +116,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
         val tone = grade(clip.color)
         // Effects see the graded, framed picture at the canvas size, before it is
         // placed in a window and before its images and titles, as on the iPhone.
-        if (planned || VideoEffectRendering.active(clip, layer.picture.sourceTime, framesPerSecond).isNotEmpty()) {
+        if (planned || VideoEffectRendering.active(clip, layer.picture.sourceTime, framesPerSecond).isNotEmpty() || VideoEffectRendering.nightFix(clip, layer.picture.sourceTime) != null) {
             val shader = effectShader ?: VideoEffectShader().also { effectShader = it }
             val bound = IntArray(1); android.opengl.GLES20.glGetIntegerv(android.opengl.GLES20.GL_FRAMEBUFFER_BINDING, bound, 0)
             val scissor = android.opengl.GLES20.glIsEnabled(android.opengl.GLES20.GL_SCISSOR_TEST)
@@ -236,7 +236,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
         val source = CanvasSize(reader.video.displayWidth.toDouble(), reader.video.displayHeight.toDouble()); val canvas = CanvasSize(w.toDouble(), h.toDouble())
         shader.reset(width, height)
         val picture = shader.picture(w, h)
-        program.draw(reader.texture, reader.matrix, clip.pictureTransform(source, canvas), source, canvas, grade(clip.color))
+        drawSource(clip, time, reader, clip.pictureTransform(source, canvas), source, canvas, grade(clip.color), shader, program)
         val prefix = VideoEffectRendering.active(clip, time, fps).takeWhile { it.id != effect.id }
         val placed = clip.pictureTransform(source, canvas)
         val result = shader.apply(prefix, time, fps, picture, person = { personMask(layer.picture.source, reader, time, placed, source, program, shader, w, h) })
@@ -316,7 +316,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
         val frame = CanvasSize(width.toDouble(), height.toDouble())
         val source = CanvasSize(reader.video.displayWidth.toDouble(), reader.video.displayHeight.toDouble())
         val picture = shader.picture(width, height)
-        program.draw(reader.texture, reader.matrix, clip.pictureTransform(source, frame), source, frame, grade(clip.color))
+        drawSource(clip, time, reader, clip.pictureTransform(source, frame), source, frame, grade(clip.color), shader, program)
         val upstream = VideoEffectRendering.active(clip, time, fps).let { all -> all.take(all.indexOfFirst { it.id == effect.id } + 1) }
         if (upstream.none { it.id == effect.id }) { shader.free(picture); return null }
         val placed = clip.pictureTransform(source, frame)
@@ -397,6 +397,22 @@ class RenderSources(private val project: Project, private val folder: File, priv
         }
         return incoming
     }
+    /// The source frame `reader` holds, framed and graded into the target bound
+    /// now; with Night fix, restored first on its own video values, as on iPhone.
+    private fun drawSource(clip: TimelineClip, time: Double, reader: FrameReader, placed: Affine, source: CanvasSize, canvas: CanvasSize,
+                           tone: FrameGrade?, shader: VideoEffectShader, program: FrameProgram) {
+        val night = VideoEffectRendering.nightFix(clip, time)
+        if (night == null) { program.draw(reader.texture, reader.matrix, placed, source, canvas, tone); return }
+        val bound = IntArray(1); android.opengl.GLES20.glGetIntegerv(android.opengl.GLES20.GL_FRAMEBUFFER_BINDING, bound, 0)
+        val sw = source.width.toInt(); val sh = source.height.toInt()
+        val raw = shader.picture(sw, sh)
+        program.draw(reader.texture, reader.matrix, Affine(), source, source)
+        val fixed = shader.nightFix(raw, night, time)
+        android.opengl.GLES20.glBindFramebuffer(android.opengl.GLES20.GL_FRAMEBUFFER, bound[0])
+        android.opengl.GLES20.glViewport(0, 0, canvas.width.toInt(), canvas.height.toInt())
+        program.drawFlat(fixed.texture, placed, source, canvas, tone)
+        shader.free(fixed)
+    }
     private val clocks = HashMap<TimelineClip, VideoEffectSequenceClock>()
     private val blocks = HashMap<Pair<UUID, Int>, Pair<Any, VideoEffectShader.Target>>()
     /// The layer's picture with its effects, as the iPhone app's compositor
@@ -423,7 +439,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
             }
             if (!reader.show(selected)) return null
             val picture = shader.picture(width, height)
-            program.draw(reader.texture, reader.matrix, placed, source, frame, tone)
+            drawSource(clip, selected, reader, placed, source, frame, tone, shader, program)
             // A cadence hold freezes the whole look at the held frame; a freeze's
             // own grain animates on the timeline and its push-in on the hold.
             val effectTime = if (frozen == null) selected else sourceTime
@@ -433,7 +449,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
             // Follow face: the tracked subject, carried from the recording into the canvas by the clip's framing.
             val targets = HashMap<UUID, Pair<Double, Double>>()
             for (effect in effects) {
-                if (effect.kind != VideoEffectID.crashZoom || !effect.toggle("trackFace", effectTime)) continue
+                if (!(effect.kind == VideoEffectID.dollyZoom || effect.kind == VideoEffectID.crashZoom && effect.toggle("trackFace", effectTime))) continue
                 val file = file(layer.picture.source) ?: continue
                 val subject = VideoEffectAnalysis.subject(file, clip, effect, strict)?.sample(selected) ?: continue
                 val px = subject.centerX * source.width; val py = subject.centerY * source.height

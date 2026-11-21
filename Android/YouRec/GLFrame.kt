@@ -81,11 +81,11 @@ class FrameGrade(val texture: Int, val dimension: Int, val columns: Int, val row
 
 class FrameProgram {
     /// One compiled shader. The graded one is only built when a clip needs it.
-    private class Shader(graded: Boolean, peaking: Boolean = false) {
+    private class Shader(graded: Boolean, peaking: Boolean = false, flat: Boolean = false) {
         val program = link("""
             attribute vec4 position; attribute vec4 coordinate; uniform mat4 transform; varying vec2 uv;
             void main() { gl_Position = position; uv = (transform * coordinate).xy; }""",
-            if (peaking) PEAKING else if (!graded) """#extension GL_OES_EGL_image_external : require
+            (if (peaking) PEAKING else if (!graded) """#extension GL_OES_EGL_image_external : require
             precision mediump float; uniform samplerExternalOES frame; uniform float opacity; varying vec2 uv;
             void main() { gl_FragColor = vec4(texture2D(frame, uv).rgb, opacity); }"""
             // Balance first, then the look, mixed in by its strength. The cube is a
@@ -112,7 +112,10 @@ class FrameProgram {
                     c = mix(c, mix(tile(p, z0), tile(p, z1), z - z0), grid.w);
                 }
                 gl_FragColor = vec4(c, opacity);
-            }""")
+            }""").let { source ->
+                // A picture already in an ordinary texture (an editor effect's restored source frame).
+                if (flat) source.replace("#extension GL_OES_EGL_image_external : require", "").replace("samplerExternalOES", "sampler2D") else source
+            })
         val position = GLES20.glGetAttribLocation(program, "position")
         val coordinate = GLES20.glGetAttribLocation(program, "coordinate")
         val transform = GLES20.glGetUniformLocation(program, "transform")
@@ -128,6 +131,9 @@ class FrameProgram {
     private val plain = Shader(false)
     private var peaking: Shader? = null
     private var graded: Shader? = null
+    private var flatPlain: Shader? = null
+    private var flatGraded: Shader? = null
+    private var flat = false
     private val vertices: FloatBuffer = floats(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
     private val coordinates: FloatBuffer = floats(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
     private val quad = FloatArray(8)
@@ -152,7 +158,9 @@ class FrameProgram {
     }
     private fun present(textureID: Int, matrix: FloatArray, grade: FrameGrade? = null, alpha: Float = 1f, texel: FloatArray? = null) {
         quadBuffer.position(0); quadBuffer.put(quad); quadBuffer.position(0)
-        val shader = if (texel != null) peaking ?: Shader(false, true).also { peaking = it } else if (grade == null) plain else graded ?: Shader(true).also { graded = it }
+        val shader = if (flat) (if (grade == null) flatPlain ?: Shader(false, flat = true).also { flatPlain = it } else flatGraded ?: Shader(true, flat = true).also { flatGraded = it })
+            else if (texel != null) peaking ?: Shader(false, true).also { peaking = it } else if (grade == null) plain else graded ?: Shader(true).also { graded = it }
+        val target = if (flat) GLES20.GL_TEXTURE_2D else GLES11Ext.GL_TEXTURE_EXTERNAL_OES
 
         GLES20.glUseProgram(shader.program)
         if (texel != null) {
@@ -167,7 +175,7 @@ class FrameProgram {
             GLES20.glUniform4f(shader.grid, grade.dimension.toFloat(), grade.columns.toFloat(), grade.rows.toFloat(), if (grade.texture == 0) 0f else grade.amount)
         }
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureID)
+        GLES20.glBindTexture(target, textureID)
         GLES20.glUniform1i(shader.texture, 0)
         GLES20.glUniform1f(shader.opacity, alpha)
         // A picture partly through a dissolve is blended over what is already drawn.
@@ -179,7 +187,7 @@ class FrameProgram {
         GLES20.glVertexAttribPointer(shader.coordinate, 2, GLES20.GL_FLOAT, false, 0, coordinates)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         GLES20.glDisableVertexAttribArray(shader.position); GLES20.glDisableVertexAttribArray(shader.coordinate)
-        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, 0)
+        GLES20.glBindTexture(target, 0)
         if (alpha < 1f || texel != null) GLES20.glDisable(GLES20.GL_BLEND)
     }
     /// Draw a source picture placed by an affine map from its own pixels to canvas
@@ -194,7 +202,13 @@ class FrameProgram {
         }
         present(textureID, matrix, grade, alpha)
     }
-    fun release() { GLES20.glDeleteProgram(plain.program); graded?.let { GLES20.glDeleteProgram(it.program) }; graded = null; peaking?.let { GLES20.glDeleteProgram(it.program) }; peaking = null }
+    /// The same as `draw`, for a picture in an ordinary 2D texture (rows bottom-up), with an identity matrix.
+    fun drawFlat(textureID: Int, placement: Affine, source: CanvasSize, canvas: CanvasSize, grade: FrameGrade? = null) {
+        flat = true
+        try { draw(textureID, identity, placement, source, canvas, grade) } finally { flat = false }
+    }
+    fun release() { flatPlain?.let { GLES20.glDeleteProgram(it.program) }; flatPlain = null; flatGraded?.let { GLES20.glDeleteProgram(it.program) }; flatGraded = null
+        GLES20.glDeleteProgram(plain.program); graded?.let { GLES20.glDeleteProgram(it.program) }; graded = null; peaking?.let { GLES20.glDeleteProgram(it.program) }; peaking = null }
     /// Focus peaking over a picture already drawn with the same geometry: sharp
     /// edges turn red. `texel` is one camera pixel in texture coordinates.
     /// For the recorder's preview only; it must never reach a recording.

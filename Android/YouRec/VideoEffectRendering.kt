@@ -17,12 +17,14 @@ object VideoEffectRendering {
         VideoEffectID.negativeStrobe, VideoEffectID.kaleidoscope,
         VideoEffectID.halation, VideoEffectID.widescreen, VideoEffectID.sixteenMM, VideoEffectID.superEight,
         VideoEffectID.undercranking, VideoEffectID.stepPrinting, VideoEffectID.freezeFrame, VideoEffectID.crashZoom, VideoEffectID.colorIsolation, VideoEffectID.quantization,
-        VideoEffectID.chromaKey, VideoEffectID.autoBackground)
+        VideoEffectID.chromaKey, VideoEffectID.autoBackground, VideoEffectID.nightFix, VideoEffectID.dollyZoom)
 
     /// Choices of drawn effects this build cannot draw yet (they need a person mask).
     fun unavailable(kind: VideoEffectID, parameter: String, choice: String): Boolean =
         // A hold's sound is silent here; carrying the take's sound through it is not ported yet.
-        kind == VideoEffectID.freezeFrame && parameter == "audio" && choice != "Cut"
+        kind == VideoEffectID.freezeFrame && parameter == "audio" && choice != "Cut" ||
+        // Medium and Precise fuse motion-aligned frames (Vision's optical flow on iPhone): not ported yet.
+        kind == VideoEffectID.nightFix && parameter == "mode" && choice != "Fast"
     /// Switches of drawn effects not ported yet: a background video's own sound.
     fun unavailableToggle(parameter: String) = parameter == "backgroundAudio"
     /// Why a project's effect cannot be drawn here, by name; null when it can.
@@ -38,6 +40,10 @@ object VideoEffectRendering {
         return null
     }
 
+    /// The Night fix restoring this clip's source frame at `sourceTime`, if any.
+    fun nightFix(clip: TimelineClip, sourceTime: Double): VideoEffectSettings? = clip.videoEffects?.firstOrNull { effect ->
+        effect.kind == VideoEffectID.nightFix && effect.isActive(sourceTime) && clip.effectWindows?.get(effect.id)?.none { sourceTime >= it.start && sourceTime < it.end } != true
+    }
     /// The iPhone app's pixel order: families in this order, each in the order
     /// VideoEffectSettings.ordered gives.
     private val stages = listOf(EffectFamily.Key, EffectFamily.Camera, EffectFamily.Time, EffectFamily.Color, EffectFamily.Quantization, EffectFamily.Texture, EffectFamily.Frame)
@@ -90,6 +96,11 @@ object VideoEffectRendering {
             }
         }
         settings.releaseTime?.let { p[39 * 4] = max(0.0, it - settings.start + (settings.phaseOffset ?: 0.0)).toFloat() }
+        // A tracked subject stands in for Target X and Y, as on iPhone.
+        if (target != null) for ((index, definition) in settings.kind.descriptor.parameters.withIndex()) {
+            if (definition.id == "targetX") p[index * 4] = target.first.toFloat()
+            if (definition.id == "targetY") p[index * 4] = target.second.toFloat()
+        }
         val intensity = if (settings.kind.descriptor.supportsIntensity) settings.number("intensity", sourceTime).toFloat() else 1f
         val time = if (settings.kind == VideoEffectID.freezeFrame && holdTime != null) holdTime else max(0.0, sourceTime - settings.start + (settings.phaseOffset ?: 0.0))
         return Uniforms(settings.kind.shaderIndex, frameIndex(frameTime, fps), time.toFloat(),

@@ -6,6 +6,7 @@ import kotlin.math.abs
 /// The iPhone app's video effect model: catalogue, keyframes in source time,
 /// order, validation, and the project form (including Swift's enum coding).
 fun videoEffectTests() {
+    require(VideoEffectID.values().all { it in VideoEffectRendering.drawn }, "Every effect kind is drawn")
     require(VideoEffectCatalog.all.size == 24 && VideoEffectCatalog.all.map { it.id }.toSet() == VideoEffectID.values().toSet(), "Every effect kind has its descriptor")
     val tint = VideoEffectSettings(kind = VideoEffectID.silentTint)
     require(tint.parameters.first().id == "intensity" && tint.number("intensity") == 1.0 && tint.choice("tint") == "Amber" && tint.valid, "Defaults come from the catalogue, intensity first")
@@ -41,9 +42,9 @@ fun videoEffectTests() {
     val unknown = mapOf("kind" to "futureEffect", "id" to UUID.randomUUID().toString())
     val decoded = ProjectCoding.videoEffects(listOf(JSON.parse(encoded.toByteArray()), unknown))
     require(decoded == listOf(effect), "A drawn effect round-trips; an unknown kind is skipped, as on iPhone")
-    val halation = String(JSON.write(ProjectCoding.encode(VideoEffectSettings(kind = VideoEffectID.dollyZoom))))
+    val halation = String(JSON.write(ProjectCoding.encode(VideoEffectSettings(kind = VideoEffectID.nightFix).setting("mode", EffectValue.Choice("Medium")))))
     requireFailure<ProjectError.UnsupportedTools>("An effect this build cannot draw is refused by name") { ProjectCoding.videoEffects(listOf(JSON.parse(halation.toByteArray()))) }
-    try { ProjectCoding.videoEffects(listOf(JSON.parse(halation.toByteArray()))) } catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains("Dolly"), "The refusal names the effect") }
+    try { ProjectCoding.videoEffects(listOf(JSON.parse(halation.toByteArray()))) } catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains("Night fix") && e.message!!.contains("Medium"), "The refusal names the effect and the option") }
     effectRenderingTests()
     effectEditingTests()
     effectTimingTests()

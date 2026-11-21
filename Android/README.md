@@ -68,19 +68,21 @@ capture, recording controls, the cut editor, export.
   built-in looks or an imported `.cube` LUT (3D or 1D, Rec.709), with strength,
   after exposure, warmth and tint. Exposure and white balance are per-channel
   gains on display values: close to the iPhone result, not identical to it.
-  **Effects** (video) on the selected clips or the whole project, with the
-  iPhone app's shader arithmetic ported to GLSL (checked in WebGL against a
-  NumPy transcription of the Metal kernels): Color Correction, Silent Tint,
-  Three-Strip, Bleach Bypass, Day for Night, Noir, Expressionism, RGB Offset,
-  Negative Strobe, Color Isolation (by colour, with the temporal matte),
-  Kaleidoscope, Crash zoom (Follow face uses android.media.FaceDetector in
-  place of Vision), Halation, Widescreen, 16mm, Super 8 (with its cadence),
-  Undercranking, Step printing and Freeze frame (a hold inserted at the
-  playhead; effect speed and mute retime the clip and its sound as on
-  iPhone). Each has its iPhone controls and intensity; Animate adds keyframes
-  at the playhead, the diamond adds or removes one. Pictures between effect
-  passes are 8-bit display values (the iPhone app keeps 16-bit linear light),
-  and grain repeats a fixed random tile read from a different place each frame.
+  **Effects** (video): all 24 of the iPhone app's effects, on the selected
+  clips or the whole project, with the iPhone app's shader arithmetic ported
+  to GLSL (checked in WebGL against a NumPy transcription of the Metal
+  kernels): Color Correction, Silent Tint, Three-Strip, Bleach Bypass, Day for
+  Night, Noir, Expressionism, RGB Offset, Negative Strobe, Night fix (Fast),
+  Color Isolation (by colour or on the subject, with the temporal matte),
+  Quantization (palette tracks, Pop and saved palettes, dithering, face
+  detail), Kaleidoscope, Crash zoom, Dolly zoom, Widescreen, Halation, 16mm,
+  Super 8, Undercranking, Step printing, Freeze frame, Chroma Key and
+  Background (Solid, Studio, Window, Blur original, a picture or a looping
+  movie). Where the iPhone app asks Apple Vision, Android uses MediaPipe's
+  Selfie Segmenter (ThirdParty/MediaPipe) for the person mask and
+  android.media.FaceDetector for Follow face: the masks and tracks differ.
+  Pictures between passes are 8-bit display values (the iPhone app keeps
+  16-bit linear light); grain repeats a fixed random tile.
   **Transition** at the start, at a cut or at the end, in every iPhone style:
   Dissolve, Fade through a colour, Wipe (direction, soft or hard edge), Split
   screen (axis, divider, framing, whose sound), Hitchcock (shadows or highlights
@@ -150,12 +152,11 @@ policy older iPhone builds apply to newer projects.
 
 Title designs, looks and outlines, imported fonts,
 animated titles ·
-Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export · The other video
-effects: Quantization (palettes and kernel ported; waits for Face detail's
-person mask), Chroma key, Background, Dolly zoom, Night fix, Color Isolation
-on the subject, Widescreen's oval bokeh (needs depth), and analysis recorded
-live on iPhone; animated Color Correction; effect media (backgrounds, clean
-plates) · Dragging and pinching a placed picture in the preview,
+Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export · Inside video effects:
+Night fix Medium and Precise (motion-aligned fusion), a Chroma Key clean
+plate, a background movie's own sound, a freeze's Continue and Fade sound,
+Widescreen's oval bokeh and Dolly zoom's depth layer (iPhone depth data),
+analysis recorded live on iPhone, animated Color Correction · Dragging and pinching a placed picture in the preview,
 and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
 animated Crop and Placement · Stabilization · Original
 recordings browser · OpenTimelineIO export · Dual-camera

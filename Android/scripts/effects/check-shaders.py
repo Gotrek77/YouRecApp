@@ -18,7 +18,9 @@ kotlin = open(SOURCE).read()
 parameters = int(re.search(r"const val PARAMETERS = (\d+)", kotlin).group(1))
 lattice = int(re.search(r"const val latticeSize = (\d+)", open(os.path.join(HERE, "..", "..", "YouRec", "VideoEffectRendering.kt")).read()).group(1))
 def source(name):
-    text = re.search(r'val %s = (?:HEADER \+ )?"""(.*?)"""' % name, kotlin, re.S).group(1)
+    found = re.search(r'val %s = (?:(\w+) \+ )?"""(.*?)"""' % name, kotlin, re.S)
+    prefix, text = found.group(1), found.group(2)
+    if prefix and prefix != "HEADER": text = source(prefix) + text
     text = text.replace("$PARAMETERS", str(parameters)).replace("${VideoEffectRendering.latticeSize}", str(lattice))
     assert "$" not in text, "unresolved template in " + name
     return text
@@ -456,6 +458,63 @@ def main():
             for k in (-1, 1): a = f(a, sample(m, uv + d * abs(radius) * k)[..., 0])
             return np.round(np.repeat(srgb(a)[..., None], 3, -1) * 255)
         checks.append((name, out, W, H, morphed, False))
+    # Dolly zoom: the background layer scaled about the target, the subject kept.
+    dv = [0, .3, 2.5, 0, .4, .55]
+    out = os.path.join(WORK, "Dolly.rgba")
+    spec["cases"].append({"name": "Dolly", "fragment": "#define KIND 8\n" + fragment, "width": W, "height": H,
+                          "textures": [texture("input", "image"), texture("mask"), texture("aux")],
+                          "uniforms": [{"name": "size", "type": "2f", "value": [W, H]}, {"name": "p", "type": "4fv", "value": params(dv).flatten().tolist()},
+                                       {"name": "intensity", "type": "1f", "value": 1}, {"name": "time", "type": "1f", "value": 1.1}], "output": out})
+    def dolly():
+        uv = coordinates(); t = min(1, 1.1 / 2.5); t = 4 * t ** 3 if t < .5 else 1 - (-2 * t + 2) ** 3 / 2
+        scale = 1 + .3 * t; target = np.array([.4, .55]); bg = sample(auxiliary["aux"], (uv - target) / scale + target)
+        a = (smooth(W, H, 20)[..., 0] / 255.0)[..., None]
+        return np.round(srgb(np.clip(mix(bg, lin(image / 255.0), a), 0, 1)) * 255)
+    checks.append(("Dolly", out, W, H, dolly, False))
+    # Night fix (Fast) on the frame's own video values.
+    NF_ADJUST, NF_CHROMA, NF_MIX = HEADER + source("NF_ADJUST"), HEADER + source("NF_CHROMA"), HEADER + source("NF_MIX")
+    def nf_encode(x): x = np.maximum(x, 0); return np.where(x < .018, 4.5 * x, 1.099 * x ** .45 - .099)
+    def nf_decode(x): x = np.maximum(x, 0); return np.where(x < .081, x / 4.5, ((x + .099) / 1.099) ** (1 / .45))
+    def tex(e, uv):
+        return sample(e, uv) if False else None
+    def raw_sample(e, uv):  # bilinear on the stored values, no transfer curve
+        h, w = e.shape[:2]; x = np.clip(uv[..., 0] * w - .5, 0, w - 1); y = np.clip(uv[..., 1] * h - .5, 0, h - 1)
+        x0 = np.floor(x).astype(int); y0 = np.floor(y).astype(int); x1 = np.minimum(x0 + 1, w - 1); y1 = np.minimum(y0 + 1, h - 1)
+        fx = (x - x0)[..., None]; fy = (y - y0)[..., None]; v = e / 255.0
+        return mix(mix(v[y0, x0], v[y0, x1], fx), mix(v[y1, x0], v[y1, x1], fx), fy)
+    amount, stops, detail = 1.2, 1.5, .5
+    def adjust():
+        uv = coordinates(); c = raw_sample(image, uv); radius = .85 + max(0, amount - 1) * 1.3; px = radius / np.array([W, H])
+        mean = 0; sq = 0
+        for j in (-1, 0, 1):
+            for i in (-1, 0, 1):
+                n = raw_sample(image, uv + np.array([i, j]) * px); mean = mean + n / 9; sq = sq + n * n / 9
+        var = np.maximum(sq - mean * mean, 1e-8); noise2 = (6 / 255) ** 2 / 3 * amount ** 2 * mix(1.5, .2, detail)
+        keep = np.clip(1 - noise2 / var, 0, 1); c = nf_decode(mix(c, mean + keep * (c - mean), min(1, amount)))
+        y = np.maximum(0, luma(c)); gain = 2 ** stops; scale = np.where(y <= 1, gain / (1 + (gain - 1) * y), 1)
+        return nf_encode(np.maximum(c * scale[..., None], 0))
+    out = os.path.join(WORK, "Night-adjust.rgba")
+    spec["cases"].append({"name": "Night adjust", "fragment": NF_ADJUST, "width": W, "height": H, "textures": [texture("input", "image")],
+                          "uniforms": [{"name": "size", "type": "2f", "value": [W, H]}, {"name": "v", "type": "4f", "value": [amount, stops, detail, 0]}], "output": out})
+    checks.append(("Night adjust", out, W, H, lambda: np.round(np.clip(adjust(), 0, 1) * 255), False))
+    def chroma(direction):
+        uv = coordinates(); c = raw_sample(image, uv); y = luma(c); radius = int(np.clip(10 * amount, 1, 30))
+        ch = 0; total = 0
+        for k in range(-radius, radius + 1):
+            n = raw_sample(image, uv + k * np.array(direction) / np.array([W, H])); ny = luma(n)
+            wgt = np.exp(-(ny - y) ** 2 / (.0012 * max(1, amount))) * np.exp(-.5 * (k / max(1, radius * .65)) ** 2)
+            ch = ch + np.stack([n[..., 0] - ny, n[..., 2] - ny], -1) * wgt[..., None]; total = total + wgt
+        rb = mix(np.stack([c[..., 0] - y, c[..., 2] - y], -1), ch / np.maximum(total, 1e-6)[..., None], min(.98, .85 * amount))
+        r = y + rb[..., 0]; b = y + rb[..., 1]; g = (y - .2126 * r - .0722 * b) / .7152
+        return np.maximum(0, np.stack([r, g, b], -1))
+    out = os.path.join(WORK, "Night-chroma.rgba")
+    spec["cases"].append({"name": "Night chroma", "fragment": NF_CHROMA, "width": W, "height": H, "textures": [texture("input", "image")],
+                          "uniforms": [{"name": "size", "type": "2f", "value": [W, H]}, {"name": "v", "type": "4f", "value": [amount, 1, 0, 0]}], "output": out})
+    checks.append(("Night chroma", out, W, H, lambda: np.round(np.clip(chroma((1, 0)), 0, 1) * 255), False))
+    out = os.path.join(WORK, "Night-mix.rgba")
+    spec["cases"].append({"name": "Night mix", "fragment": NF_MIX, "width": W, "height": H, "textures": [texture("input", "image"), texture("aux", "restored")],
+                          "uniforms": [{"name": "size", "type": "2f", "value": [W, H]}, {"name": "amount", "type": "1f", "value": .6}], "output": out})
+    checks.append(("Night mix", out, W, H, lambda: np.round(np.clip(nf_encode(mix(nf_decode(raw_sample(image, coordinates())), nf_decode(raw_sample(auxiliary["aux"], coordinates())), .6)), 0, 1) * 255), False))
     BILATERAL = HEADER + source("BILATERAL")
     for name, sigma, direction in [("Bilateral horizontal 1.5", 1.5, (1, 0)), ("Bilateral vertical 4", 4.0, (0, 1))]:
         out = os.path.join(WORK, name.replace(" ", "-") + ".rgba")

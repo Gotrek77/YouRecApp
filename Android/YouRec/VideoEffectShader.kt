@@ -13,7 +13,8 @@ import java.nio.FloatBuffer
 /// decodes to linear, applies the effect's arithmetic and encodes again.
 class VideoEffectShader {
     /// One render target: a texture of display-encoded RGBA and its framebuffer.
-    class Target(val texture: Int, val buffer: Int, val width: Int, val height: Int, val half: Boolean = false) { var busy = false; var pinned = false }
+    class Target(val texture: Int, val buffer: Int, val width: Int, val height: Int, val half: Boolean = false) { var busy = false; var pinned = false; var used = 0L }
+    private var epoch = 0L
     private val pool = ArrayList<Target>()
     private var lattice = 0
     private val programs = HashMap<String, Pass>()
@@ -47,7 +48,7 @@ class VideoEffectShader {
         "GL_EXT_color_buffer_half_float" in extensions && "GL_OES_texture_half_float" in extensions && "GL_OES_texture_half_float_linear" in extensions
     }
     private fun take(w: Int, h: Int, half: Boolean = false): Target {
-        pool.firstOrNull { !it.busy && it.width == w && it.height == h && it.half == half }?.let { it.busy = true; return it }
+        pool.firstOrNull { !it.busy && it.width == w && it.height == h && it.half == half }?.let { it.busy = true; it.used = epoch; return it }
         val ids = IntArray(1); val fbo = IntArray(1)
         GLES20.glGenTextures(1, ids, 0); GLES20.glGenFramebuffers(1, fbo, 0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
@@ -56,7 +57,7 @@ class VideoEffectShader {
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[0])
         GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, ids[0], 0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
-        return Target(ids[0], fbo[0], w, h, half).also { it.busy = true; pool.add(it) }
+        return Target(ids[0], fbo[0], w, h, half).also { it.busy = true; it.used = epoch; pool.add(it) }
     }
 
     /// A 256×256 person mask (R, rows bottom-up as GL keeps them) as a target.
@@ -224,6 +225,20 @@ class VideoEffectShader {
         return floatArrayOf((sum[0] / n).toFloat(), (sum[1] / n).toFloat(), (sum[2] / n).toFloat(), (sum[3] / n).toFloat())
     }
 
+    /// Night fix on a source frame (`raw`, the decoder's values): reduction, brightness, detail, then the mix by intensity.
+    fun nightFix(raw: Target, effect: VideoEffectSettings, time: Double): Target {
+        val mix = effect.number("intensity", time).toFloat(); val amount = effect.number("reduction", time).toFloat(); val stops = effect.number("brightness", time).toFloat()
+        if (mix <= 0 || (amount <= 0 && stops == 0f)) return raw
+        val first = take(raw.width, raw.height)
+        run(pass("nfAdjust") { HEADER + NF_ADJUST }, first, listOf("image" to raw.texture)) { p -> GLES20.glUniform4f(p.u("v"), amount, stops, effect.number("detail", time).toFloat(), 0f) }
+        val second = take(raw.width, raw.height)
+        run(pass("nfChroma") { HEADER + NF_CHROMA }, second, listOf("image" to first.texture)) { p -> GLES20.glUniform4f(p.u("v"), amount, 1f, 0f, 0f) }
+        run(pass("nfChroma") { HEADER + NF_CHROMA }, first, listOf("image" to second.texture)) { p -> GLES20.glUniform4f(p.u("v"), amount, 0f, 1f, 0f) }
+        run(pass("nfMix") { HEADER + NF_MIX }, second, listOf("image" to raw.texture, "restored" to first.texture)) { p -> GLES20.glUniform1f(p.u("amount"), mix) }
+        free(first); free(raw)
+        return second
+    }
+
     /// A matte (R) with the picture's 4×4 block guide (G): a raw temporal matte made from a person mask.
     fun pack(mask: Target, picture: Target): Target {
         val output = take(picture.width, picture.height)
@@ -233,9 +248,10 @@ class VideoEffectShader {
 
     /// Start a new frame: every target not kept by `pin` is free again.
     fun reset(w: Int, h: Int) {
+        epoch++
         for (t in pool) t.busy = t.pinned
-        // Targets larger than the canvas (a changed canvas) are given back.
-        val stale = pool.filter { !it.pinned && (it.width > w || it.height > h) }
+        // Targets no frame has used for a while (a changed canvas, an effect removed) are given back.
+        val stale = pool.filter { !it.pinned && epoch - it.used > 90 }
         for (t in stale) { GLES20.glDeleteFramebuffers(1, intArrayOf(t.buffer), 0); GLES20.glDeleteTextures(1, intArrayOf(t.texture), 0) }
         pool.removeAll(stale)
     }
@@ -355,6 +371,12 @@ class VideoEffectShader {
                 val mask = personMask() ?: throw VideoEffectShaderError("A person mask is not available for Background.")
                 matte = refine(mask, current, effect.number("softness", sourceTime), effect.number("grow", sourceTime), person = true)
             }
+            var dollyBackground: Target? = null
+            if (effect.kind == VideoEffectID.dollyZoom) {
+                val mask = personMask() ?: throw VideoEffectShaderError("A person mask is not available for Dolly zoom.")
+                matte = refine(mask, current, 0.3, person = true)
+                dollyBackground = backgroundEstimate(current, matte!!, fill = true)
+            }
             if (effect.usesTemporalMatte) {
                 val raw = if (refined != null) pack(refined, current).also { free(refined) }
                     else if (keyed && matte != null) pack(matte!!, current).also { free(matte!!) }
@@ -368,6 +390,7 @@ class VideoEffectShader {
                 free(raw)
             }
             val auxiliary = HashMap(encode(effect, u, current, sourceTime))
+            dollyBackground?.let { auxiliary["aux"] = it }
             var subjectMean: FloatArray? = null; var backgroundMean: FloatArray? = null
             if ((keyed || replaced) && matte != null) {
                 val bg = background(effect, current, sourceTime, media)
@@ -945,6 +968,58 @@ void main() {
     gl_FragColor = total / (count.x * count.y);
 }
 """
+        /// Night fix (Fast): on the source frame's own video values (BT.709
+        /// encoding), before framing and grade, as the iPhone app's nf_adjust,
+        /// nf_chroma and nf_mix with the frame as its own fused estimate.
+        private const val NF = """
+vec3 nfEncode(vec3 x) { x = max(x, 0.0); return mix(1.099 * pow(x, vec3(.45)) - .099, 4.5 * x, 1.0 - step(vec3(.018), x)); }
+vec3 nfDecode(vec3 x) { x = max(x, 0.0); return mix(pow((x + .099) / 1.099, vec3(1.0 / .45)), x / 4.5, 1.0 - step(vec3(.081), x)); }
+float nfY(vec3 x) { return dot(x, vec3(.2126, .7152, .0722)); }
+"""
+        val NF_ADJUST = NF + """
+uniform vec4 v;
+void main() {
+    vec2 uv = gl_FragCoord.xy / size; float amount = v.x;
+    vec3 c = texture2D(image, uv).rgb;
+    float radius = .85 + max(0.0, amount - 1.0) * 1.3; vec2 pixel = radius / size;
+    vec3 mean = vec3(0.0), square = vec3(0.0);
+    for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+        vec3 n = texture2D(image, uv + vec2(float(i), float(j)) * pixel).rgb;
+        mean += n / 9.0; square += n * n / 9.0;
+    }
+    vec3 variance = max(square - mean * mean, 1e-8);
+    float noise2 = pow(6.0 / 255.0, 2.0) / 3.0 * amount * amount * mix(1.5, .2, v.z);
+    vec3 keep = clamp(1.0 - noise2 / variance, 0.0, 1.0);
+    c = nfDecode(mix(c, mean + keep * (c - mean), min(1.0, amount)));
+    float y = max(0.0, nfY(c)), gain = exp2(v.y);
+    float scale = y <= 1.0 ? gain / (1.0 + (gain - 1.0) * y) : 1.0;
+    gl_FragColor = vec4(nfEncode(max(c * scale, 0.0)), 1.0);
+}
+"""
+        val NF_CHROMA = NF + """
+uniform vec4 v;
+void main() {
+    vec2 uv = gl_FragCoord.xy / size; vec3 c = texture2D(image, uv).rgb; float y = nfY(c);
+    vec2 chroma = vec2(0.0); float total = 0.0; float radius = floor(clamp(10.0 * v.x, 1.0, 30.0));
+    for (int k = -30; k <= 30; k++) {
+        float f = float(k); if (abs(f) > radius) continue;
+        vec3 n = texture2D(image, uv + f * v.yz / size).rgb; float ny = nfY(n);
+        float weight = exp(-pow(ny - y, 2.0) / (.0012 * max(1.0, v.x))) * exp(-.5 * pow(f / max(1.0, radius * .65), 2.0));
+        chroma += vec2(n.r - ny, n.b - ny) * weight; total += weight;
+    }
+    vec2 rb = mix(vec2(c.r - y, c.b - y), chroma / max(total, 1e-6), min(.98, .85 * v.x));
+    vec3 result = vec3(y + rb.x, 0.0, y + rb.y); result.g = (y - .2126 * result.r - .0722 * result.b) / .7152;
+    gl_FragColor = vec4(max(vec3(0.0), result), 1.0);
+}
+"""
+        val NF_MIX = NF + """
+uniform sampler2D restored;
+uniform float amount;
+void main() {
+    vec2 uv = gl_FragCoord.xy / size;
+    gl_FragColor = vec4(nfEncode(mix(nfDecode(texture2D(image, uv).rgb), nfDecode(texture2D(restored, uv).rgb), amount)), 1.0);
+}
+"""
         /// A normalised dissolve in linear light (Step printing's smear).
         val BLEND = """
 uniform sampler2D next;
@@ -1225,6 +1300,15 @@ void main() {
     o += read(wrapImage, uv) * band * wrapAmount * .25;
     if (view > .5 && view < 1.5) o = vec3(a);
     if (view > 1.5) o = c;
+#elif KIND == 8
+    // Simulated two-layer dolly: the background estimate scaled about the target, the subject kept.
+    float t = clamp(time / max(.001, p[2].x), 0.0, 1.0);
+    if (p[3].x < .5) t = t < .5 ? 4.0 * t * t * t : 1.0 - pow(-2.0 * t + 2.0, 3.0) / 2.0;
+    float scale = p[0].x < .5 ? 1.0 + p[1].x * t : 1.0 + p[1].x * (1.0 - t);
+    vec2 target = vec2(p[4].x, p[5].x);
+    vec3 bg = read(aux, (uv - target) / scale + target);
+    float a = texture2D(mask, vec2(uv.x, 1.0 - uv.y)).r;
+    o = mix(bg, c, a);
 #elif KIND == 9
     // Crash zoom: the target stays put; eight samples along the zoom's motion.
     vec2 target = frameValues[0].xy, point = (uv - target) / frameValues[0].z + target;
