@@ -194,7 +194,10 @@ class EditorController {
             // The last frame stays on screen at the very end, as a player would leave it.
             val layers = (if (time >= duration && duration > 0) plan?.ending else plan?.layers(EditTime.seconds(time))) ?: emptyList()
             val mix = if (time >= duration && duration > 0) plan?.transition(EditTime.seconds(duration) - EditTime.ticks(EditTime.scale / 60)) else plan?.transition(EditTime.seconds(time))
-            try { sources?.draw(layers, shader, width, height, mix) }
+            try {
+                sources?.draw(layers, shader, width, height, mix)
+                plan?.let { sources?.drawCaptions(it.captions(EditTime.seconds(minOf(time, duration - 1.0 / 60).coerceAtLeast(0.0))), width, height) }
+            }
             catch (e: Exception) {
                 // The system can reclaim a decoder at any time. Close them; the next frame opens new ones.
                 for (layer in layers) sources?.drop(layer.picture.source)

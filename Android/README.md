@@ -97,6 +97,15 @@ capture, recording controls, the cut editor, export.
   them, and a project that uses them is reported as unavailable there.
   Not ported from the iPhone inspector: level-matched compare, auditioning a
   short window, and resumable per-stage checkpoints.
+  **Subtitles** transcribe the marked range or the whole project from its own
+  sound with the iPhone app's speech model, Qwen3-ASR-0.6B, through antirez's
+  qwen-asr in C ([details](ThirdParty/qwen-asr/PROVENANCE.md)), downloaded
+  once on request (about 1.9 GB, verified) and run on the phone. Language
+  automatic or chosen; captions regrouped by word count, styled (style,
+  colour, size, position), corrected one by one keeping the other words'
+  times, or removed. Projects with iPhone subtitles open and keep them.
+  Not ported yet: title designs and fonts for captions, dragging captions in
+  the preview, resuming an interrupted transcription.
   **Pauses** finds silence in the selected clips, at a measured or chosen
   level; as on iPhone, RNNoise tells a quiet syllable from silence in spoken
   takes. Each pause can be kept or cut; picture and sound shorten together;
@@ -126,7 +135,7 @@ them is **refused by name** on Android ("This project uses Video effects…")
 instead of being opened and quietly losing that work on the next save, the same
 policy older iPhone builds apply to newer projects.
 
-Subtitles and the Qwen3-ASR model · Title designs, looks and outlines, imported fonts,
+Title designs, looks and outlines, imported fonts,
 animated titles ·
 Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export · Video effects and their Metal
 shaders · Dragging and pinching a placed picture in the preview,

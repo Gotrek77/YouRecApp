@@ -194,6 +194,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if (edit.timeline.video.isNotEmpty()) tool("Transition") { openTransition(null) }
             if (edit.timeline.video.isNotEmpty()) tool("Image") { openImage(null) }
             if (edit.timeline.video.isNotEmpty()) tool("Cover") { openCover() }
+            if (edit.timeline.audio.isNotEmpty()) tool("Subtitles") { openSubtitles() }
             if (edit.timeline.compile().any { it.video.size > 1 }) tool("Placement") { openPlacement(null) }
             if (!chosen.isEmpty && edit.timeline.links.any { link -> link.members.any { it in chosen.ids } }) tool("Unlink") { unlink() }
             else if (chosen.ids.size >= 2) tool("Link") { link(false) }
@@ -606,6 +607,114 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             Design.button(context, "Done", Design.accent) { save("Image changed"); closePanel() }.apply { contentDescription = "Done with image" }, spacing = 6f).apply { setPadding(0, Design.dp(context, 6f), 0, 0) })
         showPanel(content)
     }
+
+    /// Subtitles from the project's own sound with the iPhone app's speech model
+    /// (Qwen3-ASR-0.6B through antirez's qwen-asr), downloaded once on request.
+    /// Transcription covers the marked range or the whole project; captions can
+    /// be regrouped, styled, corrected or removed, each one undo step.
+    private var transcribing: Thread? = null
+    private fun openSubtitles() {
+        val project = project ?: return
+        editor.pause()
+        val root = NeuralAssets.folder ?: return say("The speech model has no place to be stored.")
+        val track = project.edit.timeline
+        val settings = track.subtitles ?: SubtitleSettings()
+        val content = Design.column(context, Design.label(context, "Subtitles", 15f, bold = true), spacing = 6f)
+        fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val status = Design.label(context, "", 13f, Design.secondary)
+        fun change(message: String, apply: (TrackTimeline) -> Unit) {
+            val now = this.project ?: return
+            val edit = now.edit.copy(); apply(edit.timeline)
+            if (edit != now.edit) commit(edit, message)
+            openSubtitles()
+        }
+        fun pick(title: String, on: Boolean, action: () -> Unit) = Design.button(context, title, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) { action() }
+            .apply { contentDescription = title + if (on) ", selected" else "" }
+        if (!SubtitleModelPack.installed(root)) {
+            add(Design.label(context, "Subtitles use a speech model that runs on this phone. Download it once (${SubtitleModelPack.byteCount / 1_000_000} MB) from Hugging Face; no audio is sent anywhere.", 13f, Design.secondary))
+            add(Design.button(context, "Download speech model", Design.background, Design.accent) {
+                if (transcribing != null) return@button
+                status.text = "Downloading speech model…"
+                transcribing = Thread {
+                    val failure = try { SubtitleModelPack.download(root, { value -> post { status.text = "Downloading speech model " + (value * 100).toInt() + "%" } }, { !isAttachedToWindow }); null }
+                        catch (e: Exception) { e.message ?: "The speech model could not be downloaded. Please retry." }
+                    post { transcribing = null; if (failure != null) status.text = failure else openSubtitles() }
+                }.also { it.start() }
+            }.apply { contentDescription = "Download speech model" })
+            add(status); add(Design.button(context, "Done") { closePanel() }); showPanel(content); return
+        }
+        // The language picked in this panel, else the project's.
+        val language = openSubtitlesLanguage ?: settings.language
+        add(choices(*SubtitleTranscriber.languages.map { name -> pick(name, name == language) { openSubtitlesLanguage = name; openSubtitles() } }.toTypedArray()))
+        val a = timeline.rangeStart; val b = timeline.rangeEnd
+        val range = if (a != null && b != null) minOf(a, b)..maxOf(a, b) else 0.0..track.duration.seconds
+        add(Design.button(context, if (a != null && b != null) "Transcribe marked range" else "Transcribe whole project", Design.background, Design.accent) {
+            if (transcribing != null) return@button
+            val now = this.project ?: return@button
+            val folder = store.folder(now)
+            val chosen = language
+            status.text = "Reading the sound…"
+            transcribing = Thread {
+                val scratch = java.io.File(OfflineAudioPipeline.cacheFolder, "subtitles-" + UUID.randomUUID() + ".f32")
+                val result = try {
+                    OfflineAudioPipeline.cacheFolder.mkdirs()
+                    val sources = RenderSources(now, folder)
+                    try {
+                        sources.prepareAudio(now.edit.timeline)
+                        val mix = AudioMix(now.edit.timeline, { id, effects -> sources.processed(id, effects) }) { sources.sound(it) }
+                        val levels = SubtitleTranscriber.extract(mix, range, scratch, { value -> post { status.text = "Reading the sound " + (value * 100).toInt() + "%" } }, { !isAttachedToWindow })
+                        post { status.text = "Loading speech model…" }
+                        SpeechModel.open(SubtitleModelPack.directory(root)).use { model ->
+                            SubtitleTranscriber.transcribe(scratch, levels, range, chosen, model, { _, message -> post { status.text = message } }, { !isAttachedToWindow })
+                        }
+                    } finally { sources.releaseSound() }
+                } catch (e: Exception) { e } finally { scratch.delete() }
+                post {
+                    transcribing = null
+                    @Suppress("UNCHECKED_CAST")
+                    if (result is Exception) status.text = result.message ?: "The transcription failed. Your previous subtitles are unchanged."
+                    else change("Subtitles made") { SubtitleEditing.install(it, result as List<SubtitleWord>, range, chosen) }
+                }
+            }.also { it.start() }
+        }.apply { contentDescription = "Transcribe subtitles" })
+        add(status)
+        if (track.subtitles != null) {
+            if (SubtitleEditing.groupingAvailable(track))
+                add(labelled("Words", SeekBar(context).apply {
+                    max = 15; progress = settings.maxWords - 1
+                    setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                        override fun onProgressChanged(bar: SeekBar, value: Int, user: Boolean) { }
+                        override fun onStartTrackingTouch(bar: SeekBar) { }
+                        override fun onStopTrackingTouch(bar: SeekBar) { change("Caption length") { SubtitleEditing.regroup(it, bar.progress + 1) } }
+                    })
+                }, Design.label(context, "${settings.maxWords}", 14f, mono = true)))
+            else add(Design.label(context, "The edit changed since transcription: transcribe again to change caption length.", 12f, Design.secondary))
+            add(choices(*TextStyle.values().map { style -> pick(style.name, style == settings.style) { change("Subtitle style") { it.subtitles = it.subtitles?.copy(style = style) } } }.toTypedArray()))
+            add(choices(*TextColor.values().map { color -> pick(color.name, color == settings.color) { change("Subtitle colour") { it.subtitles = it.subtitles?.copy(color = color) } } }.toTypedArray()))
+            add(choices(pick("Small", settings.size < 0.045) { change("Subtitle size") { it.subtitles = it.subtitles?.copy(size = 0.04) } },
+                pick("Medium", settings.size in 0.045..0.06) { change("Subtitle size") { it.subtitles = it.subtitles?.copy(size = 0.052) } },
+                pick("Large", settings.size > 0.06) { change("Subtitle size") { it.subtitles = it.subtitles?.copy(size = 0.07) } },
+                pick("Bottom", settings.y > 0.7) { change("Subtitle position") { it.subtitles = it.subtitles?.copy(y = 0.86) } },
+                pick("Middle", settings.y in 0.3..0.7) { change("Subtitle position") { it.subtitles = it.subtitles?.copy(y = 0.5) } },
+                pick("Top", settings.y < 0.3) { change("Subtitle position") { it.subtitles = it.subtitles?.copy(y = 0.14) } }))
+            val cues = SubtitleEditing.cues(track)
+            add(Design.label(context, "${cues.size} caption" + (if (cues.size == 1) "" else "s") + ". Tap one to correct it.", 13f, Design.secondary))
+            val list = Design.column(context, spacing = 2f)
+            for (cue in cues.take(200)) {
+                list.addView(Design.button(context, EditFrames.timestamp(EditTime.seconds(cue.start)) + "  " + cue.text, Design.text, Design.raised, 13f) {
+                    editor.seek(cue.start)
+                    val field = android.widget.EditText(context).apply { setText(cue.text); setSelection(text.length) }
+                    android.app.AlertDialog.Builder(context).setTitle("Correct caption").setView(field).setNegativeButton("Cancel", null)
+                        .setPositiveButton("Save") { _, _ -> change("Caption corrected") { SubtitleEditing.correct(it, cue, field.text.toString()) } }.show()
+                }.apply { contentDescription = "Caption " + cue.text })
+            }
+            add(android.widget.ScrollView(context).apply { addView(list) }.also { it.layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Design.dp(context, 160f)) })
+            add(Design.button(context, "Remove subtitles", Design.recording) { change("Subtitles removed") { SubtitleEditing.remove(it) } }.apply { contentDescription = "Remove subtitles" })
+        }
+        add(Design.button(context, "Done") { openSubtitlesLanguage = null; closePanel() }.apply { contentDescription = "Done with subtitles" })
+        showPanel(content)
+    }
+    private var openSubtitlesLanguage: String? = null
 
     /// Replace the marked sound with a tone: the selected sound parts, or all
     /// sound in the range when none is selected. Apply is one undo step.

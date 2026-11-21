@@ -97,6 +97,9 @@ class RenderSources(private val project: Project, private val folder: File, priv
         return complete
     }
 
+    /// Subtitles, over everything else and inside the recorded frame.
+    fun drawCaptions(captions: List<TextOverlay>, width: Int, height: Int) { for (caption in captions) titles.draw(caption, width, height, null) }
+
     /// One picture with its grade, images and titles. False if it could not be shown.
     private fun drawLayer(layer: RenderPlan.Layer, program: FrameProgram, width: Int, height: Int, overlays: Boolean = true): Boolean {
         val frame = CanvasSize(width.toDouble(), height.toDouble())
@@ -294,6 +297,7 @@ class MovieExport(project: Project, private val folder: File, private val export
                 FrameProgram.clear(width, height)
                 // A take that yields no picture must not become a black movie.
                 if (!sources.draw(plan.layers(time), program, width, height, plan.transition(time), fps.toDouble())) throw ProjectError.InvalidMedia()
+                sources.drawCaptions(plan.captions(time), width, height)
                 val t1 = System.nanoTime()
                 egl.setPresentationTime(window, n * 1_000_000_000L / fps)
                 egl.swap(window)

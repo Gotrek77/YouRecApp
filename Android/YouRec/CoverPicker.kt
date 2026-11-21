@@ -52,6 +52,7 @@ class EditFrames(project: Project, folder: File) {
             if (GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) != GLES20.GL_FRAMEBUFFER_COMPLETE) return null
             FrameProgram.clear(width, height)
             if (!sources.draw(plan.layers(time), shader, width, height, plan.transition(time))) return null
+            sources.drawCaptions(plan.captions(time), width, height)
             val pixels = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
             GLES20.glReadPixels(0, 0, width, height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, pixels)
             // GL rows start at the bottom of the picture.

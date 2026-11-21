@@ -9,6 +9,14 @@ class RenderPlan(edit: EditState) {
     val timeline: TrackTimeline = edit.timeline.copy()
     val duration: EditTime = timeline.duration
     private val pictures = timeline.video.sortedWith(TrackTimeline.backToFront)
+    // Subtitles are captions in project time, over every picture.
+    private val captionCues = SubtitleEditing.cues(timeline)
+    /// The captions on screen at `time`, styled by the project's subtitle settings.
+    fun captions(time: EditTime): List<TextOverlay> {
+        val settings = timeline.subtitles ?: return emptyList()
+        val t = time.seconds
+        return captionCues.filter { t >= it.start && t < it.end }.map { it.overlay(settings) }
+    }
 
     data class Picture(val item: UUID, val source: UUID, val sourceTime: Double, val interval: EditInterval, val clip: TimelineClip)
     /// One picture to draw. `slot` tells apart two pictures on screen at once from the same recording.
