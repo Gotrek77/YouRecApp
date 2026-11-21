@@ -9,7 +9,7 @@ import java.util.UUID
 internal object ProjectCoding {
     private fun unsupported(tool: String): Nothing = throw ProjectError.UnsupportedTools(tool)
     private fun time(value: Fields) = EditTime.ticks(value.long("ticks"))
-    private fun encode(time: EditTime) = jsonObject("ticks" to time.ticks)
+    fun encode(time: EditTime) = jsonObject("ticks" to time.ticks)
     private fun interval(value: Fields) = EditInterval(time(value.fields("start")), time(value.fields("end")))
     private fun <T> list(values: List<Any?>, decode: (Fields) -> T) = values.map { decode(Fields.of(it)) }
     private fun present(value: Any?) = when (value) { null -> false; is List<*> -> value.isNotEmpty(); else -> true }
@@ -82,7 +82,7 @@ internal object ProjectCoding {
     private fun map(value: Fields) = SourcePlaybackMap(list(value.list("runs")) {
         PlaybackRun(time(it.fields("duration")), it.double("sourceStart"), it.double("sourceEnd"), it.bool("silent"))
     })
-    private fun encode(map: SourcePlaybackMap) = jsonObject("runs" to map.runs.map {
+    fun encode(map: SourcePlaybackMap) = jsonObject("runs" to map.runs.map {
         jsonObject("duration" to encode(it.duration), "sourceStart" to it.sourceStart, "sourceEnd" to it.sourceEnd, "silent" to it.silent)
     })
     private fun fade(value: Fields?) = value?.let { AudioEdgeFade(it.double("seconds"), it.double("elapsed")) }
@@ -101,18 +101,17 @@ internal object ProjectCoding {
     }
 
     fun timeline(value: Fields): TrackTimeline {
-        if (present(value.raw("subtitles"))) unsupported("Subtitles")
         val video = list(value.list("video")) {
             if (present(it.raw("spanningEffects"))) unsupported("effects spanning several clips")
             VideoTimelineItem(it.uuid("occurrenceID"), time(it.fields("start")), clip(it.fields("content")), it.int("layer"), time(it.fields("localOrigin")), map(it.fields("mapping")))
         }
         val audio = list(value.list("audio")) {
-            if (present(it.raw("subtitleWords"))) unsupported("Subtitles")
             if (present(it.raw("spanningEffects"))) unsupported("effects spanning several clips")
             AudioTimelineItem(it.uuid("id"), it.uuid("occurrenceID"), it.uuid("sourceID"), time(it.fields("start")), map(it.fields("mapping")), time(it.fields("localOrigin")),
                 it.uuidOrNull("followsVideo"), it.double("volumeDB"), it.bool("muted"), fade(it.fieldsOrNull("fadeIn")), fade(it.fieldsOrNull("fadeOut")),
                 it.listOrNull("censorRegions")?.let { regions -> list(regions, ::censor) } ?: emptyList(),
-                it.listOrNull("enhancements")?.let { regions -> list(regions, ::enhancement) } ?: emptyList())
+                it.listOrNull("enhancements")?.let { regions -> list(regions, ::enhancement) } ?: emptyList(),
+                it.listOrNull("subtitleWords")?.let { words -> list(words, ::subtitleWord) } ?: emptyList())
         }
         val links = list(value.list("links")) { link -> TimelineLink(link.uuid("id"), link.list("members").map { Fields.uuid(it) }.toSet()) }
         val bookmarks = list(value.list("bookmarks")) { TimelineBookmark(it.uuid("id"), it.string("label"), anchor(it.fields("anchor"))) }
@@ -125,11 +124,25 @@ internal object ProjectCoding {
         }
         return TrackTimeline(video, audio, links, bookmarks, placements).also { timeline ->
             timeline.transitions = value.listOrNull("transitions")?.let { list(it, ::transition) } ?: emptyList()
+            timeline.subtitles = value.fieldsOrNull("subtitles")?.let(::subtitleSettings)
             timeline.generated = value.listOrNull("generated")?.let { list(it) { g ->
                 TimelineGeneratedRegion(g.uuid("id"), g.uuid("owner"), interval(g.fields("interval")), g.uuidOrNull("freezeVideo"))
             } } ?: emptyList()
         }
     }
+    private fun subtitleWord(value: Fields) = SubtitleWord(value.uuid("id"), value.uuid("phraseID"), value.string("text"), value.double("start"), value.double("end"))
+    private fun encode(word: SubtitleWord) = jsonObject("id" to word.id.text, "phraseID" to word.phraseID.text, "text" to word.text, "start" to word.start, "end" to word.end)
+    private fun subtitleSettings(value: Fields): SubtitleSettings {
+        if (present(value.raw("appearance")) || present(value.raw("motion"))) unsupported("Title designs in subtitles")
+        return SubtitleSettings(value.uuid("id"), value.int("maxWords"),
+            TextStyle.values().firstOrNull { it.name.lowercase() == value.string("style") } ?: throw ProjectError.InvalidDocument(),
+            TextColor.values().firstOrNull { it.name.lowercase() == value.string("color") } ?: throw ProjectError.InvalidDocument(),
+            value.double("size"), value.double("y"), value.string("language"), value.string("timingFingerprint"), value.doubleOrNull("x"),
+            value.stringOrNull("font")?.let { raw -> SubtitleFont.values().firstOrNull { it.raw == raw } ?: throw ProjectError.InvalidDocument() })
+    }
+    private fun encode(settings: SubtitleSettings) = jsonObject("id" to settings.id.text, "maxWords" to settings.maxWords, "style" to settings.style.name.lowercase(),
+        "color" to settings.color.name.lowercase(), "size" to settings.size, "y" to settings.y, "language" to settings.language,
+        "timingFingerprint" to settings.timingFingerprint, "x" to settings.x, "font" to settings.font?.raw)
     private fun enhancement(value: Fields) = AudioEnhancementRegion(value.uuid("id"), interval(value.fields("interval")), list(value.list("effects"), ::effect))
     /// Kinds and models this build does not know are kept as written.
     private fun effect(value: Fields) = AudioEffect(value.uuid("id"), EffectKind(value.string("kind")), value.bool("enabled"), value.double("amount"),
@@ -169,6 +182,7 @@ internal object ProjectCoding {
             jsonObject("id" to it.id.text, "occurrenceID" to it.occurrenceID.text, "sourceID" to it.sourceID.text, "start" to encode(it.start), "mapping" to encode(it.mapping),
                 "localOrigin" to encode(it.localOrigin), "followsVideo" to it.followsVideo?.text, "volumeDB" to it.volumeDB, "muted" to it.muted,
                 "fadeIn" to encode(it.fadeIn), "fadeOut" to encode(it.fadeOut), "enhancements" to it.enhancements.map { region -> encode(region) },
+                "subtitleWords" to it.subtitleWords.takeIf { w -> w.isNotEmpty() }?.map { word -> encode(word) },
                 "censorRegions" to it.censors.takeIf { c -> c.isNotEmpty() }?.map { region -> encode(region) })
         },
         // Sets are sorted so that an unchanged edit keeps its content hash.
@@ -180,7 +194,8 @@ internal object ProjectCoding {
         },
         "transitions" to timeline.transitions.map { jsonObject("outgoing" to it.outgoing?.text, "incoming" to it.incoming?.text, "settings" to encode(it.settings),
             "origin" to encode(it.origin), "factor" to it.factor) },
-        "generated" to timeline.generated.map { jsonObject("id" to it.id.text, "owner" to it.owner.text, "interval" to encode(it.interval), "freezeVideo" to it.freezeVideo?.text) })
+        "generated" to timeline.generated.map { jsonObject("id" to it.id.text, "owner" to it.owner.text, "interval" to encode(it.interval), "freezeVideo" to it.freezeVideo?.text) },
+        "subtitles" to timeline.subtitles?.let { encode(it) })
 
     private fun transition(value: Fields): TimelineTransition {
         val s = value.fields("settings")

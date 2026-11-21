@@ -21,7 +21,7 @@ gcc -O2 -fPIC -shared -o "$WORK/native/libyourec.so" native/yourec_jni.c native/
     -x c++ $T/LavaSR/LavaDSP.cpp $T/VoiceFixer/VoiceFixerDSP.cpp -x none \
     -I"$JAVA_INCLUDE" -I"$JAVA_INCLUDE/linux" -Inative/blas -I$Q -I$T/RNNoise -I$T/RNNoise/include -I$T/RNNoise/src -I$T/LavaSR -I$T/VoiceFixer \
     -lm -lpthread -lstdc++
-CORE="YouRec/JSON.kt YouRec/TrackTimeline.kt YouRec/Project.kt YouRec/ProjectCoding.kt YouRec/TimelineEditing.kt YouRec/ZoomTransition.kt YouRec/RenderPlan.kt YouRec/TakeJournal.kt YouRec/VideoTools.kt YouRec/ColorGrading.kt YouRec/TimelinePaste.kt YouRec/ProjectArchive.kt YouRec/CoverFramePool.kt YouRec/AudioCensor.kt YouRec/AudioDSP.kt YouRec/OfflineAudioPipeline.kt YouRec/DeepFilterNet.kt YouRec/StudioAudio.kt YouRec/StudioModelPack.kt YouRec/PauseCuts.kt YouRec/Transitions.kt YouRec/HorizonLevel.kt YouRec/SpeechDetector.kt YouRec/SpeechModel.kt"
+CORE="YouRec/JSON.kt YouRec/TrackTimeline.kt YouRec/Project.kt YouRec/ProjectCoding.kt YouRec/TimelineEditing.kt YouRec/ZoomTransition.kt YouRec/RenderPlan.kt YouRec/TakeJournal.kt YouRec/VideoTools.kt YouRec/ColorGrading.kt YouRec/TimelinePaste.kt YouRec/ProjectArchive.kt YouRec/CoverFramePool.kt YouRec/AudioCensor.kt YouRec/AudioDSP.kt YouRec/OfflineAudioPipeline.kt YouRec/DeepFilterNet.kt YouRec/StudioAudio.kt YouRec/StudioModelPack.kt YouRec/Subtitles.kt YouRec/PauseCuts.kt YouRec/Transitions.kt YouRec/HorizonLevel.kt YouRec/SpeechDetector.kt YouRec/SpeechModel.kt"
 ${KOTLINC:-kotlinc} -nowarn $CORE scripts/speech/SpeechHarness.kt -include-runtime -d "$WORK/speech.jar"
 java -Djava.library.path="$WORK/native" -cp "$WORK/speech.jar" yourec.SpeechHarnessKt "$MODEL" $SAMPLE > "$WORK/app.txt"
 # qwen-asr as its author builds it.

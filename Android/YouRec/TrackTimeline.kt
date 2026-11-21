@@ -141,7 +141,8 @@ enum class AudioFadeEdge(val title: String) {
 data class AudioTimelineItem(val id: UUID = UUID.randomUUID(), val occurrenceID: UUID, val sourceID: UUID, val start: EditTime,
                              val mapping: SourcePlaybackMap, val localOrigin: EditTime = EditTime.zero, val followsVideo: UUID? = null,
                              val volumeDB: Double = 0.0, val muted: Boolean = false, val fadeIn: AudioEdgeFade? = null, val fadeOut: AudioEdgeFade? = null,
-                             val censors: List<AudioCensorRegion> = emptyList(), val enhancements: List<AudioEnhancementRegion> = emptyList()) {
+                             val censors: List<AudioCensorRegion> = emptyList(), val enhancements: List<AudioEnhancementRegion> = emptyList(),
+                             val subtitleWords: List<SubtitleWord> = emptyList()) {
     val end: EditTime get() = start + mapping.duration
     val interval: EditInterval get() = EditInterval(start, end)
     val gain: Double get() = if (muted) 0.0 else 10.0.pow(volumeDB / 20)
@@ -293,11 +294,13 @@ class TrackTimeline(var video: List<VideoTimelineItem> = emptyList(), var audio:
     var captureBase: Int? = null
     var transitions: List<TimelineTransition> = emptyList()
     var generated: List<TimelineGeneratedRegion> = emptyList()
+    /// Present once subtitles were made; the words belong to the sounds.
+    var subtitles: SubtitleSettings? = null
 
     override fun equals(other: Any?) = other is TrackTimeline && video == other.video && audio == other.audio && links == other.links && bookmarks == other.bookmarks && placements == other.placements
-        && transitions == other.transitions && generated == other.generated
+        && transitions == other.transitions && generated == other.generated && subtitles == other.subtitles
     override fun hashCode() = video.hashCode() * 31 + audio.hashCode()
-    fun copy() = TrackTimeline(video, audio, links, bookmarks, placements).also { it.captureBase = captureBase; it.transitions = transitions; it.generated = generated }
+    fun copy() = TrackTimeline(video, audio, links, bookmarks, placements).also { it.captureBase = captureBase; it.transitions = transitions; it.generated = generated; it.subtitles = subtitles }
 
     val duration: EditTime get() = maxOf(video.maxOfOrNull { it.end } ?: EditTime.zero, audio.maxOfOrNull { it.end } ?: EditTime.zero, generated.maxOfOrNull { it.interval.end } ?: EditTime.zero)
     val allIDs: Set<UUID> get() = (video.map { it.id } + audio.map { it.id }).toSet()
