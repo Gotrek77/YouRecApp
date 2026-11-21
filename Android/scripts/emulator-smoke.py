@@ -208,10 +208,16 @@ def main():
 
     # Recorder.
     # A freshly booted emulator can show a system "isn't responding" dialog over the app.
-    for attempt in range(3):
-        if any("isn't responding" in (n[0] or n[1]) for n in nodes(tries=2)):
+    for attempt in range(4):
+        shown = nodes(tries=2)
+        if any("isn't responding" in (n[0] or n[1]) for n in shown):
             note("system dialog: " + describe())
-            if find("Wait", exact=True):
+            # The launcher is not under test: close it; for anything else, wait.
+            launcher = any("Launcher isn't responding" in (n[0] or n[1]) for n in shown)
+            if launcher and find("Close app", exact=True):
+                tap("Close app", 5)
+                adb("shell", "am", "start", "-W", "-n", PACKAGE + "/yourec.YouRecActivity")
+            elif find("Wait", exact=True):
                 tap("Wait", 5)
             time.sleep(3)
     if not wait("Record a new project", 40):

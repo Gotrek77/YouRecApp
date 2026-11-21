@@ -11,6 +11,11 @@ on:
         required: false
         default: ''
 
+# A newer push to the same branch supersedes a run still going.
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # LavaSR and VoiceFixer as ONNX, converted from the pinned upstream
   # checkpoints (checked by SHA-256) exactly as the iPhone app converts them
