@@ -68,6 +68,14 @@ capture, recording controls, the cut editor, export.
   built-in looks or an imported `.cube` LUT (3D or 1D, Rec.709), with strength,
   after exposure, warmth and tint. Exposure and white balance are per-channel
   gains on display values: close to the iPhone result, not identical to it.
+  **Effects** (video) on the selected clips or the whole project, with the
+  iPhone app's shader arithmetic ported to GLSL: Color Correction, Silent Tint,
+  Three-Strip, Bleach Bypass, Day for Night, Noir, Expressionism, RGB Offset,
+  Negative Strobe and Kaleidoscope. Each has its iPhone controls and
+  intensity; Animate adds keyframes at the playhead, the diamond adds or
+  removes one. Pictures between effect passes are 8-bit display values (the
+  iPhone app keeps 16-bit linear light), and grain repeats a fixed random tile
+  read from a different place each frame.
   **Transition** at the start, at a cut or at the end, in every iPhone style:
   Dissolve, Fade through a colour, Wipe (direction, soft or hard edge), Split
   screen (axis, divider, framing, whose sound), Hitchcock (shadows or highlights
@@ -137,8 +145,11 @@ policy older iPhone builds apply to newer projects.
 
 Title designs, looks and outlines, imported fonts,
 animated titles ·
-Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export · Video effects and their Metal
-shaders · Dragging and pinching a placed picture in the preview,
+Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export · The other video
+effects (Color Isolation, Quantization, Night fix, Dolly zoom, Crash zoom,
+Widescreen, Freeze frame, Step printing, Undercranking, Halation, 16mm,
+Super 8, Chroma key, Background), animated Color Correction, colour and media
+controls · Dragging and pinching a placed picture in the preview,
 and its edge-crop handles (edge crops made on iPhone are kept and drawn) ·
 animated Crop and Placement · Stabilization · Original
 recordings browser · OpenTimelineIO export · Dual-camera
@@ -240,6 +251,14 @@ python3 scripts/emulator-smoke.py build/outputs/apk/debug/YouRec-debug.apk out
 ```
 
 It reinstalls the app, so use a phone with no projects you care about.
+
+The video effect shader is checked against an independent NumPy transcription
+of the iPhone app's Metal kernels, running the same GLSL ES 1.0 in WebGL 1
+through headless Chromium (needs Node with Playwright, and NumPy):
+
+```sh
+NODE_PATH=$(npm root -g) python3 scripts/effects/check-shaders.py
+```
 
 Requires only a JDK and `kotlinc`. It compiles the core with its checks into one
 program, as the iPhone `scripts/test-core.sh` does with `swiftc`. The checks are

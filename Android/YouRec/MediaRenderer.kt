@@ -93,7 +93,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
              framesPerSecond: Double = 30.0): Boolean {
         if (transition != null && layers.none { it.placement != null }) return drawTransition(transition, program, width, height, framesPerSecond)
         var complete = true
-        for (layer in layers) complete = drawLayer(layer, program, width, height) && complete
+        for (layer in layers) complete = drawLayer(layer, program, width, height, framesPerSecond = framesPerSecond) && complete
         return complete
     }
 
@@ -101,7 +101,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
     fun drawCaptions(captions: List<TextOverlay>, width: Int, height: Int) { for (caption in captions) titles.draw(caption, width, height, null) }
 
     /// One picture with its grade, images and titles. False if it could not be shown.
-    private fun drawLayer(layer: RenderPlan.Layer, program: FrameProgram, width: Int, height: Int, overlays: Boolean = true): Boolean {
+    private fun drawLayer(layer: RenderPlan.Layer, program: FrameProgram, width: Int, height: Int, overlays: Boolean = true, framesPerSecond: Double = 30.0): Boolean {
         val frame = CanvasSize(width.toDouble(), height.toDouble())
         val reader = frames(layer.picture.source, layer.slot)
         if (reader == null || !reader.show(layer.picture.sourceTime)) return false
@@ -109,6 +109,37 @@ class RenderSources(private val project: Project, private val folder: File, priv
         var placed = layer.picture.clip.pictureTransform(source, frame)
         val placement = layer.placement
         val tone = grade(layer.picture.clip.color)
+        // Effects see the graded, framed picture at the canvas size, before it is
+        // placed in a window and before its images and titles, as on the iPhone.
+        val effects = VideoEffectRendering.active(layer.picture.clip, layer.picture.sourceTime, framesPerSecond)
+        if (effects.isNotEmpty()) {
+            val shader = effectShader ?: VideoEffectShader().also { effectShader = it }
+            val bound = IntArray(1); android.opengl.GLES20.glGetIntegerv(android.opengl.GLES20.GL_FRAMEBUFFER_BINDING, bound, 0)
+            val scissor = android.opengl.GLES20.glIsEnabled(android.opengl.GLES20.GL_SCISSOR_TEST)
+            if (scissor) android.opengl.GLES20.glDisable(android.opengl.GLES20.GL_SCISSOR_TEST)
+            shader.begin(width, height)
+            program.draw(reader.texture, reader.matrix, placed, source, frame, tone)
+            val result = shader.apply(effects, layer.picture.sourceTime, framesPerSecond)
+            android.opengl.GLES20.glBindFramebuffer(android.opengl.GLES20.GL_FRAMEBUFFER, bound[0])
+            android.opengl.GLES20.glViewport(0, 0, width, height)
+            if (scissor) android.opengl.GLES20.glEnable(android.opengl.GLES20.GL_SCISSOR_TEST)
+            if (placement == null) {
+                shader.draw(result, width, height, null)
+                if (overlays) drawOverlays(layer, width, height, null)
+                return true
+            }
+            val visible = placement.visibleWindow(frame)
+            val left = Math.round(maxOf(0.0, visible.x)).toInt(); val right = Math.round(minOf(frame.width, visible.x + visible.width)).toInt()
+            val top = Math.round(maxOf(0.0, visible.y)).toInt(); val bottom = Math.round(minOf(frame.height, visible.y + visible.height)).toInt()
+            if (right <= left || bottom <= top) return true
+            android.opengl.GLES20.glEnable(android.opengl.GLES20.GL_SCISSOR_TEST)
+            android.opengl.GLES20.glScissor(left, height - bottom, right - left, bottom - top)
+            android.opengl.GLES20.glClearColor(0f, 0f, 0f, 1f); android.opengl.GLES20.glClear(android.opengl.GLES20.GL_COLOR_BUFFER_BIT)
+            shader.draw(result, width, height, placement.transform(frame))
+            drawOverlays(layer, width, height, placement.transform(frame))
+            android.opengl.GLES20.glDisable(android.opengl.GLES20.GL_SCISSOR_TEST)
+            return true
+        }
         if (placement == null) {
             program.draw(reader.texture, reader.matrix, placed, source, frame, tone)
             // Images and titles are placed on the finished frame, so a mirrored picture keeps them readable.
@@ -138,6 +169,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
     // Each partner is drawn whole into a texture of its own, then the two are
     // mixed: the transition sees the finished pictures, titles included.
     private var compositor: TransitionCompositor? = null
+    private var effectShader: VideoEffectShader? = null
     private fun drawTransition(frame: RenderPlan.TransitionFrame, program: FrameProgram, width: Int, height: Int, framesPerSecond: Double): Boolean {
         val mixer = compositor ?: TransitionCompositor().also { compositor = it }
         val bound = IntArray(1); android.opengl.GLES20.glGetIntegerv(android.opengl.GLES20.GL_FRAMEBUFFER_BINDING, bound, 0)
@@ -151,7 +183,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
             val fill = if (layer == null) frame.fill else TransitionColor.black
             android.opengl.GLES20.glClearColor(fill.red.toFloat(), fill.green.toFloat(), fill.blue.toFloat(), 1f)
             android.opengl.GLES20.glClear(android.opengl.GLES20.GL_COLOR_BUFFER_BIT)
-            if (layer != null) complete = drawLayer(layer, program, width, height, overlays = !split) && complete
+            if (layer != null) complete = drawLayer(layer, program, width, height, overlays = !split, framesPerSecond = framesPerSecond) && complete
         }
         android.opengl.GLES20.glBindFramebuffer(android.opengl.GLES20.GL_FRAMEBUFFER, bound[0])
         mixer.composite(frame, width, height, framesPerSecond)
@@ -202,7 +234,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
         progress(1.0)
     }
     fun releaseFrames() { for (reader in frames.values) try { reader.release() } catch (e: Exception) { }; frames.clear(); failed.clear(); titles.release(); pictures.release(); releaseLooks()
-        compositor?.releaseProgram(); compositor = null }
+        compositor?.releaseProgram(); compositor = null; effectShader?.release(); effectShader = null }
     fun releaseSound() { for (reader in sound.values) reader.release(); sound.clear()
         synchronized(processedSound) { for (reader in processedSound.values) reader.close(); processedSound.clear() } }
 

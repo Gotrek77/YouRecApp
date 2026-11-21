@@ -189,7 +189,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if (edit.timeline.audio.isNotEmpty()) tool("Enhance") { openEnhance() }
             if (a != null && b != null && edit.timeline.audio.isNotEmpty()) tool("Censor") { openCensor() }
             if (edit.timeline.video.any { item -> project.sources.firstOrNull { it.id == item.content.sourceID }?.isStillPhoto != true }) tool("Pauses") { openPauses() }
-            if (edit.timeline.video.isNotEmpty()) { tool("Speed") { openSpeed() }; tool("Crop") { openCrop() }; tool("Mirror") { openMirror() }; tool("Color") { openColor() } }
+            if (edit.timeline.video.isNotEmpty()) { tool("Speed") { openSpeed() }; tool("Crop") { openCrop() }; tool("Mirror") { openMirror() }; tool("Color") { openColor() }; tool("Effects") { effectsScroll = 0; openEffects() } }
             if (edit.timeline.video.isNotEmpty()) tool("Text") { openText(null) }
             if (edit.timeline.video.isNotEmpty()) tool("Transition") { openTransition(null) }
             if (edit.timeline.video.isNotEmpty()) tool("Image") { openImage(null) }
@@ -1301,6 +1301,119 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             if (edit != now.edit) commit(edit, "Color removed")
             openColor()
         }, Design.button(context, "Done", Design.accent) { closePanel() }).apply { setPadding(0, Design.dp(context, 8f), 0, 0) })
+        showPanel(content)
+    }
+
+    /// Video effects on the selected clips or the whole project, after the
+    /// iPhone app's effects editor: controls show the value at the playhead;
+    /// with Animate on, a change keys it there. Dragging previews the draft;
+    /// releasing commits one undo step.
+    private var effectsAnimate = false
+    private var effectsScroll = 0
+    private fun openEffects() {
+        val project = project ?: return
+        editor.pause()
+        val items = targets(project.edit)
+        val at = EditTime.seconds(editor.playhead)
+        val reference = items.firstOrNull { at in it.interval } ?: items.firstOrNull() ?: return
+        val source = if (at in reference.interval) reference.mapping.source(at - reference.start) else null
+        val time = source ?: reference.content.start
+        fun draft(now: Project, change: (TimelineClip, Double?) -> TimelineClip) = TimelineEditing.settingVideoEffects(selection(now.edit), now.edit, editor.playhead, change)
+        fun apply(message: String, reopen: Boolean = true, change: (TimelineClip, Double?) -> TimelineClip) {
+            val now = this.project ?: return
+            val edit = draft(now, change)
+            if (edit != now.edit) commit(edit, message)
+            if (reopen) openEffects()
+        }
+        val content = Design.column(context, Design.label(context, "Effects · " + scopeTitle(project.edit), 15f, bold = true), spacing = 4f)
+        fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        fun choice(title: String, chosen: Boolean, description: String, action: () -> Unit) = Design.button(context, title, if (chosen) Design.background else Design.text, if (chosen) Design.accent else Design.raised, 13f) { action() }
+            .apply { contentDescription = description + if (chosen) ", selected" else "" }
+        add(Design.row(context, choice(if (effectsAnimate) "Animate: on" else "Animate: off", effectsAnimate, "Animate") { effectsAnimate = !effectsAnimate; openEffects() },
+            Design.label(context, if (effectsAnimate) "Changes add keyframes at " + Design.timecode(editor.playhead) else "", 12f, Design.secondary)))
+        val list = Design.column(context, spacing = 4f)
+        fun listed(view: View) = list.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val effects = VideoEffectSettings.ordered(reference.content.videoEffects ?: emptyList())
+        for (effect in effects) {
+            val kind = effect.kind; val name = kind.descriptor.displayName
+            listed(Design.row(context, Design.label(context, name, 14f, bold = true).also { it.layoutParams = Design.weighted() },
+                choice(if (effect.enabled) "On" else "Off", effect.enabled, "$name enabled") { apply(name + if (effect.enabled) " off" else " on") { c, _ -> VideoEffectEditing.enabling(c, kind, !effect.enabled) } },
+                Design.button(context, "Reset", Design.text, Design.raised, 13f) { apply("$name reset") { c, _ -> VideoEffectEditing.resetting(c, kind) } },
+                Design.button(context, "Remove", Design.recording, Design.raised, 13f) { apply("$name removed") { c, _ -> VideoEffectEditing.removing(c, kind) } }))
+            for (parameter in effect.parameters) {
+                val value = effect.value(parameter.id, time) ?: parameter.value
+                fun set(newValue: EffectValue, message: String, reopen: Boolean = true) =
+                    apply(message, reopen) { c, s -> VideoEffectEditing.setting(c, kind, parameter.id, newValue, s, effectsAnimate) }
+                val keyed = source != null && parameter.keyframes.any { kotlin.math.abs(it.time - source) < 1.0 / 60 }
+                val diamond = if (source != null && parameter.animatable && (effectsAnimate || parameter.keyframes.isNotEmpty()))
+                    Design.button(context, if (keyed) "◆" else "◇", Design.text, Design.raised, 13f) {
+                        apply(if (keyed) "Keyframe removed" else "Keyframe added") { c, s -> if (s == null) c else VideoEffectEditing.togglingKeyframe(c, kind, parameter.id, s) }
+                    }.apply { contentDescription = "Keyframe for " + parameter.title + if (keyed) ", set" else "" } else null
+                when (val k = parameter.kind) {
+                    is EffectParameterKind.Slider -> {
+                        val steps = Math.round((k.max - k.min) / k.step).toInt()
+                        val number = (value as? EffectValue.Number)?.value ?: k.defaultValue
+                        fun at(progress: Int) = (k.min + progress * k.step).coerceIn(k.min, k.max).let { Math.round(it / k.step) * k.step }.coerceIn(k.min, k.max)
+                        fun text(v: Double) = if (parameter.id == "intensity") String.format("%.0f%%", v * 100) else if (k.step >= 1) String.format("%.0f", v) else if (k.step >= 0.1) String.format("%.1f", v) else String.format("%.2f", v)
+                        val shown = Design.label(context, text(number), 13f, mono = true)
+                        var pending = number
+                        val bar = SeekBar(context).apply {
+                            max = steps; progress = Math.round((number - k.min) / k.step).toInt()
+                            contentDescription = parameter.title
+                            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                                override fun onProgressChanged(b: SeekBar, p: Int, user: Boolean) {
+                                    if (!user) return
+                                    pending = at(p); shown.text = text(pending)
+                                    this@EditorView.project?.let { now -> editor.show(draft(now) { c, s -> VideoEffectEditing.setting(c, kind, parameter.id, EffectValue.Number(pending), s, effectsAnimate) }) }
+                                }
+                                override fun onStartTrackingTouch(b: SeekBar) { }
+                                override fun onStopTrackingTouch(b: SeekBar) { set(EffectValue.Number(pending), "$name: " + parameter.title, reopen = effectsAnimate) }
+                            })
+                        }
+                        val line = LinearLayout(context).apply {
+                            orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                            addView(Design.label(context, parameter.title, 13f), LayoutParams(Design.dp(context, 96f), ViewGroup.LayoutParams.WRAP_CONTENT))
+                            addView(bar, Design.weighted(1f, Design.dp(context, 44f))); addView(shown, LayoutParams(Design.dp(context, 52f), ViewGroup.LayoutParams.WRAP_CONTENT))
+                            diamond?.let { addView(it) }
+                        }
+                        listed(line)
+                    }
+                    is EffectParameterKind.Toggle -> {
+                        val on = (value as? EffectValue.Toggle)?.value ?: false
+                        listed(Design.row(context, choice(parameter.title + if (on) ": on" else ": off", on, parameter.title) { set(EffectValue.Toggle(!on), "$name: " + parameter.title) }, *listOfNotNull(diamond).toTypedArray()))
+                    }
+                    is EffectParameterKind.Stepper -> {
+                        val current = (value as? EffectValue.Number)?.value
+                        listed(Design.label(context, parameter.title, 13f))
+                        listed(choices(*(k.values.map { v -> choice(if (v % 1.0 == 0.0) v.toInt().toString() else v.toString(), v == current, parameter.title + " " + v) { set(EffectValue.Number(v), "$name: " + parameter.title) } } + listOfNotNull(diamond)).toTypedArray()))
+                    }
+                    is EffectParameterKind.Picker -> {
+                        val current = (value as? EffectValue.Choice)?.value
+                        listed(Design.label(context, parameter.title, 13f))
+                        listed(choices(*(k.options.map { o -> choice(o, o == current, parameter.title + " " + o) { set(EffectValue.Choice(o), "$name: " + parameter.title) } } + listOfNotNull(diamond)).toTypedArray()))
+                    }
+                    is EffectParameterKind.Color, is EffectParameterKind.Media -> listed(Design.label(context, parameter.title + " is kept as set on iPhone.", 12f, Design.secondary))
+                }
+            }
+        }
+        if (effects.isEmpty()) listed(Design.label(context, "No effects on " + scopeTitle(project.edit) + ". Add one below.", 13f, Design.secondary))
+        // Effects to add, by family, three to a row.
+        val missing = VideoEffectCatalog.all.filter { it.id in VideoEffectRendering.drawn && effects.none { e -> e.kind == it.id } }
+        for ((family, group) in missing.groupBy { it.family }) {
+            listed(Design.label(context, "Add · " + family.title, 13f, Design.secondary).apply { setPadding(0, Design.dp(context, 6f), 0, 0) })
+            for (row in group.chunked(3)) listed(LinearLayout(context).apply {
+                orientation = HORIZONTAL
+                for (d in row) addView(Design.button(context, d.displayName, Design.text, Design.raised, 13f) { apply(d.displayName + " added") { c, _ -> VideoEffectEditing.adding(c, d.id) } }
+                    .apply { contentDescription = "Add " + d.displayName }, Design.weighted(1f).apply { rightMargin = Design.dp(context, 6f); bottomMargin = Design.dp(context, 6f) })
+                repeat(3 - row.size) { addView(View(context), Design.weighted(1f)) }
+            })
+        }
+        // Rebuilt after each change; the list keeps its place.
+        add(android.widget.ScrollView(context).apply {
+            addView(list); post { scrollTo(0, effectsScroll) }
+            setOnScrollChangeListener { _, _, y, _, _ -> effectsScroll = y }
+        }.also { it.layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Design.dp(context, 260f)) })
+        add(Design.row(context, Design.button(context, "Done", Design.accent) { closePanel() }).apply { setPadding(0, Design.dp(context, 8f), 0, 0) })
         showPanel(content)
     }
 

@@ -304,6 +304,7 @@ def main():
     if tool("Color") and option("Look Cinema", "Look "):
         time.sleep(1); tap("Done", 10)
         note("after Color: " + describe())
+    noir = effects()
     # Text needs a picture under the playhead; at the very end there is none.
     readout = next((n[1] for n in nodes() if " / " in n[1]), "")
     if readout and readout.split(" / ")[0] == readout.split(" / ")[-1]:
@@ -359,6 +360,12 @@ def main():
             note("censored range %.2f-%.2f s: RMS %s dB" % (a, b, level))
             if not level or level[-1] == "-inf" or abs(float(level[-1]) + 21) > 3:
                 fail("the censored range does not carry the -18 dBFS tone (RMS %s)" % level)
+        if noir:
+            # Noir runs as a GLSL pass on the device's GLES: the start of the edit, before any title, is grey.
+            grey = neutral(movie, 0.3)
+            note("Noir at 0.30 s: %.0f%% of the frame is neutral grey" % (grey * 100))
+            if grey < 0.85:
+                fail("the Noir effect is missing from the export (%.0f%% neutral)" % (grey * 100))
         if enhanced:
             # DeepFilterNet3 ran through ONNX Runtime over each source: one processed file per take, no partial left.
             listing = adb("shell", "run-as " + PACKAGE + " ls -l 'cache/Enhanced audio' 2>&1")
@@ -425,6 +432,27 @@ def enhance():
         return False
     note("after Enhance (%.0f s of processing): %s" % (time.time() - began, describe()))
     return True
+
+def effects():
+    """Noir on the whole project through the Effects panel. True once applied."""
+    if not tool("Effects") or not tap("Add Noir", 10):
+        return False
+    if not wait("Noir enabled", 5):
+        fail("Effects: Add Noir did nothing. On screen: " + describe())
+        return False
+    shot("editor-effects")
+    tap("Done", 10)
+    note("after Effects: " + describe())
+    return True
+
+def neutral(path, at):
+    """The share of a frame whose colour is within 6 levels of grey."""
+    data = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(at), "-i", path, "-frames:v", "1", "-vf", "scale=64:64,format=yuv444p", "-f", "rawvideo", "-"],
+                          capture_output=True, timeout=120).stdout
+    if len(data) < 3 * 4096:
+        return 0.0
+    u, v = data[4096:8192], data[8192:12288]
+    return sum(1 for a, b in zip(u, v) if abs(a - 128) <= 6 and abs(b - 128) <= 6) / 4096
 
 def censor():
     """Mark a range over sound and censor it. Returns the range in seconds, or None.

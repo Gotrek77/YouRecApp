@@ -98,6 +98,18 @@ object TimelineEditing {
     fun settingCrop(crop: CropSettings?, selection: TimelineSelection, state: EditState) = applying(selection, state) { clip ->
         clip.copy(crop = crop?.copy(id = clip.crop?.id ?: java.util.UUID.randomUUID()))
     }
+    /// A change to the video effects of the selected clips or the whole project.
+    /// `change` also gets the clip's source time at the playhead, or null when
+    /// the playhead is not on that clip (keyframes are only set where it is).
+    fun settingVideoEffects(selection: TimelineSelection, state: EditState, playhead: Double, change: (TimelineClip, Double?) -> TimelineClip): EditState {
+        val result = state.copy()
+        val targets = result.timeline.expanded(selection).video.ifEmpty { result.timeline.video.map { it.id }.toSet() }
+        val at = EditTime.seconds(playhead)
+        result.timeline.replaceContents(result.timeline.video.filter { it.id in targets }.associate { item ->
+            item.id to change(item.content, if (at in item.interval) item.mapping.source(at - item.start) else null)
+        })
+        return result
+    }
     /// The picture a title made at this time would sit on: the front one.
     fun pictureAt(time: Double, state: EditState): VideoTimelineItem? {
         val at = EditTime.seconds(time)
@@ -198,5 +210,45 @@ object TimelineNavigation {
     fun jump(timeline: TrackTimeline, from: Double, forward: Boolean): Double? {
         val stops = stops(timeline)
         return if (forward) stops.firstOrNull { it > from + 0.02 } else stops.lastOrNull { it < from - 0.02 }
+    }
+}
+
+/// Editing one kind of video effect on a clip, as the iPhone app's effects
+/// editor does: one effect of a kind per clip here; a changed control with
+/// animation edits the key at the playhead, never silently erases it; with
+/// Animate on, a change adds a keyframe (and holds the old value at the start).
+object VideoEffectEditing {
+    fun effect(clip: TimelineClip, kind: VideoEffectID) = clip.videoEffects?.firstOrNull { it.kind == kind }
+    private fun updating(clip: TimelineClip, kind: VideoEffectID, change: (VideoEffectSettings) -> VideoEffectSettings?): TimelineClip {
+        val effects = (clip.videoEffects ?: emptyList()).mapNotNull { if (it.kind == kind) change(it) else it }
+        // A removed effect takes its range windows with it; titles' and images' windows stay.
+        val removed = (clip.videoEffects ?: emptyList()).map { it.id }.toSet() - effects.map { it.id }.toSet()
+        val windows = clip.effectWindows?.filterKeys { it !in removed }
+        return clip.copy(videoEffects = effects.ifEmpty { null }, effectWindows = windows?.ifEmpty { null })
+    }
+    fun adding(clip: TimelineClip, kind: VideoEffectID): TimelineClip =
+        if (effect(clip, kind) != null) clip else clip.copy(videoEffects = (clip.videoEffects ?: emptyList()) + VideoEffectSettings(kind = kind))
+    fun removing(clip: TimelineClip, kind: VideoEffectID) = updating(clip, kind) { null }
+    fun enabling(clip: TimelineClip, kind: VideoEffectID, enabled: Boolean) = updating(clip, kind) { it.copy(enabled = enabled) }
+    fun resetting(clip: TimelineClip, kind: VideoEffectID) = updating(clip, kind) { it.copy(parameters = VideoEffectSettings.defaults(kind)) }
+    fun setting(clip: TimelineClip, kind: VideoEffectID, parameter: String, value: EffectValue, source: Double?, animate: Boolean) = updating(clip, kind) { effect ->
+        effect.copy(parameters = effect.parameters.map { p ->
+            if (p.id != parameter || !p.kind.accepts(value)) p
+            else if (animate && p.animatable && source != null) {
+                val held = if (p.keyframes.isEmpty() && source > clip.start + 0.001) p.settingKeyframe(clip.start, p.value) else p
+                held.settingKeyframe(source, value)
+            } else {
+                val base = p.copy(value = value)
+                if (p.keyframes.isNotEmpty() && source != null) base.settingKeyframe(source, value) else base
+            }
+        })
+    }
+    /// Add a keyframe at the playhead with the value shown there, or remove the one already there.
+    fun togglingKeyframe(clip: TimelineClip, kind: VideoEffectID, parameter: String, source: Double) = updating(clip, kind) { effect ->
+        effect.copy(parameters = effect.parameters.map { p ->
+            if (p.id != parameter || !p.animatable) p
+            else if (p.keyframes.any { kotlin.math.abs(it.time - source) < 1.0 / 60 }) p.copy(keyframes = p.keyframes.filter { kotlin.math.abs(it.time - source) >= 1.0 / 60 })
+            else p.settingKeyframe(source, p.value(source))
+        })
     }
 }
