@@ -20,7 +20,9 @@ object VideoEffectRendering {
 
     /// Choices of drawn effects this build cannot draw yet (they need a person mask).
     fun unavailable(kind: VideoEffectID, parameter: String, choice: String): Boolean =
-        kind == VideoEffectID.colorIsolation && parameter == "mode" && choice == "The subject"
+        kind == VideoEffectID.colorIsolation && parameter == "mode" && choice == "The subject" ||
+        // A hold's sound is silent here; carrying the take's sound through it is not ported yet.
+        kind == VideoEffectID.freezeFrame && parameter == "audio" && choice != "Cut"
     /// Why a project's effect cannot be drawn here, by name; null when it can.
     fun refusal(effect: VideoEffectSettings): String? {
         if (effect.kind !in drawn) return "Video effects: " + effect.kind.descriptor.displayName

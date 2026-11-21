@@ -110,6 +110,7 @@ fun effectRenderingTests() {
 fun effectEditingTests() {
     var clip = TimelineClip(sourceID = UUID.randomUUID(), start = 2.0, end = 12.0)
     clip = VideoEffectEditing.adding(clip, VideoEffectID.noir)
+    require(VideoEffectEditing.effect(clip, VideoEffectID.noir)!!.let { it.start == 2.0 && it.end == 12.0 }, "A new effect covers its clip's source range, as on iPhone")
     require(VideoEffectEditing.adding(clip, VideoEffectID.noir) == clip && clip.videoEffects!!.single().kind == VideoEffectID.noir, "One effect of a kind per clip")
     clip = VideoEffectEditing.setting(clip, VideoEffectID.noir, "contrast", EffectValue.Number(2.0), 5.0, animate = false)
     val noir = VideoEffectEditing.effect(clip, VideoEffectID.noir)!!
@@ -141,6 +142,9 @@ fun effectEditingTests() {
     val seen = ArrayList<Double?>()
     val changed = TimelineEditing.settingVideoEffects(edit.timeline.selection(emptySet()), edit, 1.0) { c, source -> seen.add(source); VideoEffectEditing.adding(c, VideoEffectID.silentTint) }
     require(changed.timeline.video.all { VideoEffectEditing.effect(it.content, VideoEffectID.silentTint) != null } && seen.filterNotNull() == listOf(1.0) && seen.size == 2, "Whole project; source time only under the playhead ($seen)")
+    val strobed = TimelineEditing.addingEffect(VideoEffectID.negativeStrobe, edit.timeline.selection(emptySet()), edit)
+    val strobes = strobed.timeline.video.sortedBy { it.start }.map { VideoEffectEditing.effect(it.content, VideoEffectID.negativeStrobe)!! }
+    require(strobes.map { it.id }.toSet().size == 1 && strobes.map { it.phaseOffset } == listOf(0.0, 4.0) && strobes[1].start == 10.0, "One strobe across clips, phased by where each starts")
 }
 
 /// Time effects: the source clock, cadence holds, step blocks and freezes.
@@ -189,11 +193,12 @@ fun effectTimingTests() {
 
     // The Freeze frame command: a hold at the playhead, later footage moved by its length, then lengthened and shortened.
     val take = TimelineClip(sourceID = source, start = 0.0, end = 6.0)
-    val edit = EditState(TrackTimeline(listOf(VideoTimelineItem(UUID.randomUUID(), EditTime.zero, take))))
+    val edit = EditState(TrackTimeline.of(listOf(take)))
     val (frozenEdit, holdID) = TimelineEditing.freezing(edit, 2.0)!!
     val holdItem = frozenEdit.timeline.video.first { it.id == holdID }
     require(holdItem.start == EditTime.seconds(2.0) && holdItem.content.frozenFrame?.sourceTime == 2.0 && holdItem.mapping.duration == EditTime.seconds(3.0), "The hold sits at the playhead")
     require(frozenEdit.timeline.duration == EditTime.seconds(9.0) && frozenEdit.timeline.video.size == 3, "The footage after it moves by three seconds (${frozenEdit.timeline.duration.seconds})")
+    require(frozenEdit.timeline.audio.first { it.start == EditTime.seconds(5.0) }.mapping.source(EditTime.zero) == 2.0, "The take's sound moves with its picture")
     require(frozenEdit.timeline.video.first { it.start == EditTime.seconds(5.0) }.mapping.source(EditTime.zero) == 2.0, "Nothing is replaced: the take continues from the frozen frame")
     val longer = TimelineEditing.settingHold(frozenEdit, holdID, 5.0)
     require(longer.timeline.duration == EditTime.seconds(11.0) && longer.timeline.video.first { it.id == holdID }.content.videoEffects!!.first { it.kind == VideoEffectID.freezeFrame }.number("hold") == 5.0, "A longer hold pushes the rest")
@@ -201,6 +206,12 @@ fun effectTimingTests() {
     require(shorter.timeline.duration == EditTime.seconds(7.0) && shorter.timeline.video.none { it.start < EditTime.seconds(3.0) && it.end > EditTime.seconds(3.0) && it.id != holdID && it.start != EditTime.zero }, "A shorter hold closes up (${shorter.timeline.duration.seconds})")
     shorter.timeline.validate(listOf(SourceMedia(source, "a.mp4", 6.0)))
     require(TimelineEditing.freezing(frozenEdit, 3.0) == null, "A hold is not frozen again")
+    require(frozenEdit.timeline.audio.any { it.followsVideo == holdID && it.mapping.runs.all { r -> r.silent } } && frozenEdit.timeline.links.any { holdID in it.members }, "The hold has its silent sound, linked")
+    val (removed, _) = TimelineEditing.deleting(frozenEdit.timeline.selection(setOf(holdID)), frozenEdit)
+    require(removed.timeline.duration == EditTime.seconds(6.0) && removed.timeline.video.none { it.id == holdID }, "Removing the hold closes up (${removed.timeline.duration.seconds})")
+    // A slower clip before the hold pushes it, as it pushes any take.
+    val slower = TimelineEditing.settingSpeed(0.5, frozenEdit.timeline.selection(setOf(frozenEdit.timeline.video.first { it.start == EditTime.zero }.id)), frozenEdit)
+    require(slower.timeline.video.first { it.id == holdID }.start == EditTime.seconds(4.0), "The hold follows a retimed clip before it")
 }
 
 /// Follow face: the track's interpolation and gaps, the choice among faces, crash zoom's aim.

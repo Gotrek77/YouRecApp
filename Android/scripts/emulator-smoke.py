@@ -89,7 +89,9 @@ def tool(label):
     """Tap a tool in the editor's row, which scrolls sideways when it does not fit.
     The row is swept back to its start, then forward, so its position does not matter."""
     global TOOL_ROW
-    for attempt in range(10):
+    # The row has grown with the tools: sweep it back to its start, then forward
+    # far enough to reach its end, looking again after every swipe.
+    for attempt in range(18):
         node = find(label, exact=True)
         if node and node[2]:
             TOOL_ROW = TOOL_ROW or node[3][1]
@@ -101,7 +103,7 @@ def tool(label):
                 break
             TOOL_ROW = anchor[3][1]
         y = str(TOOL_ROW)
-        if attempt < 3:
+        if attempt < 4:
             adb("shell", "input", "swipe", "200", y, "1000", y, "200")   # towards the start
         else:
             adb("shell", "input", "swipe", "900", y, "300", y, "300")    # then forward, one step at a time

@@ -1,12 +1,29 @@
 # Prompt per una sessione notturna di test sul Pixel
 
-Come usarlo, dalla radice del clone sul PC (bash o fish), con il Pixel collegato
-via USB, debug USB attivo e il PC autorizzato (`adb devices` lo mostra come
-`device`):
+Prima di andare a dormire:
+
+1. Sul Pixel: **Impostazioni › Sicurezza › Blocco schermo: Nessuno** per la notte
+   (con lo schermo bloccato la camera non è verificabile e la sessione si
+   ferma), opzioni sviluppatore › **Rimani attivo** acceso, Wi‑Fi acceso,
+   telefono in carica, camera posteriore rivolta verso una scena con oggetti
+   e una scritta leggibile.
+2. Sul PC, dalla radice del clone (bash o fish), con il Pixel collegato via USB,
+   debug USB attivo e il PC autorizzato (`adb devices` lo mostra come `device`):
 
 ```sh
 git fetch origin && git checkout ccr-36384783-fh3rat && git pull
 sed -n '/^---8<---$/,$p' Android/docs/PIXEL-OVERNIGHT-PROMPT.md | tail -n +2 | \
+  claude -p --allowedTools "Bash(adb *)" "Bash(python3 *)" "Bash(ffprobe *)" "Bash(ffmpeg *)" \
+  "Bash(./Android/gradlew *)" "Bash(git log *)" "Bash(git rev-parse *)" "Bash(git status *)" "Bash(gh run *)" \
+  "Bash(date *)" "Bash(mkdir *)" "Bash(ls *)" "Bash(sha256sum *)" "Bash(tail *)" "Bash(grep *)" "Bash(tar *)" "Bash(cat *)" "Bash(cp *)" \
+  "Read" "Write" "Glob" "Grep" 2>&1 | tee pixel-run.log
+```
+
+Prima di lanciarlo, decidi la riga `DATI_SACRIFICABILI` qui sotto: con `no`
+(predefinito) la sessione non disinstalla mai l'app e salta i test che lo fanno
+se sul telefono ci sono già progetti YouRec.
+
+---8<---$/,$p' Android/docs/PIXEL-OVERNIGHT-PROMPT.md | tail -n +2 | \
   claude -p --allowedTools "Bash(adb *)" "Bash(python3 *)" "Bash(ffprobe *)" "Bash(ffmpeg *)" \
   "Bash(./gradlew *)" "Bash(git log *)" "Bash(git rev-parse *)" "Bash(git status *)" "Bash(gh run *)" \
   "Bash(mkdir *)" "Bash(ls *)" "Bash(sha256sum *)" "Bash(sleep *)" "Bash(tar *)" "Bash(cat *)" "Bash(cp *)" \
@@ -67,15 +84,28 @@ se `no`: vanno preservati a ogni costo.)
 8. Tieni lo schermo acceso durante la sessione (`adb shell svc power stayon
    usb`) e ripristina alla fine (`adb shell svc power stayon false`).
 
+## Comandi lunghi e schermo bloccato
+- La build, lo smoke test e la ripresa lunga superano i 10 minuti di un
+  comando: avviali in background (strumento Bash con `run_in_background`),
+  con l'output su un file in `<run>/`, e controlla quel file ogni pochi minuti.
+- Prima di ogni prova con la camera: `adb shell dumpsys window | grep -E
+  "isKeyguardShowing|mShowingLockscreen|mDreamingLockscreen"`. Se lo schermo
+  è bloccato, non segnare la prova come fallita: è **in attesa** (AGENTS.md).
+  Prova una volta `adb shell input keyevent KEYCODE_WAKEUP` e
+  `adb shell wm dismiss-keyguard`; se resta bloccato, ferma le prove con la
+  camera e passa a quelle che non la usano.
+
 ## Passi
 0. Identità: `adb devices -l`, modello, versione Android
    (`getprop ro.build.version.release`, `ro.build.fingerprint`), commit
    (`git rev-parse HEAD`). Annota tutto.
-1. APK: prova `cd Android && ./gradlew --no-daemon assembleDebug`. Se manca
-   l'SDK o il JDK 17, scarica l'artefatto `YouRec-debug-apk` dell'ultima run
-   riuscita del workflow `Android` per lo stesso commit (`gh run list --branch
-   ccr-36384783-fh3rat`, `gh run download <id> -n YouRec-debug-apk`). Verifica
-   che il commit della run coincida con `HEAD`; se non coincide, annotalo.
+1. APK: prova `./Android/gradlew -p Android --no-daemon assembleDebug` (in
+   background, vedi sotto). Se manca l'SDK o il JDK 17, usa l'artefatto
+   `YouRec-debug-apk` della run del workflow `Android` **per il commit `HEAD`**
+   (`gh run list --branch ccr-36384783-fh3rat --commit <HEAD>`), purché in
+   quella run il job `build` sia riuscito, anche se il job `emulator` è fallito;
+   `gh run download <id> -n YouRec-debug-apk`. Non usare un APK di un altro
+   commit: se non ce n'è uno per `HEAD`, fermati e annotalo.
 2. Stato e backup come da regola 3. Installa con `adb install -r`, concedi
    CAMERA e RECORD_AUDIO con `pm grant`.
 3. Se consentito dalla regola 4: `python3 Android/scripts/emulator-smoke.py
@@ -102,8 +132,9 @@ se `no`: vanno preservati a ogni costo.)
    - Editor: anteprima, split, trim, transizione dissolvenza, testo,
      immagine, copertina, pause, censura, Enhance audio (RNNoise e
      DeepFilterNet3), con export verificato da ffprobe e fotogrammi estratti.
-   - Effetti video: per ogni effetto offerto nel pannello Effects, un progetto
-     di test con quell'effetto su tutta la clip; screenshot dell'anteprima e
+   - Effetti video: per ogni effetto offerto nel pannello Effects (Add · …),
+     compreso Freeze frame (inserisce un fermo alla testina), un progetto di
+     test con quell'effetto su tutta la clip; screenshot dell'anteprima e
      export; estrai lo stesso istante dall'export e confrontalo a vista con
      l'anteprima; verifica che il fotogramma cambi rispetto al take originale
      e che non ci siano crash o shader non compilati nel log. Annota il tempo

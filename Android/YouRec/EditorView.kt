@@ -1437,7 +1437,12 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                         val made = TimelineEditing.freezing(now.edit, editor.playhead)
                         if (made == null) { say("Move the playhead outside a transition, onto one picture, to freeze one frame."); return@button }
                         commit(made.first, "Freeze frame added"); openEffects()
-                    } else apply(d.displayName + " added") { c, _ -> VideoEffectEditing.adding(c, d.id) } }
+                    } else {
+                        val now = this@EditorView.project ?: return@button
+                        val edit = TimelineEditing.addingEffect(d.id, selection(now.edit), now.edit)
+                        if (edit != now.edit) commit(edit, d.displayName + " added")
+                        openEffects()
+                    } }
                     .apply { contentDescription = "Add " + d.displayName }, Design.weighted(1f).apply { rightMargin = Design.dp(context, 6f); bottomMargin = Design.dp(context, 6f) })
                 repeat(3 - row.size) { addView(View(context), Design.weighted(1f)) }
             })

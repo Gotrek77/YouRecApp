@@ -65,7 +65,8 @@ class FrameReader(file: File) {
     /// rate, so variable-rate footage and dropped frames show the right picture.
     /// False only when the file yields no picture at all; at the end the last frame stays.
     fun show(time: Double): Boolean {
-        val target = maxOf(0L, (time * 1_000_000).toLong())
+        // Rounded: a frame time read back from the file's own index lands on that frame.
+        val target = maxOf(0L, Math.round(time * 1_000_000))
         var have = shown != Long.MIN_VALUE
         // The frame after the one on screen is kept decoded; until the target reaches it, nothing changes.
         if (have && target >= shown && (if (pending >= 0) target < pendingTime else outputDone)) return true

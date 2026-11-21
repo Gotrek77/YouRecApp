@@ -110,6 +110,17 @@ object TimelineEditing {
         })
         return result
     }
+    /// Add one effect to the selected clips (or all): one id for all of them,
+    /// each over its own clip, Negative Strobe phased by where each clip starts.
+    fun addingEffect(kind: VideoEffectID, selection: TimelineSelection, state: EditState): EditState {
+        val result = state.copy()
+        val targets = result.timeline.expanded(selection).video.ifEmpty { result.timeline.video.map { it.id }.toSet() }
+        val items = result.timeline.video.filter { it.id in targets }
+        val first = items.minOfOrNull { it.start.seconds } ?: return state
+        val id = UUID.randomUUID()
+        result.timeline.replaceContents(items.associate { it.id to VideoEffectEditing.adding(it.content, kind, id, it.start.seconds - first) })
+        return result
+    }
     /// Freeze frame, as on iPhone: a hold of the frame under the playhead is
     /// inserted there (three seconds), never replacing the footage after it.
     /// Null inside a transition or where pictures overlap: no single frame to hold.
@@ -130,7 +141,13 @@ object TimelineEditing {
             videoEffects = (clip.videoEffects ?: emptyList()).filter { it.kind.descriptor.family != EffectFamily.Time } + effect, effectWindows = null)
         val length = EditTime.seconds(hold.duration)
         result.timeline.insertTime(length, point)
-        result.timeline.video = result.timeline.video + VideoTimelineItem(UUID.randomUUID(), point, hold, item.layer)
+        val occurrence = UUID.randomUUID()
+        result.timeline.video = result.timeline.video + VideoTimelineItem(occurrence, point, hold, item.layer)
+        // As on iPhone, the hold has its (silent) sound, linked: it moves with the
+        // takes around it, and removing it closes up like removing a take.
+        val sound = AudioTimelineItem(occurrenceID = occurrence, sourceID = hold.sourceID, start = point, mapping = SourcePlaybackMap(hold), followsVideo = hold.id)
+        result.timeline.audio = result.timeline.audio + sound
+        result.timeline.links = result.timeline.links + TimelineLink(members = setOf(hold.id, sound.id))
         return result to hold.id
     }
     /// A hold made longer or shorter: later footage moves with its end.
@@ -142,6 +159,8 @@ object TimelineEditing {
         if (delta == EditTime.zero) return state
         val content = item.content.copy(frozenFrame = frozen.copy(duration = duration), videoEffects = item.content.videoEffects?.map {
             if (it.kind == VideoEffectID.freezeFrame) it.setting("hold", EffectValue.Number(duration)) else it })
+        // A linked hold retimes like a take: the parts after it move with its end.
+        if (state.timeline.links.any { id in it.members }) return state.copy().also { it.timeline.replaceContents(mapOf(id to content)) }
         if (delta > EditTime.zero) {
             val result = state.copy()
             result.timeline.insertTime(delta, item.end)
@@ -270,8 +289,28 @@ object VideoEffectEditing {
         val windows = clip.effectWindows?.filterKeys { it !in removed }
         return clip.copy(videoEffects = effects.ifEmpty { null }, effectWindows = windows?.ifEmpty { null })
     }
-    fun adding(clip: TimelineClip, kind: VideoEffectID): TimelineClip =
-        if (effect(clip, kind) != null) clip else clip.copy(videoEffects = (clip.videoEffects ?: emptyList()) + VideoEffectSettings(kind = kind))
+    /// A new effect on one clip, as the iPhone app adds it: over the clip's own
+    /// source range, with the id shared by every clip it is added to at once.
+    /// Negative Strobe keeps one rhythm across them (`phaseOffset`, seconds since
+    /// the first clip) and through speed changes (its strobe time map).
+    fun adding(clip: TimelineClip, kind: VideoEffectID, id: UUID = UUID.randomUUID(), phaseOffset: Double = 0.0): TimelineClip {
+        if (effect(clip, kind) != null) return clip
+        var effect = VideoEffectSettings(id = id, kind = kind, start = clip.start, end = clip.end)
+        if (kind == VideoEffectID.negativeStrobe) {
+            effect = effect.copy(phaseOffset = maxOf(0.0, phaseOffset))
+            val spans = clip.playbackSpans
+            if (clip.frozenFrame == null && (spans.size > 1 || spans.firstOrNull()?.rate != 1.0) && spans.isNotEmpty()) {
+                var elapsed = 0.0; val points = mutableListOf(StrobeTimePoint(spans.first().start, 0.0))
+                for (span in spans) {
+                    if (span.start > points.last().source) points.add(StrobeTimePoint(span.start, elapsed))
+                    elapsed += span.duration
+                    points.add(StrobeTimePoint(span.end, elapsed))
+                }
+                effect = effect.copy(strobeTimeMap = points)
+            }
+        }
+        return clip.copy(videoEffects = (clip.videoEffects ?: emptyList()) + effect)
+    }
     fun removing(clip: TimelineClip, kind: VideoEffectID) = updating(clip, kind) { null }
     fun enabling(clip: TimelineClip, kind: VideoEffectID, enabled: Boolean) = updating(clip, kind) { it.copy(enabled = enabled) }
     fun resetting(clip: TimelineClip, kind: VideoEffectID) = updating(clip, kind) { it.copy(parameters = VideoEffectSettings.defaults(kind)) }
