@@ -14,12 +14,17 @@ checkpoints, checked by the same SHA-256 before loading:
 - `convert-voicefixer.py`: VoiceFixer (https://github.com/haoheliu/voicefixer
   at `aae2253c`, code MIT; weights https://doi.org/10.5281/zenodo.5600188,
   **CC BY 4.0**: attribution is shown with the filter). Analysis network and
-  vocoder: mel [1, 1, 256, 128] → 114660 samples at 44.1 kHz. Float32 (the
-  iPhone conversion is mixed FP16/FP32). Features: the iPhone app's
+  vocoder: mel [1, 1, 256, 128] → 114660 samples at 44.1 kHz. Weights are
+  stored as float16 and cast to float32 when the graph loads, so arithmetic
+  stays float32 (about 207 MB instead of 414 MB; the iPhone conversion is
+  mixed FP16/FP32). Float32 weights measured 92.7 dB against PyTorch; the
+  script requires more than 40 dB with half-precision weights. Features: the iPhone app's
   `ThirdParty/VoiceFixer/VoiceFixerDSP.cpp` with its checked mel bank.
 
 Each script checks ONNX Runtime against PyTorch on a fixed input and fails
-beyond its tolerance. CI runs them (job `neural-models`, cached on these
+beyond its tolerance. `run-studio.sh` then runs both filters through the app's
+Kotlin pipeline with the iPhone app's DSP built for the host, on 12 s of a
+synthetic voice in noise, and fails unless the output keeps the voice. CI runs them (job `neural-models`, cached on these
 files) and the build copies the graphs into the APK's assets. A local build
 without `build/neural-models/` has no LavaSR or VoiceFixer filter; to make
 them locally:

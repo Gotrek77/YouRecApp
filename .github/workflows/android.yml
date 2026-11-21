@@ -33,6 +33,13 @@ jobs:
           python Android/scripts/neural/convert-lavasr.py work/lavasr neural-models/LavaSRv2.onnx | tee neural-models/lavasr.json
           python Android/scripts/neural/convert-voicefixer.py work/voicefixer neural-models/VoiceFixer.onnx | tee neural-models/voicefixer.json
       - run: ls -la neural-models && cat neural-models/*.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: LavaSR and VoiceFixer end to end
+        working-directory: Android
+        run: ./scripts/neural/run-studio.sh ../neural-models
       - uses: actions/upload-artifact@v4
         with:
           name: neural-models

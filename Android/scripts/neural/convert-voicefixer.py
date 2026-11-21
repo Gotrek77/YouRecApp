@@ -1,6 +1,6 @@
 """VoiceFixer's analysis network and vocoder as ONNX, after the iPhone app's
 scripts/convert-voicefixer.py (same pinned code and checkpoints, same module,
-same fixed 256-frame mel input). Float32 throughout.
+same fixed 256-frame mel input). Weights stored as float16, arithmetic float32.
 
 Python 3.12, torch 2.7.0 (CPU), numpy, torchlibrosa 0.1.0, librosa, scipy,
 matplotlib, progressbar 2.5, pyyaml, onnx, onnxruntime.
@@ -53,15 +53,41 @@ network = Network().eval()
 example = torch.rand(1, 1, 256, 128)
 with torch.inference_mode():
     reference = network(example).numpy()
-torch.onnx.export(network, (example,), str(destination), input_names=["mel"], output_names=["audio"],
+full = destination.with_suffix(".fp32.onnx")
+torch.onnx.export(network, (example,), str(full), input_names=["mel"], output_names=["audio"],
                   opset_version=17, dynamo=False, do_constant_folding=True)
-session = onnxruntime.InferenceSession(str(destination), providers=["CPUExecutionProvider"])
-prediction = session.run(None, {"mel": example.numpy()})[0]
-error = float(np.max(np.abs(prediction - reference)))
-snr = float(10 * np.log10((reference ** 2).sum() / max(((prediction - reference) ** 2).sum(), 1e-30)))
+
+# Half-precision storage: every large float32 weight is kept as float16 and cast
+# back to float32 when the graph loads, so arithmetic stays float32 and only the
+# weights are rounded. Half the size; the iPhone conversion is mixed FP16/FP32.
+import onnx
+from onnx import helper, numpy_helper, TensorProto
+graph_model = onnx.load(str(full))
+graph = graph_model.graph
+casts = []
+for initializer in list(graph.initializer):
+    if initializer.data_type != TensorProto.FLOAT: continue
+    values = numpy_helper.to_array(initializer)
+    if values.size < 1024: continue
+    half = numpy_helper.from_array(values.astype(np.float16), initializer.name + "_fp16")
+    graph.initializer.remove(initializer)
+    graph.initializer.append(half)
+    casts.append(helper.make_node("Cast", [half.name], [initializer.name], to=TensorProto.FLOAT, name=initializer.name + "_cast"))
+for node in reversed(casts): graph.node.insert(0, node)
+onnx.checker.check_model(graph_model)
+onnx.save(graph_model, str(destination))
+full.unlink()
+
+def compare(path):
+    session = onnxruntime.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+    prediction = session.run(None, {"mel": example.numpy()})[0]
+    return prediction, float(np.max(np.abs(prediction - reference))), float(10 * np.log10((reference ** 2).sum() / max(((prediction - reference) ** 2).sum(), 1e-30)))
+prediction, error, snr = compare(destination)
 bank = model._model.mel.fb.detach().numpy().astype("<f4").tobytes()
-print(json.dumps({"conversion": "VoiceFixer", "output_shape": list(prediction.shape), "bytes": destination.stat().st_size,
+print(json.dumps({"conversion": "VoiceFixer", "weights": "float16 storage, float32 arithmetic", "half_weights": len(casts),
+                  "output_shape": list(prediction.shape), "bytes": destination.stat().st_size,
                   "sha256": hashlib.sha256(destination.read_bytes()).hexdigest(), "max_absolute_error": error, "snr_db": snr,
                   "mel_bank_sha256": hashlib.sha256(bank).hexdigest()}))
 assert prediction.shape == (1, 260 * 441), "unexpected vocoder output length"
-assert snr > 60, "ONNX Runtime differs from PyTorch"
+# Float32 alone measured 92.7 dB; half-precision weights must stay well clear of audible change.
+assert snr > 40, "half-precision weights change the output too much"
