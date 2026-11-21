@@ -62,6 +62,7 @@ fun enhanceTests() {
     require(zero.indices.all { zero[it] == original[it] }, "Zero amount is an exact bypass, without loading a model")
     requireFailure<AudioProcessingError.UnavailableModel>("A stage without its network is refused, not skipped") { run(listOf(AudioEffect.make(EffectKind.studioVoice)), { Late() }) }
     studioTests()
+    modelPackTests()
     requireFailure<AudioProcessingError.UnavailableModel>("DeepFilterNet3 never plays through RNNoise") { run(listOf(made.copy(model = AudioModel.deepFilter)), { Late() }) }
     deepFilterTests()
     val file = java.io.File.createTempFile("enhanced", ".f32"); file.delete()
@@ -235,4 +236,39 @@ private fun studioTests() {
     for (p in 4800 until length - 4800) { val a = tone(p) * gain; signal += a * a; val e = restored[(p * 2).toInt()] - a; error += e * e }
     require(10 * Math.log10(signal / error) > 50, "VoiceFixer windows land in place across crossfades (${10 * Math.log10(signal / error)} dB)")
     folder.deleteRecursively()
+}
+
+/// Downloads of the converted networks, against a local server: verified
+/// before use, resumed from a partial file, refused when the bytes differ.
+private fun modelPackTests() {
+    val payload = ByteArray(3_000_000) { (it * 31 + it / 7).toByte() }
+    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(payload).joinToString("") { String.format("%02x", it) }
+    var served = payload
+    val ranges = ArrayList<String?>()
+    val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+    server.createContext("/") { exchange ->
+        val range = exchange.requestHeaders.getFirst("Range"); ranges.add(range)
+        val from = range?.removePrefix("bytes=")?.removeSuffix("-")?.toInt() ?: 0
+        val body = served.copyOfRange(from, served.size)
+        exchange.sendResponseHeaders(if (from > 0) 206 else 200, body.size.toLong())
+        exchange.responseBody.use { it.write(body) }
+    }
+    server.start()
+    try {
+        val base = "http://127.0.0.1:${server.address.port}"
+        val folder = java.nio.file.Files.createTempDirectory("models").toFile()
+        val entry = StudioModelPack.Entry("LavaSR/LavaSRv2.onnx", payload.size.toLong(), digest)
+        require(StudioModelPack.installed(folder, entry) == null, "Nothing is installed before a download")
+        // A partial file from an interrupted download is resumed, not restarted.
+        java.io.File(folder, "LavaSR").mkdirs()
+        java.io.File(folder, "LavaSR/LavaSRv2.onnx.download").writeBytes(payload.copyOfRange(0, 1_000_000))
+        val file = StudioModelPack.download(folder, entry, base = base)
+        require(file.readBytes().contentEquals(payload) && ranges.last() == "bytes=1000000-", "A partial download resumes where it stopped")
+        require(StudioModelPack.installed(folder, entry) == file, "A verified download is installed")
+        StudioModelPack.remove(folder, entry)
+        served = payload.copyOf().also { it[123] = (it[123] + 1).toByte() }
+        requireFailure<java.io.IOException>("A file with other bytes is refused") { StudioModelPack.download(folder, entry, base = base) }
+        require(StudioModelPack.installed(folder, entry) == null && !java.io.File(folder, "LavaSR/LavaSRv2.onnx").exists(), "A refused download leaves nothing installed")
+        folder.deleteRecursively()
+    } finally { server.stop(0) }
 }

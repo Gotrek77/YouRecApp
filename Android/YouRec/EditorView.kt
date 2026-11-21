@@ -697,11 +697,35 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         val stages = Design.column(context, spacing = 6f)
         lateinit var refresh: () -> Unit
+        val status = Design.label(context, "", 13f, Design.secondary)
+        var downloading = false
         add(choices(*listOf(EffectKind.voiceIsolation, EffectKind.studioVoice, EffectKind.studioRestoration, EffectKind.highPass, EffectKind.equalizer, EffectKind.gain)
-            .filter { StudioAssets.carries(it) }.map { kind ->
-            Design.button(context, "+ " + kind.stripName, Design.text, Design.raised, 13f) { chain = chain + AudioEffect.make(kind); refresh() }
-                .apply { contentDescription = "Add " + kind.title }
+            .filter { StudioAssets.carries(it) || StudioAssets.downloadable(it) }.map { kind ->
+            val here = StudioAssets.carries(kind)
+            val size = StudioModelPack.entry(kind)?.let { " ↓ " + (it.bytes + 500_000) / 1_000_000 + " MB" } ?: ""
+            Design.button(context, "+ " + kind.stripName + if (here) "" else size, Design.text, Design.raised, 13f) {
+                if (StudioAssets.carries(kind)) { chain = chain + AudioEffect.make(kind); refresh(); return@button }
+                if (downloading) return@button
+                // Only the network is downloaded, once, from the published model files; nothing is sent.
+                android.app.AlertDialog.Builder(context).setTitle("Download ${kind.title}?")
+                    .setMessage("This build does not include its network. Download it once (${size.removePrefix(" ↓ ")}) from Hugging Face? It is checked before use and works offline afterwards. No audio or project data is sent.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Download") { _, _ ->
+                        downloading = true; status.text = "Downloading " + kind.stripName + "…"
+                        Thread {
+                            val failure = try {
+                                StudioAssets.download(kind, { value -> post { status.text = "Downloading " + kind.stripName + " " + (value * 100).toInt() + "%" } }, { !isAttachedToWindow }); null
+                            } catch (e: Exception) { e.message ?: "The model could not be downloaded." }
+                            post {
+                                downloading = false
+                                if (failure != null) status.text = failure
+                                else { status.text = kind.title + " is ready."; chain = chain + AudioEffect.make(kind); refresh() }
+                            }
+                        }.start()
+                    }.show()
+            }.apply { contentDescription = "Add " + kind.title + if (here) "" else ", download" }
         }.toTypedArray()))
+        add(status)
         add(stages)
         fun bar(start: Double, change: (Double) -> Unit) = SeekBar(context).apply {
             max = 1000; progress = Math.round(start * 1000).toInt()
@@ -714,7 +738,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         fun replace(effect: AudioEffect) { chain = chain.map { if (it.id == effect.id) effect else it } }
         refresh = {
             stages.removeAllViews()
-            if (chain.isEmpty()) stages.addView(Design.label(context, "Add a filter above, in any order." + if (StudioAssets.carries(EffectKind.studioVoice) && StudioAssets.carries(EffectKind.studioRestoration)) "" else " This build lacks the LavaSR or VoiceFixer network (see scripts/neural).", 13f, Design.secondary))
+            if (chain.isEmpty()) stages.addView(Design.label(context, "Add a filter above, in any order." + if (listOf(EffectKind.studioVoice, EffectKind.studioRestoration).all { StudioAssets.carries(it) || StudioAssets.downloadable(it) }) "" else " This build lacks the LavaSR or VoiceFixer network (see scripts/neural).", 13f, Design.secondary))
             for ((index, effect) in chain.withIndex()) {
                 val head = Design.row(context, Design.label(context, "${index + 1} · " + effect.kind.title, 14f, bold = true), spacing = 4f)
                 (head.getChildAt(0).layoutParams as LayoutParams).apply { width = 0; weight = 1f }

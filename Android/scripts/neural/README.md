@@ -41,3 +41,20 @@ The ONNX files are generated, not committed. Projects keep the iPhone's model
 identities (`lavasr-v2-33ac0408`, `voicefixer-aae2253c`), so either app opens
 the other's chains; Android's runtime is part of the processed-audio cache key
 only, and its output is close to, not identical with, Core ML's.
+
+## Download on request
+
+A build carries the networks when CI made them. Otherwise, and also to replace
+a damaged copy, the app can download them on request from a public Hugging
+Face repository, checked against the sizes and SHA-256 pinned in
+`YouRec/StudioModelPack.kt`. CI prepares the repository's contents as the
+artifact `huggingface-upload` (the two graphs, a model card with licences and
+attribution, `SHA256SUMS`, `conversion.json`). To publish it:
+
+1. Create a public model repository on Hugging Face and upload the artifact's
+   files to its top level.
+2. Put the repository (`owner/name`) and the commit of that upload in
+   `StudioModelPack.repository` and `StudioModelPack.revision`, and check that
+   the pinned hashes match `SHA256SUMS`.
+
+Until then the app offers only what its build carries.

@@ -42,6 +42,7 @@ class ProjectStore(private val context: Context) {
         val assets = context.applicationContext.assets
         NeuralAssets.read = { name -> assets.open(name).use { it.readBytes() } }
         val extracted = File(context.filesDir, "Neural")
+        NeuralAssets.folder = extracted
         NeuralAssets.file = { name ->
             val target = File(extracted, name)
             synchronized(NeuralAssets) {

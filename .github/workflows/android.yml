@@ -19,7 +19,7 @@ jobs:
         id: cache
         with:
           path: neural-models
-          key: neural-models-${{ hashFiles('Android/scripts/neural/*') }}
+          key: neural-models-${{ hashFiles('Android/scripts/neural/convert-*.py', 'Android/scripts/neural/requirements.txt') }}
       - uses: actions/setup-python@v5
         if: steps.cache.outputs.cache-hit != 'true'
         with:
@@ -45,6 +45,20 @@ jobs:
           name: neural-models
           path: neural-models
           retention-days: 7
+      # The folder to upload as a public Hugging Face model repository, for the
+      # app's download on request (Android/scripts/neural/README.md).
+      - name: Hugging Face folder
+        run: |
+          mkdir -p huggingface
+          cp neural-models/LavaSRv2.onnx neural-models/VoiceFixer.onnx huggingface/
+          cp Android/scripts/neural/huggingface-README.md huggingface/README.md
+          cat neural-models/lavasr.json neural-models/voicefixer.json > huggingface/conversion.json
+          (cd huggingface && sha256sum LavaSRv2.onnx VoiceFixer.onnx > SHA256SUMS && cat SHA256SUMS && ls -l)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: huggingface-upload
+          path: huggingface
+          retention-days: 30
 
   build:
     needs: neural-models

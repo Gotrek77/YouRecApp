@@ -66,11 +66,26 @@ object StudioAssets {
     // The iPhone app's checked mel bank (ThirdParty/VoiceFixer/PROVENANCE.md).
     const val bankSHA256 = "ea5f198b442761e300d9f270090b5ed8c7a9936126b110b54cff03767198dcd9"
 
-    /// Whether this build carries the converted networks for `kind`.
+    /// Whether the converted network for `kind` is here: in this build, or downloaded.
     fun carries(kind: EffectKind): Boolean = when (kind) {
-        EffectKind.studioVoice -> NeuralAssets.has(lava)
-        EffectKind.studioRestoration -> NeuralAssets.has(voiceFixer) && NeuralAssets.has(bank)
+        EffectKind.studioVoice -> NeuralAssets.has(lava) || downloaded(kind) != null
+        EffectKind.studioRestoration -> NeuralAssets.has(bank) && (NeuralAssets.has(voiceFixer) || downloaded(kind) != null)
         else -> true
+    }
+    private fun downloaded(kind: EffectKind): java.io.File? {
+        val folder = NeuralAssets.folder ?: return null
+        return StudioModelPack.entry(kind)?.let { StudioModelPack.installed(folder, it) }
+    }
+    /// Missing here but published: offered with a download.
+    fun downloadable(kind: EffectKind): Boolean = !carries(kind) && StudioModelPack.available && StudioModelPack.entry(kind) != null &&
+        (kind != EffectKind.studioRestoration || NeuralAssets.has(bank))
+    fun download(kind: EffectKind, progress: (Double) -> Unit, cancelled: () -> Boolean) {
+        val folder = NeuralAssets.folder ?: throw AudioProcessingError.UnavailableModel()
+        StudioModelPack.download(folder, StudioModelPack.entry(kind) ?: throw AudioProcessingError.UnavailableModel(), progress, cancelled)
+    }
+    private fun path(kind: EffectKind, asset: String): String {
+        if (NeuralAssets.has(asset)) return (NeuralAssets.file ?: throw AudioProcessingError.UnavailableModel())(asset).path
+        return (downloaded(kind) ?: throw AudioProcessingError.UnavailableModel()).path
     }
 
     fun load(effects: List<AudioEffect>): StudioModels? {
@@ -80,14 +95,13 @@ object StudioAssets {
         val read = NeuralAssets.read ?: throw AudioProcessingError.UnavailableModel()
         if (!StudioNativeDSP.available) throw AudioProcessingError.UnavailableModel()
         try {
-            val file = NeuralAssets.file ?: throw AudioProcessingError.UnavailableModel()
-            val lava = if (wantsLava) OnnxLavaNetwork(file(lava).path) else null
+            val lava = if (wantsLava) OnnxLavaNetwork(path(EffectKind.studioVoice, lava)) else null
             var bank: FloatArray? = null
             val voiceFixer = if (wantsVoiceFixer) {
                 val bytes = read(this.bank)
                 if (OnnxDeepFilterModel.sha256(bytes) != bankSHA256 || bytes.size != 1025 * 128 * 4) throw AudioProcessingError.UnavailableModel()
                 bank = FloatArray(1025 * 128).also { ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(it) }
-                OnnxVoiceFixerNetwork(file(voiceFixer).path)
+                OnnxVoiceFixerNetwork(path(EffectKind.studioRestoration, voiceFixer))
             } else null
             return StudioModels(StudioNativeDSP, lava, voiceFixer, bank)
         } catch (e: AudioProcessingError) { throw e
