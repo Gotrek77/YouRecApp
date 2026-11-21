@@ -103,6 +103,8 @@ class RenderSources(private val project: Project, private val folder: File, priv
     /// One picture with its grade, images and titles. False if it could not be shown.
     private fun drawLayer(layer: RenderPlan.Layer, program: FrameProgram, width: Int, height: Int, overlays: Boolean = true, framesPerSecond: Double = 30.0): Boolean {
         val frame = CanvasSize(width.toDouble(), height.toDouble())
+        // Quantization's palette track advances before this picture's decoder is taken.
+        analysePalettes(layer, program, width, height, framesPerSecond)
         val reader = frames(layer.picture.source, layer.slot) ?: return false
         val clip = layer.picture.clip
         // Time effects choose which source frames to show; the others show the frame at the time.
@@ -163,6 +165,92 @@ class RenderSources(private val project: Project, private val folder: File, priv
         android.opengl.GLES20.glDisable(android.opengl.GLES20.GL_SCISSOR_TEST)
         return true
     }
+    /// One Quantization's palette track, made as the iPhone app's
+    /// EffectPaletteAnalysis.palette: a frame every 0.2 s of the effect's part
+    /// of the clip (and at each key of its colours), through the effects before
+    /// it, at most 256 pixels on the long side, each palette eased from the last.
+    private class PaletteJob(val targets: List<Double>, val start: Double, val end: Double, val file: File?) {
+        val frames = ArrayList<EffectPaletteFrame>(); var index = 0; var previous: EffectPalette? = null; var wasLocked = false
+        val done: Boolean get() = index >= targets.size
+        var stored: EffectPaletteTrack? = null
+        fun track(time: Double): EffectPalette? = stored?.palette(time)
+    }
+    private val paletteJobs = HashMap<String, PaletteJob>()
+    private fun paletteKey(layer: RenderPlan.Layer, effect: VideoEffectSettings, width: Int, height: Int): String {
+        val clip = layer.picture.clip; val file = file(layer.picture.source)
+        val prefix = (clip.videoEffects ?: emptyList()).let { VideoEffectSettings.ordered(it) }.takeWhile { it.id != effect.id }
+        val identity = listOf("palette-android-v1", file?.name, file?.length(), file?.lastModified(), effect.start, effect.end, clip.start, clip.end,
+            effect.parameters.filter { it.id == "colors" || it.id == "lockPalette" }.toString(), prefix.map { String(JSON.write(ProjectCoding.encode(it))) },
+            clip.color, clip.crop, clip.mirror, width, height).toString()
+        return java.security.MessageDigest.getInstance("SHA-256").digest(identity.toByteArray()).joinToString("") { String.format("%02x", it) }
+    }
+    private fun analysePalettes(layer: RenderPlan.Layer, program: FrameProgram, width: Int, height: Int, fps: Double) {
+        val clip = layer.picture.clip
+        val effects = clip.videoEffects?.filter { it.enabled && it.kind == VideoEffectID.quantization && it.start < clip.end && it.end > clip.start } ?: return
+        for (effect in effects) {
+            val key = paletteKey(layer, effect, width, height)
+            val job = paletteJobs.getOrPut(key) {
+                val start = maxOf(clip.start, effect.start); val end = minOf(clip.end, effect.end)
+                val keys = effect.parameters.filter { it.id == "colors" || it.id == "lockPalette" }.flatMap { p -> p.keyframes.map { it.time } }.filter { it >= start && it < end }
+                val targets = (generateSequence(start) { it + 0.2 }.takeWhile { it < end }.toList() + keys).toSortedSet().toList()
+                PaletteJob(targets, start, end, file(layer.picture.source)).also { job ->
+                    // A track made before, kept in the app's cache.
+                    VideoEffectAnalysis.cacheFolder?.let { File(it, "palette-$key.json") }?.takeIf { it.exists() }?.let { stored ->
+                        try { job.stored = decodePalettes(JSON.parse(stored.readBytes())).takeIf { it.valid }; if (job.stored != null) job.index = targets.size } catch (e: Exception) { stored.delete() }
+                    }
+                }
+            }
+            if (job.done) continue
+            val bound = IntArray(1); android.opengl.GLES20.glGetIntegerv(android.opengl.GLES20.GL_FRAMEBUFFER_BINDING, bound, 0)
+            val scissor = android.opengl.GLES20.glIsEnabled(android.opengl.GLES20.GL_SCISSOR_TEST)
+            if (scissor) android.opengl.GLES20.glDisable(android.opengl.GLES20.GL_SCISSOR_TEST)
+            val shader = effectShader ?: VideoEffectShader().also { effectShader = it }
+            // An export makes the whole track first; the preview a few frames each time it draws.
+            val began = System.nanoTime()
+            while (!job.done && (strict || System.nanoTime() - began < 25_000_000L)) paletteStep(layer, effect, job, shader, program, width, height, fps)
+            if (job.done) {
+                job.stored = EffectPaletteTrack(job.frames.toList()).takeIf { it.valid }
+                job.stored?.let { track -> VideoEffectAnalysis.cacheFolder?.let { folder -> folder.mkdirs(); File(folder, "palette-$key.json").writeBytes(JSON.write(encodePalettes(track))) } }
+            }
+            android.opengl.GLES20.glBindFramebuffer(android.opengl.GLES20.GL_FRAMEBUFFER, bound[0])
+            android.opengl.GLES20.glViewport(0, 0, width, height)
+            if (scissor) android.opengl.GLES20.glEnable(android.opengl.GLES20.GL_SCISSOR_TEST)
+        }
+    }
+    private fun paletteStep(layer: RenderPlan.Layer, effect: VideoEffectSettings, job: PaletteJob, shader: VideoEffectShader, program: FrameProgram, width: Int, height: Int, fps: Double) {
+        val clip = layer.picture.clip
+        val target = job.targets[job.index]
+        val index = job.file?.let { MediaFiles.frameIndex(it) }
+        // The first source frame at or after the target; one frame can serve several targets.
+        val selected = index?.let { it.times[minOf(it.times.size - 1, it.first(target))] } ?: target
+        val time = maxOf(job.start, minOf(selected, job.end - 0.00001))
+        while (job.index < job.targets.size && time + 0.00001 >= job.targets[job.index]) job.index++
+        if (job.index == 0) job.index = 1
+        val locked = effect.toggle("lockPalette", time); val count = effect.number("colors", time).toInt()
+        if (locked && job.wasLocked && job.previous?.colors?.size == count) return
+        job.wasLocked = locked
+        if (job.frames.isNotEmpty() && time <= job.frames.last().time) return
+        val reader = frames(layer.picture.source, 6) ?: run { job.index = job.targets.size; return }
+        if (!reader.show(time)) return
+        val scale = minOf(1.0, 256.0 / maxOf(width, height)); val w = maxOf(2, Math.round(width * scale).toInt()); val h = maxOf(2, Math.round(height * scale).toInt())
+        val source = CanvasSize(reader.video.displayWidth.toDouble(), reader.video.displayHeight.toDouble()); val canvas = CanvasSize(w.toDouble(), h.toDouble())
+        shader.reset(width, height)
+        val picture = shader.picture(w, h)
+        program.draw(reader.texture, reader.matrix, clip.pictureTransform(source, canvas), source, canvas, grade(clip.color))
+        val prefix = VideoEffectRendering.active(clip, time, fps).takeWhile { it.id != effect.id }
+        val result = shader.apply(prefix, time, fps, picture)
+        val palette = EffectPaletteAnalysis.analyze(shader.samples(result), count, job.previous, job.frames.lastOrNull()?.let { time - it.time } ?: 0.2,
+            VideoEffectRendering.frameIndex(time, 30.0).toLong())
+        shader.free(result)
+        job.frames.add(EffectPaletteFrame(time, palette)); job.previous = palette
+    }
+    private fun encodePalettes(track: EffectPaletteTrack) = jsonObject("frames" to track.frames.map { f ->
+        jsonObject("time" to f.time, "palette" to jsonObject("colors" to f.palette.colors.map { jsonObject("red" to it.red, "green" to it.green, "blue" to it.blue) }, "thresholds" to f.palette.thresholds))
+    })
+    private fun decodePalettes(value: Any?) = EffectPaletteTrack(Fields.of(value).list("frames").map { raw ->
+        val f = Fields.of(raw)
+        EffectPaletteFrame(f.double("time"), EffectPalettes.locked(f.raw("palette")) ?: throw ProjectError.InvalidDocument())
+    })
     private val clocks = HashMap<TimelineClip, VideoEffectSequenceClock>()
     private val blocks = HashMap<Pair<UUID, Int>, Pair<Any, VideoEffectShader.Target>>()
     /// The layer's picture with its effects, as the iPhone app's compositor
@@ -205,7 +293,12 @@ class RenderSources(private val project: Project, private val folder: File, priv
                 val px = subject.centerX * source.width; val py = subject.centerY * source.height
                 targets[effect.id] = (placed.x(px, py) / frame.width).coerceIn(0.0, 1.0) to (placed.y(px, py) / frame.height).coerceIn(0.0, 1.0)
             }
-            return shader.apply(effects, effectTime, fps, picture, frameTime, hold, targets)
+            return shader.apply(effects, effectTime, fps, picture, frameTime, hold, targets) { effect, upstream ->
+                // The analysed palette where the track has reached; until then, this frame's own (as the iPhone app while analysing).
+                val analysed = paletteJobs[paletteKey(layer, effect, width, height)]?.track(effectTime)
+                    ?: EffectPaletteAnalysis.analyze(shader.samples(upstream), effect.number("colors", effectTime).toInt(), seed = VideoEffectRendering.frameIndex(effectTime, 30.0).toLong())
+                EffectPalettes.display(effect, effectTime, analysed, EffectPalettes.locked(effect.lockedPalette))
+            }
         }
         if (plan == null) return one(sourceTime, false, Double.POSITIVE_INFINITY)
         if (plan.times.size == 1 || plan.smear <= 0) return one(plan.times.first(), plan.firstAtOrAfter, plan.before)

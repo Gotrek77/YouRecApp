@@ -48,6 +48,7 @@ fun videoEffectTests() {
     effectEditingTests()
     effectTimingTests()
     effectSubjectTests()
+    effectPaletteTests()
     println("Video effects: ok")
 }
 
@@ -218,4 +219,34 @@ fun effectSubjectTests() {
     require(v[0] == 0.25f && v[1] == 0.75f && abs(v[2] - 2.5f) < 1e-6 && v[3] == 0f, "Crash zoom aims at the subject and holds its zoom (${v.toList()})")
     val snap = VideoEffectRendering.frameValues(VideoEffectRendering.uniforms(VideoEffectSettings(kind = VideoEffectID.crashZoom), 0.09, 30.0))
     require(snap[2] > 1f && snap[2] < 2.5f && snap[3] > 0f && snap[0] == 0.5f, "During the push the zoom grows with motion blur")
+}
+
+/// Quantization's palettes: the seeded generator, k-means on Oklab, smoothing and cuts, the shown palette.
+fun effectPaletteTests() {
+    val random = EffectRandom(0)
+    require(listOf(random.next(), random.next(), random.next()) == listOf(0.8833108082136426, 0.43152799704850997, 0.026433771592597743) && EffectRandom(12345).next() == 0.1330796686614273, "SplitMix64 as on iPhone")
+    // Two flat colours: two centres, one each, darker first; the band between them.
+    val red = doubleArrayOf(0.8, 0.05, 0.05); val blue = doubleArrayOf(0.02, 0.05, 0.6)
+    val samples = List(200) { if (it % 2 == 0) red else blue }
+    val palette = EffectPaletteAnalysis.analyze(samples, 2, seed = 7)
+    require(palette.valid && palette.colors.size == 2 && palette.thresholds.size == 1, "A valid two-colour palette")
+    require(EffectColorMath.lab(EffectColorMath.linear(palette.colors[0]))[0] < EffectColorMath.lab(EffectColorMath.linear(palette.colors[1]))[0], "Colours are ordered by lightness")
+    require(palette.colors[0].blue > palette.colors[0].red && palette.colors[1].red > palette.colors[1].blue, "Each centre is one of the colours (${palette.colors})")
+    require(EffectPaletteAnalysis.analyze(samples, 2, seed = 7) == palette, "The same frame and seed give the same palette")
+    // Smoothing toward a slightly changed frame; a scene cut jumps.
+    val shifted = List(200) { if (it % 2 == 0) doubleArrayOf(0.75, 0.06, 0.05) else blue }
+    val eased = EffectPaletteAnalysis.analyze(shifted, 2, previous = palette, elapsed = 0.2, seed = 8)
+    val target = EffectPaletteAnalysis.analyze(shifted, 2, seed = 8)
+    require(eased.colors[1].red > target.colors[1].red && eased.colors[1].red < palette.colors[1].red + 1e-9, "Small changes ease in")
+    val green = List(200) { doubleArrayOf(0.05, 0.7, 0.05) }
+    val cut = EffectPaletteAnalysis.analyze(green, 2, previous = palette, elapsed = 0.2, seed = 9)
+    require(cut.colors.all { it.green > it.red }, "A scene cut replaces the palette")
+    // What is shown: a Pop preset takes the analysed bands; monochrome keeps the analysis; a saved palette is reduced keeping hues.
+    var effect = VideoEffectSettings(kind = VideoEffectID.quantization).setting("colors", EffectValue.Number(2.0))
+    require(EffectPalettes.display(effect, 0.0, palette, null) == palette, "Scene palette by default")
+    val pop = EffectPalettePreset.pop.first()
+    effect = effect.setting("palette", EffectValue.Choice(pop.name))
+    require(EffectPalettes.display(effect, 0.0, palette, null)!!.colors == pop.sampled(2), "A Pop palette recolours the bands")
+    require(EffectPalettes.sample(listOf(EffectRGB(0.0, 0.0, 0.0), EffectRGB(0.5, 0.5, 0.5), EffectRGB(0.52, 0.5, 0.5), EffectRGB(1.0, 0.0, 0.0)), 3).contains(EffectRGB(1.0, 0.0, 0.0)), "Reducing keeps the saturated entry")
+    require(EffectPalettes.locked(mapOf("colors" to listOf(mapOf("red" to 0.0, "green" to 0.0, "blue" to 0.0), mapOf("red" to 1.0, "green" to 1.0, "blue" to 1.0)), "thresholds" to listOf(0.5)))?.colors?.size == 2, "The saved locked palette is read")
 }

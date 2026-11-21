@@ -104,6 +104,30 @@ def area(encoded, w, h, threshold=None):
             total = total + c
     return srgb(np.clip(total / (cx * cy), 0, 1))
 
+def bilateral(encoded, sigma, direction):
+    h, w = encoded.shape[:2]; x, y = grid(w, h); uv = np.stack([(x + .5) / w, (y + .5) / h], -1)
+    centre = sample(encoded, uv); s = max(.5, sigma); radius = min(10, int(np.ceil(s * 2)))
+    result = 0; total = 0
+    for i in range(-radius, radius + 1):
+        c = sample(encoded, uv + np.array(direction) * i / np.array([w, h])); d = srgb(c) - srgb(centre)
+        wgt = np.exp(-i * i / (2 * s * s) - (d * d).sum(-1) / .02)[..., None]; result = result + wgt * c; total = total + wgt
+    return srgb(np.clip(result / np.maximum(total, 1e-6), 0, 1))
+
+def bayer(qx, qy, size):
+    value = np.zeros_like(qx); scale = 1
+    while scale < size:
+        bx = np.floor(qx / scale) % 2; by = np.floor(qy / scale) % 2
+        value = value * 4 + np.abs(bx - by) * 2 + by; scale *= 2
+    return (value + .5) / (size * size)
+
+QUANT = {"palette": [(.1, .05, .2), (.8, .2, .1), (.2, .6, .9), (.95, .9, .7)], "bands": [.05, .2, .45]}
+def quant_uniforms():
+    labs = np.zeros((16, 4)); bands = np.zeros(15)
+    for i, c in enumerate(QUANT["palette"]): labs[i, :3] = lab(lin(np.array(c))); labs[i, 3] = 1
+    bands[:len(QUANT["bands"])] = QUANT["bands"]
+    return [{"name": "paletteLab", "type": "4fv", "value": labs.flatten().tolist()}, {"name": "bands", "type": "1fv", "value": bands.tolist()},
+            {"name": "colorCount", "type": "1f", "value": len(QUANT["palette"])}]
+
 def blurred(encoded, sigma, horizontal):
     h, w = encoded.shape[:2]; x, y = grid(w, h); uv = np.stack([(x + .5) / w, (y + .5) / h], -1)
     centre, pairs = gaussian_weights(sigma); d = np.array([1 / w, 0]) if horizontal else np.array([0, 1 / h])
@@ -213,6 +237,20 @@ def reference(kind, p, intensity, encoded, aux=None, values=None):
         v = np.clip(1 - np.clip(np.hypot(d[..., 0], d[..., 1]) / 1.25, 0, 1) ** 2.5, 0, 1)
         o = np.repeat((l * mix(1, v, x[1]))[..., None], 3, -1)
         if x[3] > .5: o = o * lin(np.array([.82, .84, .52]))
+    elif kind == 7:
+        labs = np.array([lab(lin(np.array(col))) for col in QUANT["palette"]]); n = len(labs)
+        cc = sample(aux["aux"], uv) if x[3] > 0 else c
+        yy = luma(cc)[..., None]; cc = cc + .2 * (yy * yy * (3 - 2 * yy) - yy)
+        v = lab(np.clip(cc, 0, 1))
+        if x[4] > .5:
+            spread = sum(np.linalg.norm(labs[i] - labs[i - 1]) for i in range(1, n)) / max(1, n - 1)
+            qx, qy = grid(W, H)
+            v = v.copy(); v[..., 0] += (bayer(qx, qy, 4 if x[4] < 1.5 else 8) - .5) * spread
+        if x[1] > .5 or 1 <= x[2] <= 3:
+            l = luma(np.clip(unlab(v), 0, 1)); best = sum((l >= b).astype(int) for b in QUANT["bands"][:n - 1])
+            o = lin(np.repeat((best / max(1, n - 1))[..., None], 3, -1)) if x[1] > .5 else unlab(labs[best])
+        else:
+            d = ((v[..., None, :] - labs[None, None]) ** 2).sum(-1); o = unlab(labs[np.argmin(d, -1)])
     elif kind == 9:
         target = values[:2]; point = (uv - target) / values[2] + target
         o = sum(sample(encoded, point + (point - target) * values[3] * (i / 7 - .5)) for i in range(8)) / 8
@@ -262,6 +300,8 @@ CASES = [
     ("Widescreen black bars", 11, [0, 0, .6, 1, 0], 1), ("Widescreen blur fill", 11, [3, 1, .4, 0, 0], .8),
     ("Halation", 15, [.7, .6, .4, 1], 1), ("16mm", 16, [.5, 1, .4, .5, 1, 0], 1, [3.0, -2.0, 1.006, 0, 0, 0, 0, 0]),
     ("16mm B&W", 16, [.5, 2, .0, .5, 0, 1], .7, [-1.5, 4.0, 1.006, 0, 0, 0, 0, 0]),
+    ("Quantization scene", 7, [4, 0, 0, 0, 0], 1), ("Quantization Pop bands dither", 7, [4, 0, 1, 0, 1], 1),
+    ("Quantization B&W 8x8 smoothed", 7, [4, 1, 0, .5, 2], .8),
     ("Crash zoom", 9, [2.5, .18, 1, 0, .6, .3, .6], 1, [.3, .6, 1.8, .05, 0, 0, 0, 0]),
     ("Freeze print", 12, [3, .05, 1], 1, [0, 0, 1.03, 0, 0, 0, 0, 0]),
     ("Undercranking", 14, [16, 1.25, .5, .4], 1, [2.5, -3.0, 1.01, 1.05, 0, 0, 0, 0]),
@@ -296,6 +336,7 @@ def main():
         uniforms = [{"name": "size", "type": "2f", "value": [W, H]}, {"name": "p", "type": "4fv", "value": params(values).flatten().tolist()},
                     {"name": "time", "type": "1f", "value": .5}, {"name": "intensity", "type": "1f", "value": intensity},
                     {"name": "latticeOffset", "type": "2f", "value": [0, 0]}, {"name": "frameValues", "type": "4fv", "value": frame}]
+        if kind == 7: uniforms += quant_uniforms()
         out = os.path.join(WORK, "%s.rgba" % name.replace(" ", "-"))
         spec["cases"].append({"name": name, "fragment": "#define KIND %d\n" % kind + fragment, "width": W, "height": H, "textures": textures, "uniforms": uniforms, "output": out})
         checks.append((name, out, W, H, lambda kind=kind, values=values, intensity=intensity, frame=frame:
@@ -309,6 +350,12 @@ def main():
         spec["cases"].append({"name": name, "fragment": shader, "width": w, "height": h, "textures": [texture("input", "image")],
                               "uniforms": [{"name": "size", "type": "2f", "value": [w, h]}, {"name": "sourceSize", "type": "2f", "value": [W, H]}] + extra, "output": out})
         checks.append((name, out, w, h, lambda ref=ref: np.round(ref() * 255), False))
+    BILATERAL = HEADER + source("BILATERAL")
+    for name, sigma, direction in [("Bilateral horizontal 1.5", 1.5, (1, 0)), ("Bilateral vertical 4", 4.0, (0, 1))]:
+        out = os.path.join(WORK, name.replace(" ", "-") + ".rgba")
+        spec["cases"].append({"name": name, "fragment": BILATERAL, "width": W, "height": H, "textures": [texture("input", "image")],
+                              "uniforms": [{"name": "size", "type": "2f", "value": [W, H]}, {"name": "bilateral", "type": "4f", "value": [sigma, direction[0], direction[1], 0]}], "output": out})
+        checks.append((name, out, W, H, lambda sigma=sigma, direction=direction: np.round(bilateral(image.astype(float), sigma, direction) * 255), False))
     for name, sigma, horizontal in [("Blur horizontal 2.5", 2.5, True), ("Blur vertical 7", 7.0, False), ("Blur 0.6", .6, True)]:
         centre, pairs = gaussian_weights(sigma); flat = [v for pair in pairs for v in pair]; flat += [0] * (48 - len(flat))
         out = os.path.join(WORK, name.replace(" ", "-") + ".rgba")

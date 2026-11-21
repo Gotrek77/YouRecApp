@@ -141,7 +141,7 @@ class VideoEffectShader {
 
     /// Apply `effects` in order to the picture drawn after `begin`. Returns the target holding the result.
     fun apply(effects: List<VideoEffectSettings>, sourceTime: Double, fps: Double, picture: Target, frameTime: Double = sourceTime, holdTime: Double? = null,
-              targets: Map<java.util.UUID, Pair<Double, Double>> = emptyMap()): Target {
+              targets: Map<java.util.UUID, Pair<Double, Double>> = emptyMap(), palettes: (VideoEffectSettings, Target) -> EffectPalette? = { _, _ -> null }): Target {
         var current = picture
         GLES20.glDisable(GLES20.GL_BLEND)
         for (effect in effects) {
@@ -152,6 +152,8 @@ class VideoEffectShader {
             for ((name, target) in auxiliary) inputs.add(name to target.texture)
             val grain = u.kind == 5 || u.kind == 12 || u.kind == 16 || u.kind == 17
             if (grain) inputs.add("lattice" to latticeTexture())
+            // Quantization reads its palette from the picture as it reaches it.
+            val palette = if (effect.kind == VideoEffectID.quantization) palettes(effect, current) else null
             val program = pass("effect-" + u.kind) { "#define KIND ${u.kind}\n" + FRAGMENT }
             val output = take(current.width, current.height)
             val values = VideoEffectRendering.frameValues(u)
@@ -161,6 +163,13 @@ class VideoEffectShader {
                 GLES20.glUniform1f(p.u("intensity"), u.intensity)
                 GLES20.glUniform4fv(p.u("frameValues"), 2, values, 0)
                 if (grain) { val (x, y) = VideoEffectRendering.latticeOffset(u.frame); GLES20.glUniform2f(p.u("latticeOffset"), x.toFloat(), y.toFloat()) }
+                if (effect.kind == VideoEffectID.quantization) {
+                    val labs = FloatArray(64); val bands = FloatArray(15)
+                    palette?.colors?.take(16)?.forEachIndexed { i, color -> val l = EffectColorMath.lab(EffectColorMath.linear(color)); for (k in 0..2) labs[i * 4 + k] = l[k].toFloat(); labs[i * 4 + 3] = 1f }
+                    palette?.thresholds?.take(15)?.forEachIndexed { i, t -> bands[i] = t.toFloat() }
+                    GLES20.glUniform4fv(p.u("paletteLab"), 16, labs, 0); GLES20.glUniform1fv(p.u("bands"), 15, bands, 0)
+                    GLES20.glUniform1f(p.u("colorCount"), (palette?.colors?.size ?: 0).toFloat())
+                }
             }
             for (target in auxiliary.values) free(target)
             free(current)
@@ -177,6 +186,17 @@ class VideoEffectShader {
         return when (settings.kind) {
             VideoEffectID.sixteenMM -> if (settings.number("softness", time) > 0) mapOf("aux" to blur(input, 1.5 * scale)) else emptyMap()
             VideoEffectID.superEight -> mapOf("aux" to blur(input, 2 * scale))
+            VideoEffectID.quantization -> if (settings.number("smoothing", time) > 0) {
+                // Edge-preserving smoothing at about 1080p, horizontal then vertical.
+                val factor = 1 / maxOf(1.0, scale); val w = maxOf(2, (width * factor).toInt()); val h = maxOf(2, (height * factor).toInt())
+                val sigma = ((1 + 4 * settings.number("smoothing", time)) * scale * factor).toFloat()
+                val first = take(w, h)
+                run(pass("bilateral") { HEADER + BILATERAL }, first, listOf("image" to input.texture)) { p -> GLES20.glUniform4f(p.u("bilateral"), sigma, 1f, 0f, 0f) }
+                val second = take(w, h)
+                run(pass("bilateral") { HEADER + BILATERAL }, second, listOf("image" to first.texture)) { p -> GLES20.glUniform4f(p.u("bilateral"), sigma, 0f, 1f, 0f) }
+                free(first)
+                mapOf("aux" to second)
+            } else emptyMap()
             VideoEffectID.halation, VideoEffectID.widescreen -> {
                 val wide = settings.kind == VideoEffectID.widescreen
                 val small = highlights(input, maxOf(2, width / 4), maxOf(2, height / 4), if (wide) .9f else .75f, if (wide) .05f else .1f)
@@ -192,6 +212,18 @@ class VideoEffectShader {
             }
             else -> emptyMap()
         }
+    }
+
+    /// The picture reduced to 64×36 (36×64 upright) as linear RGB samples, for palette analysis.
+    fun samples(picture: Target): List<DoubleArray> {
+        val w = if (picture.width >= picture.height) 64 else 36; val h = if (w == 64) 36 else 64
+        val small = reduce(picture, w, h)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, small.buffer)
+        val pixels = ByteBuffer.allocateDirect(w * h * 4).order(ByteOrder.nativeOrder())
+        GLES20.glReadPixels(0, 0, w, h, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, pixels)
+        free(small)
+        val table = DoubleArray(256) { EffectColorMath.linear(it / 255.0) }
+        return (0 until w * h).map { i -> DoubleArray(3) { k -> table[pixels.get(i * 4 + k).toInt() and 255] } }
     }
 
     /// Draw a finished canvas-size picture into the framebuffer bound now,
@@ -323,6 +355,23 @@ void main() {
     gl_FragColor = encode(result);
 }
 """
+        /// ve_bilateral: one direction of an edge-preserving blur into a (smaller) target.
+        val BILATERAL = """
+uniform vec4 bilateral;
+void main() {
+    vec2 uv = gl_FragCoord.xy / size;
+    vec3 center = lin(texture2D(image, uv).rgb), result = vec3(0.0); float total = 0.0, s = max(.5, bilateral.x);
+    float radius = min(10.0, ceil(s * 2.0));
+    for (int k = -10; k <= 10; k++) {
+        float i = float(k); if (abs(i) > radius) continue;
+        vec3 c = lin(texture2D(image, uv + bilateral.yz * i / size).rgb);
+        vec3 d = srgb(c) - srgb(center);
+        float w = exp(-i * i / (2.0 * s * s) - dot(d, d) / .02);
+        result += w * c; total += w;
+    }
+    gl_FragColor = encode(result / max(total, 1e-6));
+}
+"""
         /// A normalised dissolve in linear light (Step printing's smear).
         val BLEND = """
 uniform sampler2D next;
@@ -344,6 +393,9 @@ uniform float time;
 uniform float intensity;
 uniform vec2 latticeOffset;
 uniform vec4 frameValues[2];
+uniform vec4 paletteLab[16];
+uniform float bands[15];
+uniform float colorCount;
 vec3 lab(vec3 c) {
     vec3 v = pow(max(vec3(dot(c, vec3(.4122214708, .5363325363, .0514459929)), dot(c, vec3(.2119034982, .6806995451, .1073969566)), dot(c, vec3(.0883024619, .2817188376, .6299787005))), 0.0), vec3(1.0 / 3.0));
     return vec3(dot(v, vec3(.2104542553, .793617785, -.0040720468)), dot(v, vec3(1.9779984951, -2.428592205, .4505937099)), dot(v, vec3(.0259040371, .7827717662, -.808675766)));
@@ -363,6 +415,17 @@ float gate(vec2 uv, float radius) {
     return 1.0 - smoothstep(radius - .004, radius + .004, length(max(d, 0.0)) + min(max(d.x, d.y), 0.0));
 }
 // The camera's per-frame movement (computed on the CPU from the iPhone app's hashes).
+// Ordered dithering (the iPhone app's bayer(), bit by bit, without integer operations).
+float bayer(vec2 q, float size) {
+    float value = 0.0, scale = 1.0;
+    for (int bit = 0; bit < 3; bit++) {
+        if (scale >= size) break;
+        float x = mod(floor(q.x / scale), 2.0), y = mod(floor(q.y / scale), 2.0);
+        value = value * 4.0 + abs(x - y) * 2.0 + y;
+        scale *= 2.0;
+    }
+    return (value + .5) / (size * size);
+}
 vec2 moved(vec2 uv) { return (uv - .5) / frameValues[0].z + .5 + frameValues[0].xy * (min(size.x, size.y) / 1080.0) / size; }
 float sCurve(float y, float contrast) { y = clamp(y, 0.0, 1.0); float a = pow(y, contrast), b = pow(1.0 - y, contrast); return a / max(a + b, 1e-6); }
 // Controls operate on perceptual tone values; image math and compositing stay linear.
@@ -521,6 +584,30 @@ void main() {
     float v = clamp(1.0 - pow(clamp(length(d) / 1.25, 0.0, 1.0), 2.5), 0.0, 1.0);
     l *= mix(1.0, v, p[1].x); o = vec3(l);
     if (p[3].x > .5) o *= lin(vec3(.82, .84, .52));
+#elif KIND == 7
+    // Palette lookup: centres in Oklab, bands in linear luma.
+    if (colorCount < 2.0) o = c;
+    else {
+        if (p[3].x > 0.0) c = read(aux, uv);
+        float yy = luma(c); c += .2 * (yy * yy * (3.0 - 2.0 * yy) - yy);
+        vec3 v = lab(clamp(c, 0.0, 1.0));
+        if (p[4].x > .5) {
+            float spread = 0.0;
+            for (int i = 1; i < 16; i++) { if (float(i) >= colorCount) break; spread += distance(paletteLab[i - 1].xyz, paletteLab[i].xyz); }
+            spread /= max(1.0, colorCount - 1.0);
+            vec2 qTop = vec2(q.x, size.y - 1.0 - q.y);
+            v.x += (bayer(qTop, p[4].x < 1.5 ? 4.0 : 8.0) - .5) * spread;
+        }
+        if (p[1].x > .5 || (p[2].x >= 1.0 && p[2].x <= 3.0)) {
+            float l = luma(clamp(unlab(v), 0.0, 1.0)), best = 0.0;
+            for (int i = 0; i < 15; i++) { if (float(i) + 1.0 >= colorCount) break; if (l >= bands[i]) best += 1.0; }
+            if (p[1].x > .5) o = lin(vec3(best / max(1.0, colorCount - 1.0)));
+            else { o = vec3(0.0); for (int i = 0; i < 16; i++) if (float(i) == best) o = unlab(paletteLab[i].xyz); }
+        } else {
+            float closest = 1e10; o = vec3(0.0);
+            for (int i = 0; i < 16; i++) { if (float(i) >= colorCount) break; vec3 d = v - paletteLab[i].xyz; float e = dot(d, d); if (e < closest) { closest = e; o = unlab(paletteLab[i].xyz); } }
+        }
+    }
 #elif KIND == 9
     // Crash zoom: the target stays put; eight samples along the zoom's motion.
     vec2 target = frameValues[0].xy, point = (uv - target) / frameValues[0].z + target;
