@@ -1,0 +1,3 @@
+dom 22 nov 2026, 08:35:49, CET
+    mShowingDream=false mDreamingLockscreen=false
+    isKeyguardShowing=false

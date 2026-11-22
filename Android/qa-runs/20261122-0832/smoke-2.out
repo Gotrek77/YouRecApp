@@ -1,0 +1,287 @@
+recorder: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to record | Record a new project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+shot recorder-idle  luma mean 95 spread 49
+tap  Record a new project
+FAIL: 'Stop recording' did not appear within 10 s. On screen: 
+shot recording  luma mean 91 spread 44
+no second camera to switch to
+FAIL: 'Add recording bookmark' did not appear within 20 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Saving | Saving recording | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+FAIL: 'Pause recording' did not appear within 20 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+FAIL: 'Resume recording' did not appear within 60 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+shot paused  luma mean 5 spread 16
+FAIL: 'Resume recording' did not appear within 20 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+FAIL: 'Stop recording' did not appear within 10 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+FAIL: 'Stop recording' did not appear within 20 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+after stop: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+takes: 1
+FAIL: expected two segments (before and after the pause), found 1
+     take-20261122-083850-1.mp4
+       stream|codec_name=h264|codec_type=video|width=1080|height=1920|r_frame_rate=30/1|start_time=0.000000|duration=358.445789|nb_frames=10747
+       stream|codec_name=aac|codec_type=audio|sample_rate=48000|channels=2|r_frame_rate=0/0|start_time=0.000000|duration=358.421333|nb_frames=16801
+       format|duration=358.445789
+     middle frame: luma mean 96 spread 34
+     events: none
+project.json: {"automaticCanvasVersion":1,"captureLedger":[{"clip":{"end":358.4519,"id":"F1F7F99C-DDC1-46BF-ACD7-2DA1D48B123E","sourceID":"82C6B2A2-093F-4FCA-980B-3CE858A16A16","start":0},"insertion":false}],"createdAt":8.170259299649999E8,"exportSettings":{"codec":"H.264","frameRate":30,"resolution":"Project size"},"historyCursor":0,"id":"8F213D1A-A7B5-4BA7-AB27-3651508CF863","recordingHistoryVersion":1,"schemaVersion":6,"snapshotFiles":["e5480d10a3e26bc770386ed9ad2f6d5aaff34e33d974dc85d7b15a046c80e887.json"],"sources":[{"duration":358.4519,"filename":"take-20261122-083850-1.mp4","id":"82C6B2A2-093F-4FCA-980B-3CE858A16A16","recordedAt":8.17026291924E8,"sha256":"14f2c0c256cfaa91974fb36904104d95a7030fb2959006cd21312f8522a2d92f"}],"title":"nov 22 · 08:38","updatedAt":8.17026291925E8}
+tap  Edit
+editor: 0:00.00 / 5:58.14 | Add bookmark | Editor settings | Enhance | Export | Next cut | Pauses | Play | Preview. Tap to play or pause. | Previous cut | Redo | Speed | Split | Start | Undo | Volume | nov 22 · 08:38 | ‹ Projects
+shot editor  luma mean 50 spread 59
+tap  Play
+screen changing during playback: 3 of 3 readings
+shot editor-playing  luma mean 51 spread 54
+tap  Pause (same button)
+paused at: 0:40.29 / 5:58.14
+after playing: 0:40.29 / 5:58.14 | Add bookmark | Editor settings | Enhance | Export | Next cut | Pauses | Play | Preview. Tap to play or pause. | Previous cut | Redo | Speed | Split | Start | Undo | Volume | nov 22 · 08:38 | ‹ Projects
+tap  Split
+tap  Undo
+tap  Redo
+shot editor-after-split  luma mean 57 spread 61
+tap  Speed
+tap  Speed 2 times
+tap  Done
+after Speed: 0:40.29 / 2:59.07 | Add bookmark | Editor settings | Enhance | Export | Next cut | Pauses | Play | Preview. Tap to play or pause. | Previous cut | Redo | Speed | Speed 2× · Undo available | Split | Start | Undo | Volume | nov 22 · 08:38 | ‹ Projects
+tap  Mirror
+tap  Flip left
+tap  Done
+tap  Crop
+tap  Video shape 1:1
+tap  Done
+tap  Color
+tap  Look Cinema
+tap  Done
+after Color: 0:40.29 / 2:59.07 | Add bookmark | Color | Crop | Editor settings | Effects | Export | Look Cinema · Undo available | Mirror | Next cut | Play | Preview. Tap to play or pause. | Previous cut | Redo | Speed | Text | Transition | Undo | nov 22 · 08:38 | ‹ Projects
+tap  Effects
+tap  Add Auto Background
+shot editor-auto-background  luma mean 39 spread 38
+tap  Remove
+Background drawn and removed: 0:40.29 / 2:59.07 | Add Auto Background | Add Bleach Bypass | Add Chroma Key | Add Color Correction | Add Color Isolation | Add Crash Zoom | Add Day for Night | Add Dolly Zoom | Add Expressionism | Add Kaleidoscope | Add Negative Strobe | Add Night fix | Add Noir | Add RGB Offset | Add Silent Tint | Add Three-Strip | Add bookmark | Add · Background | Add · Camera | Add · Color & tone | Add · Quantization | Animate | Auto Background removed · Undo available | Color | Crop | Done | Editor settings | Effects | Effects · whole project | Export | Mirror | Next cut | No effects on whole project. Add one below. | Play | Previous cut | Redo | Speed | Text | Transition | Undo | nov 22 · 08:38 | ‹ Projects
+tap  Add Noir
+shot editor-effects  luma mean 37 spread 35
+tap  Done
+after Effects: 0:40.29 / 2:59.07 | Add bookmark | Color | Crop | Editor settings | Effects | Export | Mirror | Next cut | Noir added · Undo available | Play | Preview. Tap to play or pause. | Previous cut | Redo | Speed | Text | Transition | Undo | nov 22 · 08:38 | ‹ Projects
+tap  Text
+tap  Style Box
+tap  Colour Yellow
+tap  Done
+after Text: 0:40.29 / 2:59.07 | Add bookmark | Color | Crop | Editor settings | Effects | Export | Mirror | Next cut | Play | Preview. Tap to play or pause. | Previous cut | Redo | Speed | Text | Text colour · Undo available | Transition | Undo | nov 22 · 08:38 | ‹ Projects
+tap  Previous cut
+tap  Transition
+tap  Transition style Dissolve
+transition: dissolve, before (20.5, 179.23333333333332) after (20.233333333333334, 178.73333333333332)
+shot editor-transition  luma mean 37 spread 43
+tap  Done with transition
+tap  Add photo
+tap  yourec-photo.jpg
+after Add photo: 0:20.07 / 3:01.22 | Add audio | Add bookmark | Add photo | Add video | Editor settings | Export | Next cut | Photo added at the end of the project · Undo available | Placement | Play | Preview. Tap to play or pause. | Previous cut | Record | Redo | Undo | nov 22 · 08:38 | ‹ Projects
+tap  Previous cut
+tap  Image
+tap  yourec-photo.jpg
+tap  Image on screen for 2 seconds
+after Image: 0:20.00 / 3:01.22 | 100% | 40% | 50% | Across | Add bookmark | Cover | Done with image | Down | Editor settings | Export | Image | Image duration · Undo available | Image on screen for 1 seconds | Image on screen for 2 seconds, selected | Image on screen for 3 seconds | Image on screen for 4 seconds | Image on screen for 5 seconds | Image on screen for 6 seconds | Image on screen for 7 seconds | Image on screen for 8 seconds | Next cut | Opacity | Placement | Play | Preview. Tap to play or pause. | Previous cut | Redo | Remove image | Size | Subtitles | Text | Transition | Undo | nov 22 · 08:38 | ‹ Projects
+shot editor-image  luma mean 31 spread 38
+tap  Done with image
+tap  Enhance
+tap  Add Noise reduction
+tap  Noise reduction model DeepFilterNet3
+shot editor-enhance  luma mean 35 spread 43
+tap  Apply enhance audio
+after Enhance (142 s of processing): 0:20.00 / 3:01.22 | Add bookmark | Audio enhanced · Undo available | Editor settings | Enhance | Export | Next cut | Pauses | Play | Preview. Tap to play or pause. | Previous cut | Redo | Speed | Split | Start | Undo | Volume | nov 22 · 08:38 | ‹ Projects
+tap  Previous cut
+tap  Previous cut
+tap  Start
+tap  Next cut
+tap  End
+tap  Censor
+tap  Apply censor
+censored 0.00-20.00
+shot editor-after-tools  luma mean 36 spread 54
+tap  Export
+tap  Export
+export: 0:20.00 / 3:01.22 | 1080 × 1080 · 30 fps · H.264 · 152 MB | Add bookmark | Censored · Undo available | Close | Color | Crop | Editor settings | Effects | Export | Export finished | Mirror | Next cut | Play | Preview. Tap to play or pause. | Previous cut | Redo | Save to gallery | Share | Speed | Text | Transition | Undo | nov 22 · 08:38 | ‹ Projects
+shot export  luma mean 38 spread 51
+     YouRec-20261122-085951.mp4
+       stream|codec_name=aac|codec_type=audio|sample_rate=48000|channels=2|r_frame_rate=0/0|start_time=0.000000|duration=181.781333|nb_frames=8521
+       stream|codec_name=h264|codec_type=video|width=1080|height=1080|r_frame_rate=30/1|start_time=0.000000|duration=181.733333|nb_frames=5452
+       format|duration=181.781333
+     middle frame: luma mean 48 spread 54
+dissolve at 20.23 s (overlap 0.50 s): luma mean 62 spread 68
+censored range 0.05-19.95 s: RMS ['-21.031183'] dB
+Noir at 0.30 s: 100% of the frame is neutral grey
+enhanced audio cache:
+total 134556
+-rw------- 1 u0_a635 u0_a635_cache 137645536 2026-11-22 08:56 52638e23713935a6830024e4898fd6aeb368ca9c7046ae88ef118106a4022f11.f32
+
+tap  Close
+tap  Cover
+tap  Frame at 
+cover: Cover image, 1080 × 1080 pixels
+shot cover  luma mean 35 spread 44
+tap  Share JPEG
+cover JPEG: nov 22 · 08-38 - 0-03.33.jpg 1080,1080, luma mean 39 spread 48
+tap  Previous cut
+tap  Start
+tap  Previous cut
+tap  Next cut
+tap  End
+tap  Copy
+tap  Paste
+clipboard: before (0.0, 181.73333333333332), marked to (20.0, 181.73333333333332), after paste (20.0, 201.7) | 0:20.00 / 3:21.21 | Add bookmark | Copy | Cut | Delete | Editor settings | Export | Move | Next cut | Paste | Pasted · Undo available | Play | Preview. Tap to play or pause. | Previous cut | Redo | Split | Start | Undo | nov 22 · 08:38 | ‹ Projects
+shot editor-after-paste  luma mean 40 spread 57
+tap  Pauses
+tap  Find pauses
+pauses: None
+FAIL: pause detection did not finish. On screen: 00:38 | Assistenza chiamate | Audio Emoji | Cellulare ‪+39 388 432 0401‬ | Chiamata HD | Foto contatto per Francesca Patanè | Francesca Patanè | Mostra altro | Silenzia | Tastierino | Termina chiamata | Videochiamata | Vivavoce
+FAIL: the 'Record' tool was not found. On screen: 01:53 | Assistenza chiamate | Audio Emoji | Cellulare ‪+39 388 432 0401‬ | Chiamata HD | Foto contatto per Francesca Patanè | Francesca Patanè | Mostra altro | Silenzia | Tastierino | Termina chiamata | Videochiamata | Vivavoce
+FAIL: 'Record into this project' did not appear within 40 s. On screen: 02:39 | Assistenza chiamate | Audio Emoji | Cellulare ‪+39 388 432 0401‬ | Chiamata HD | Foto contatto per Francesca Patanè | Francesca Patanè | Mostra altro | Silenzia | Tastierino | Termina chiamata | Videochiamata | Vivavoce
+shot recorder-not-ready-again  luma mean 43 spread 43
+==== SUMMARY ====
+recorder: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to record | Record a new project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+shot recorder-idle  luma mean 95 spread 49
+tap  Record a new project
+FAIL: 'Stop recording' did not appear within 10 s. On screen: 
+shot recording  luma mean 91 spread 44
+no second camera to switch to
+FAIL: 'Add recording bookmark' did not appear within 20 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Saving | Saving recording | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+FAIL: 'Pause recording' did not appear within 20 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+FAIL: 'Resume recording' did not appear within 60 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+shot paused  luma mean 5 spread 16
+FAIL: 'Resume recording' did not appear within 20 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+FAIL: 'Stop recording' did not appear within 10 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+FAIL: 'Stop recording' did not appear within 20 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+after stop: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+takes: 1
+FAIL: expected two segments (before and after the pause), found 1
+     take-20261122-083850-1.mp4
+       stream|codec_name=h264|codec_type=video|width=1080|height=1920|r_frame_rate=30/1|start_time=0.000000|duration=358.445789|nb_frames=10747
+       stream|codec_name=aac|codec_type=audio|sample_rate=48000|channels=2|r_frame_rate=0/0|start_time=0.000000|duration=358.421333|nb_frames=16801
+       format|duration=358.445789
+     middle frame: luma mean 96 spread 34
+     events: none
+project.json: {"automaticCanvasVersion":1,"captureLedger":[{"clip":{"end":358.4519,"id":"F1F7F99C-DDC1-46BF-ACD7-2DA1D48B123E","sourceID":"82C6B2A2-093F-4FCA-980B-3CE858A16A16","start":0},"insertion":false}],"createdAt":8.170259299649999E8,"exportSettings":{"codec":"H.264","frameRate":30,"resolution":"Project size"},"historyCursor":0,"id":"8F213D1A-A7B5-4BA7-AB27-3651508CF863","recordingHistoryVersion":1,"schemaVersion":6,"snapshotFiles":["e5480d10a3e26bc770386ed9ad2f6d5aaff34e33d974dc85d7b15a046c80e887.json"],"sources":[{"duration":358.4519,"filename":"take-20261122-083850-1.mp4","id":"82C6B2A2-093F-4FCA-980B-3CE858A16A16","recordedAt":8.17026291924E8,"sha256":"14f2c0c256cfaa91974fb36904104d95a7030fb2959006cd21312f8522a2d92f"}],"title":"nov 22 · 08:38","updatedAt":8.17026291925E8}
+tap  Edit
+editor: 0:00.00 / 5:58.14 | Add bookmark | Editor settings | Enhance | Export | Next cut | Pauses | Play | Preview. Tap to play or pause. | Previous cut | Redo | Speed | Split | Start | Undo | Volume | nov 22 · 08:38 | ‹ Projects
+shot editor  luma mean 50 spread 59
+tap  Play
+screen changing during playback: 3 of 3 readings
+shot editor-playing  luma mean 51 spread 54
+tap  Pause (same button)
+paused at: 0:40.29 / 5:58.14
+after playing: 0:40.29 / 5:58.14 | Add bookmark | Editor settings | Enhance | Export | Next cut | Pauses | Play | Preview. Tap to play or pause. | Previous cut | Redo | Speed | Split | Start | Undo | Volume | nov 22 · 08:38 | ‹ Projects
+tap  Split
+tap  Undo
+tap  Redo
+shot editor-after-split  luma mean 57 spread 61
+tap  Speed
+tap  Speed 2 times
+tap  Done
+after Speed: 0:40.29 / 2:59.07 | Add bookmark | Editor settings | Enhance | Export | Next cut | Pauses | Play | Preview. Tap to play or pause. | Previous cut | Redo | Speed | Speed 2× · Undo available | Split | Start | Undo | Volume | nov 22 · 08:38 | ‹ Projects
+tap  Mirror
+tap  Flip left
+tap  Done
+tap  Crop
+tap  Video shape 1:1
+tap  Done
+tap  Color
+tap  Look Cinema
+tap  Done
+after Color: 0:40.29 / 2:59.07 | Add bookmark | Color | Crop | Editor settings | Effects | Export | Look Cinema · Undo available | Mirror | Next cut | Play | Preview. Tap to play or pause. | Previous cut | Redo | Speed | Text | Transition | Undo | nov 22 · 08:38 | ‹ Projects
+tap  Effects
+tap  Add Auto Background
+shot editor-auto-background  luma mean 39 spread 38
+tap  Remove
+Background drawn and removed: 0:40.29 / 2:59.07 | Add Auto Background | Add Bleach Bypass | Add Chroma Key | Add Color Correction | Add Color Isolation | Add Crash Zoom | Add Day for Night | Add Dolly Zoom | Add Expressionism | Add Kaleidoscope | Add Negative Strobe | Add Night fix | Add Noir | Add RGB Offset | Add Silent Tint | Add Three-Strip | Add bookmark | Add · Background | Add · Camera | Add · Color & tone | Add · Quantization | Animate | Auto Background removed · Undo available | Color | Crop | Done | Editor settings | Effects | Effects · whole project | Export | Mirror | Next cut | No effects on whole project. Add one below. | Play | Previous cut | Redo | Speed | Text | Transition | Undo | nov 22 · 08:38 | ‹ Projects
+tap  Add Noir
+shot editor-effects  luma mean 37 spread 35
+tap  Done
+after Effects: 0:40.29 / 2:59.07 | Add bookmark | Color | Crop | Editor settings | Effects | Export | Mirror | Next cut | Noir added · Undo available | Play | Preview. Tap to play or pause. | Previous cut | Redo | Speed | Text | Transition | Undo | nov 22 · 08:38 | ‹ Projects
+tap  Text
+tap  Style Box
+tap  Colour Yellow
+tap  Done
+after Text: 0:40.29 / 2:59.07 | Add bookmark | Color | Crop | Editor settings | Effects | Export | Mirror | Next cut | Play | Preview. Tap to play or pause. | Previous cut | Redo | Speed | Text | Text colour · Undo available | Transition | Undo | nov 22 · 08:38 | ‹ Projects
+tap  Previous cut
+tap  Transition
+tap  Transition style Dissolve
+transition: dissolve, before (20.5, 179.23333333333332) after (20.233333333333334, 178.73333333333332)
+shot editor-transition  luma mean 37 spread 43
+tap  Done with transition
+tap  Add photo
+tap  yourec-photo.jpg
+after Add photo: 0:20.07 / 3:01.22 | Add audio | Add bookmark | Add photo | Add video | Editor settings | Export | Next cut | Photo added at the end of the project · Undo available | Placement | Play | Preview. Tap to play or pause. | Previous cut | Record | Redo | Undo | nov 22 · 08:38 | ‹ Projects
+tap  Previous cut
+tap  Image
+tap  yourec-photo.jpg
+tap  Image on screen for 2 seconds
+after Image: 0:20.00 / 3:01.22 | 100% | 40% | 50% | Across | Add bookmark | Cover | Done with image | Down | Editor settings | Export | Image | Image duration · Undo available | Image on screen for 1 seconds | Image on screen for 2 seconds, selected | Image on screen for 3 seconds | Image on screen for 4 seconds | Image on screen for 5 seconds | Image on screen for 6 seconds | Image on screen for 7 seconds | Image on screen for 8 seconds | Next cut | Opacity | Placement | Play | Preview. Tap to play or pause. | Previous cut | Redo | Remove image | Size | Subtitles | Text | Transition | Undo | nov 22 · 08:38 | ‹ Projects
+shot editor-image  luma mean 31 spread 38
+tap  Done with image
+tap  Enhance
+tap  Add Noise reduction
+tap  Noise reduction model DeepFilterNet3
+shot editor-enhance  luma mean 35 spread 43
+tap  Apply enhance audio
+after Enhance (142 s of processing): 0:20.00 / 3:01.22 | Add bookmark | Audio enhanced · Undo available | Editor settings | Enhance | Export | Next cut | Pauses | Play | Preview. Tap to play or pause. | Previous cut | Redo | Speed | Split | Start | Undo | Volume | nov 22 · 08:38 | ‹ Projects
+tap  Previous cut
+tap  Previous cut
+tap  Start
+tap  Next cut
+tap  End
+tap  Censor
+tap  Apply censor
+censored 0.00-20.00
+shot editor-after-tools  luma mean 36 spread 54
+tap  Export
+tap  Export
+export: 0:20.00 / 3:01.22 | 1080 × 1080 · 30 fps · H.264 · 152 MB | Add bookmark | Censored · Undo available | Close | Color | Crop | Editor settings | Effects | Export | Export finished | Mirror | Next cut | Play | Preview. Tap to play or pause. | Previous cut | Redo | Save to gallery | Share | Speed | Text | Transition | Undo | nov 22 · 08:38 | ‹ Projects
+shot export  luma mean 38 spread 51
+     YouRec-20261122-085951.mp4
+       stream|codec_name=aac|codec_type=audio|sample_rate=48000|channels=2|r_frame_rate=0/0|start_time=0.000000|duration=181.781333|nb_frames=8521
+       stream|codec_name=h264|codec_type=video|width=1080|height=1080|r_frame_rate=30/1|start_time=0.000000|duration=181.733333|nb_frames=5452
+       format|duration=181.781333
+     middle frame: luma mean 48 spread 54
+dissolve at 20.23 s (overlap 0.50 s): luma mean 62 spread 68
+censored range 0.05-19.95 s: RMS ['-21.031183'] dB
+Noir at 0.30 s: 100% of the frame is neutral grey
+enhanced audio cache:
+total 134556
+-rw------- 1 u0_a635 u0_a635_cache 137645536 2026-11-22 08:56 52638e23713935a6830024e4898fd6aeb368ca9c7046ae88ef118106a4022f11.f32
+
+tap  Close
+tap  Cover
+tap  Frame at 
+cover: Cover image, 1080 × 1080 pixels
+shot cover  luma mean 35 spread 44
+tap  Share JPEG
+cover JPEG: nov 22 · 08-38 - 0-03.33.jpg 1080,1080, luma mean 39 spread 48
+tap  Previous cut
+tap  Start
+tap  Previous cut
+tap  Next cut
+tap  End
+tap  Copy
+tap  Paste
+clipboard: before (0.0, 181.73333333333332), marked to (20.0, 181.73333333333332), after paste (20.0, 201.7) | 0:20.00 / 3:21.21 | Add bookmark | Copy | Cut | Delete | Editor settings | Export | Move | Next cut | Paste | Pasted · Undo available | Play | Preview. Tap to play or pause. | Previous cut | Redo | Split | Start | Undo | nov 22 · 08:38 | ‹ Projects
+shot editor-after-paste  luma mean 40 spread 57
+tap  Pauses
+tap  Find pauses
+pauses: None
+FAIL: pause detection did not finish. On screen: 00:38 | Assistenza chiamate | Audio Emoji | Cellulare ‪+39 388 432 0401‬ | Chiamata HD | Foto contatto per Francesca Patanè | Francesca Patanè | Mostra altro | Silenzia | Tastierino | Termina chiamata | Videochiamata | Vivavoce
+FAIL: the 'Record' tool was not found. On screen: 01:53 | Assistenza chiamate | Audio Emoji | Cellulare ‪+39 388 432 0401‬ | Chiamata HD | Foto contatto per Francesca Patanè | Francesca Patanè | Mostra altro | Silenzia | Tastierino | Termina chiamata | Videochiamata | Vivavoce
+FAIL: 'Record into this project' did not appear within 40 s. On screen: 02:39 | Assistenza chiamate | Audio Emoji | Cellulare ‪+39 388 432 0401‬ | Chiamata HD | Foto contatto per Francesca Patanè | Francesca Patanè | Mostra altro | Silenzia | Tastierino | Termina chiamata | Videochiamata | Vivavoce
+shot recorder-not-ready-again  luma mean 43 spread 43
+==== APP LOG ====
+--------- beginning of main
+11-22 08:44:49.224  8706  8745 W YouRec  : encoder detached: 10747 frames submitted, slowest 16 ms, camera lag 113 ms
+11-22 08:44:49.309  8706  9243 W YouRec  : segment take-20261122-083850-1.mp4: 10747 frames to 358418 ms (ended true), sound to 358400 ms (ended true)
+11-22 08:54:00.415  8706  8706 W YouRec  : enhance: 1 stages on 2 sound parts, changed true
+
+RESULT: 11 failure(s)
+- 'Stop recording' did not appear within 10 s. On screen: 
+- 'Add recording bookmark' did not appear within 20 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Saving | Saving recording | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+- 'Pause recording' did not appear within 20 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+- 'Resume recording' did not appear within 60 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+- 'Resume recording' did not appear within 20 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+- 'Stop recording' did not appear within 10 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+- 'Stop recording' did not appear within 20 s. On screen: 0.5 times zoom | 1 times zoom | 10 times zoom | 2 times zoom | 3 times zoom | 5 times zoom | Autofocus | Camera settings | Camera, Back | Edit this project | MIC | Microphone: Phone microphone (back) | Phone microphone (back) | Projects | Ready to continue recording, 5:58 captured | Record into this project | Switch to front camera, Front | Zoom transition duration, Instant | Zoom, 2 times
+- expected two segments (before and after the pause), found 1
+- pause detection did not finish. On screen: 00:38 | Assistenza chiamate | Audio Emoji | Cellulare ‪+39 388 432 0401‬ | Chiamata HD | Foto contatto per Francesca Patanè | Francesca Patanè | Mostra altro | Silenzia | Tastierino | Termina chiamata | Videochiamata | Vivavoce
+- the 'Record' tool was not found. On screen: 01:53 | Assistenza chiamate | Audio Emoji | Cellulare ‪+39 388 432 0401‬ | Chiamata HD | Foto contatto per Francesca Patanè | Francesca Patanè | Mostra altro | Silenzia | Tastierino | Termina chiamata | Videochiamata | Vivavoce
+- 'Record into this project' did not appear within 40 s. On screen: 02:39 | Assistenza chiamate | Audio Emoji | Cellulare ‪+39 388 432 0401‬ | Chiamata HD | Foto contatto per Francesca Patanè | Francesca Patanè | Mostra altro | Silenzia | Tastierino | Termina chiamata | Videochiamata | Vivavoce

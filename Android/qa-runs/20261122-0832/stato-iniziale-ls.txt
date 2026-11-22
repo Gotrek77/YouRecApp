@@ -1,0 +1,10 @@
+/sdcard/Android/data/com.antirez.yourec/files:
+total 6
+drwxrws--- 2 u0_a629 ext_data_rw 3452 2026-11-17 14:26 Projects
+drwxrws--- 2 u0_a629 ext_data_rw 3452 2026-11-17 14:26 RecentlyDeleted
+
+/sdcard/Android/data/com.antirez.yourec/files/Projects:
+total 0
+
+/sdcard/Android/data/com.antirez.yourec/files/RecentlyDeleted:
+total 0
