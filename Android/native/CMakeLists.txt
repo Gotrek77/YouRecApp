@@ -18,6 +18,9 @@ target_include_directories(yourec PRIVATE ${RNNOISE} ${RNNOISE}/include ${RNNOIS
 set_target_properties(yourec PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 target_compile_options(yourec PRIVATE -O2 -Wno-unused-parameter)
 target_link_libraries(yourec m)
+# 16 KB pages (Android 15+ on recent Pixels): segments aligned so the system
+# loads the library without its compatibility warning.
+target_link_options(yourec PRIVATE "-Wl,-z,max-page-size=16384" "-Wl,-z,common-page-size=16384")
 
 set(QWEN ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/qwen-asr)
 add_library(qwenasr STATIC
