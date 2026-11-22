@@ -38,6 +38,8 @@ def fail(message):
 
 RECORD_BUTTON = None   # centre of the record/stop button, learnt while the recorder is idle
 BUSY = False           # the last dump failed because the window never went idle
+RECORDING = False      # a take is running: its clock keeps the window from going idle
+SWITCH_BUTTON = None   # centre of the camera switch, learnt while the recorder is idle
 
 def nodes(tries=6):
     """Every on-screen control with a name: (name, text, enabled, centre)."""
@@ -53,11 +55,12 @@ def nodes(tries=6):
         # The recording clock changes every second; recent uiautomator waits for a
         # full second of quiet and never gets it ("could not get idle state", on
         # stdout or stderr by version). Two refusals in a row are enough to tell.
-        if attempt >= 1:
+        if attempt >= 1 and RECORDING:
             BUSY = True
             return []
         time.sleep(0.7)   # the window was not idle: a meter or timer was changing
     else:
+        BUSY = RECORDING
         return []
     found = []
     for node in ET.fromstring(xml).iter("node"):
@@ -70,6 +73,9 @@ def nodes(tries=6):
             if name in ("Record a new project", "Record into this project", "Stop recording", "Resume recording"):
                 global RECORD_BUTTON
                 RECORD_BUTTON = found[-1][3]
+            if name.startswith("Switch to"):
+                global SWITCH_BUTTON
+                SWITCH_BUTTON = found[-1][3]
     return found
 
 def recording_control(label):
@@ -79,6 +85,8 @@ def recording_control(label):
     if not BUSY or not RECORD_BUTTON:
         return None
     width = int(re.findall(r"(\d+)x\d+", adb("shell", "wm", "size"))[-1])
+    if label == "Switch to":
+        return SWITCH_BUTTON and (label, "", True, SWITCH_BUTTON)
     x = {"Stop recording": RECORD_BUTTON[0], "Pause recording": round(width * 0.152),
          "Add recording bookmark": round(width * 0.848)}.get(label)
     return None if x is None else (label, "", True, (x, RECORD_BUTTON[1]))
@@ -109,6 +117,11 @@ def tap(label, seconds=20, last=False):
         return False
     adb("shell", "input", "tap", str(node[3][0]), str(node[3][1]))
     note("tap  " + label)
+    global RECORDING
+    if label in ("Record a new project", "Record into this project", "Resume recording"):
+        RECORDING = True
+    elif label in ("Stop recording", "Pause recording"):
+        RECORDING = False
     time.sleep(0.8)
     return True
 
@@ -259,7 +272,7 @@ def main():
     time.sleep(4)
     wait("Stop recording", 10)
     shot("recording")
-    flip = find("Switch to")
+    flip = find("Switch to") or recording_control("Switch to")
     if flip and flip[2]:
         tap("Switch to"); time.sleep(4)
         wait("Stop recording", 10); shot("recording-after-switch")
