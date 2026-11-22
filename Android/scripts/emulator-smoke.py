@@ -36,15 +36,26 @@ def fail(message):
     failures.append(message)
     note("FAIL: " + message)
 
+RECORD_BUTTON = None   # centre of the record/stop button, learnt while the recorder is idle
+BUSY = False           # the last dump failed because the window never went idle
+
 def nodes(tries=6):
     """Every on-screen control with a name: (name, text, enabled, centre)."""
+    global BUSY
     for attempt in range(tries):
         # Remove the last dump first: a failed dump must not be mistaken for the screen.
         adb("shell", "rm", "-f", "/sdcard/yourec-ui.xml")
-        adb("shell", "uiautomator", "dump", "/sdcard/yourec-ui.xml")
+        result = adb("shell", "uiautomator", "dump", "/sdcard/yourec-ui.xml")
         xml = adb("shell", "cat", "/sdcard/yourec-ui.xml")
         if xml.startswith("<?xml"):
+            BUSY = False
             break
+        # The recording clock changes every second; recent uiautomator waits for a
+        # full second of quiet and never gets it ("could not get idle state", on
+        # stdout or stderr by version). Two refusals in a row are enough to tell.
+        if attempt >= 1:
+            BUSY = True
+            return []
         time.sleep(0.7)   # the window was not idle: a meter or timer was changing
     else:
         return []
@@ -56,7 +67,21 @@ def nodes(tries=6):
         if (name or text) and len(box) == 4:
             x1, y1, x2, y2 = map(int, box)
             found.append((name, text, node.get("enabled") == "true", ((x1 + x2) // 2, (y1 + y2) // 2)))
+            if name in ("Record a new project", "Record into this project", "Stop recording", "Resume recording"):
+                global RECORD_BUTTON
+                RECORD_BUTTON = found[-1][3]
     return found
+
+def recording_control(label):
+    """While a take runs no dump succeeds: the recording controls are found from
+    where the record button was seen. Stop is that button; Pause and the
+    bookmark sit on its row at the measured fractions of the screen width."""
+    if not BUSY or not RECORD_BUTTON:
+        return None
+    width = int(re.findall(r"(\d+)x\d+", adb("shell", "wm", "size"))[-1])
+    x = {"Stop recording": RECORD_BUTTON[0], "Pause recording": round(width * 0.152),
+         "Add recording bookmark": round(width * 0.848)}.get(label)
+    return None if x is None else (label, "", True, (x, RECORD_BUTTON[1]))
 
 def find(label, last=False, exact=False):
     matches = [n for n in nodes() if (n[0] == label or n[1] == label if exact else n[0].startswith(label) or n[1].startswith(label))]
@@ -67,6 +92,10 @@ def wait(label, seconds=20, enabled=True):
     while time.time() < deadline:
         node = find(label)
         if node and (node[2] or not enabled):
+            return node
+        node = recording_control(label)
+        if node:
+            note("(%s at %s, from the record button: the window never went idle)" % (label, node[3]))
             return node
         time.sleep(1)
     fail("'%s' did not appear within %d s. On screen: %s" % (label, seconds, describe()))
