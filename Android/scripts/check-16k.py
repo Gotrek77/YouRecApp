@@ -14,7 +14,10 @@ with zipfile.ZipFile(sys.argv[1]) as apk:
         ok = min(aligns) >= 16384
         # Stored uncompressed libraries must also start on a 16 KB boundary in the APK.
         stored = info.compress_type == zipfile.ZIP_STORED
-        offset = info.header_offset + 30 + len(info.filename.encode()) + len(info.extra)
+        # The data starts after the local header, whose extra field (zipalign's padding) can differ from the central one.
+        with open(sys.argv[1], "rb") as raw:
+            raw.seek(info.header_offset + 26); name_length, extra_length = struct.unpack("<HH", raw.read(4))
+        offset = info.header_offset + 30 + name_length + extra_length
         if stored and offset % 16384: ok = False
         failed |= not ok
         print("%s %-55s LOAD align %s%s" % ("ok  " if ok else "FAIL", info.filename, hex(min(aligns)), " offset %d" % offset if stored else ""))
