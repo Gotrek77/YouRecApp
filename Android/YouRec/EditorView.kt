@@ -101,14 +101,16 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         store.observe(this) { if (visible) reload() }
         Exports.clean(store.exportsFolder(project ?: return))
         reload()
+        editor.resume()
     }
     override fun disappear() {
         visible = false
         store.stopObserving(this)
-        // The recorder, another app or an export may need the decoders this screen holds.
-        editor.suspend()
         cancelMove()
         closePanel()
+        // The recorder, another app or an export may need the decoders this screen holds.
+        // Last: closing a panel lets the preview draw again.
+        editor.suspend()
     }
     override fun back(): Boolean {
         if (panel.childCount > 0) { closePanel(); return true }
@@ -432,6 +434,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
     private fun showPanel(content: View) {
         releaseCover()
         panel.removeAllViews()
+        editor.resume()
         content.setPadding(Design.dp(context, 16f), Design.dp(context, 12f), Design.dp(context, 16f), Design.dp(context, 16f))
         content.background = Design.rounded(Design.surface, Design.dp(context, 16f).toFloat())
         panel.addView(content, Design.frame(height = ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -439,6 +442,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
     private fun closePanel() {
         releaseCover()
         panel.removeAllViews()
+        editor.resume()
         // A control released outside its track may have left a draft on screen.
         project?.let { if (it.deferredHistory == null) editor.show(it.edit) }
     }

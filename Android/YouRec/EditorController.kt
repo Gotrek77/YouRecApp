@@ -145,6 +145,7 @@ class EditorController {
     }
 
     fun seek(time: Double) {
+        held = false
         if (playing || playWhenReady) pause()
         playhead = time.coerceIn(0.0, duration)
         requestDraw()
@@ -153,6 +154,7 @@ class EditorController {
     fun togglePlay() { if (playing || playWhenReady) pause() else play() }
     fun play() {
         val plan = audioPlan ?: return; val files = audioSources ?: return
+        held = false
         if (playing || duration <= 0) return
         // Enhanced sound is heard once processed; until then play waits for it.
         if (preparing) { playWhenReady = true; onChange?.invoke(); return }
@@ -174,8 +176,12 @@ class EditorController {
         onChange?.invoke()
     }
     /// Another screen, another app or an export needs the hardware decoders.
-    /// They reopen on the next frame drawn.
-    fun suspend() { pause(); render.post { sources?.releaseFrames() } }
+    /// Nothing is drawn, so nothing reopens them, until resume(): a panel
+    /// resizing the preview must not take a decoder back from an export.
+    fun suspend() { held = true; pause(); render.post { sources?.releaseFrames() } }
+    /// The preview may draw again; its decoders reopen on the next frame.
+    fun resume() { held = false; requestDraw() }
+    private var held = false
     /// Leave the editor: stop playback and close every decoder.
     fun release() {
         pause()
@@ -193,6 +199,7 @@ class EditorController {
     // Many seeks can arrive per frame while scrubbing. Only the newest matters.
     private fun requestDraw() {
         wanted = playhead
+        if (held) return
         if (drawQueued) return
         drawQueued = true
         render.post { drawQueued = false; draw(wanted) }
