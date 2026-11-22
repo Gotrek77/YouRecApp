@@ -32,6 +32,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
     /// export (strict) fails instead of publishing a movie with missing pictures.
     fun frames(source: UUID, slot: Int = 0): FrameReader? {
         val key = source to slot
+        if (strict) used.add(key)
         frames[key]?.let { return it }
         if (source in failed) return null
         val file = file(source) ?: return null
@@ -53,6 +54,14 @@ class RenderSources(private val project: Project, private val folder: File, priv
         }
         frames[key] = reader
         return reader
+    }
+    private val used = HashSet<Pair<UUID, Int>>()
+    /// Export: close the decoders the frame just drawn did not need. An export
+    /// moves forward, so a take that has ended rarely comes back, and holding
+    /// its decoder only takes codec memory from the next one.
+    fun closeUnused() {
+        for (key in frames.keys.filter { it !in used }) try { frames.remove(key)?.release() } catch (e: Exception) { }
+        used.clear()
     }
     /// Close the readers of a source whose decoder failed or was reclaimed; the next frame reopens them.
     fun drop(source: UUID) { for (key in frames.keys.filter { it.first == source }) try { frames.remove(key)?.release() } catch (e: Exception) { } }
@@ -665,6 +674,7 @@ class MovieExport(project: Project, private val folder: File, private val export
                     throw ProjectError.InvalidMedia()
                 }
                 sources.drawCaptions(plan.captions(time), width, height)
+                sources.closeUnused()
                 val t1 = System.nanoTime()
                 egl.setPresentationTime(window, n * 1_000_000_000L / fps)
                 egl.swap(window)
