@@ -528,6 +528,9 @@ class RenderSources(private val project: Project, private val folder: File, priv
     /// Whether every chain of `timeline` is already processed.
     fun audioPrepared(timeline: TrackTimeline) = AudioEnhancements.unavailable(timeline) == null &&
         AudioEnhancements.requests(timeline).all { processedFile(it.source, it.effects)?.exists() != false }
+    /// The processed files `timeline` still needs, by name.
+    fun pendingAudio(timeline: TrackTimeline): List<String> =
+        AudioEnhancements.requests(timeline).mapNotNull { processedFile(it.source, it.effects)?.takeIf { f -> !f.exists() }?.name }
     /// Process every chain of `timeline` not yet processed. Slow: run it off the
     /// main thread and the playback thread. Throws for a stage this build cannot process.
     fun prepareAudio(timeline: TrackTimeline, progress: (Double) -> Unit = {}, cancelled: () -> Boolean = { false }) {

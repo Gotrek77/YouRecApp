@@ -66,10 +66,16 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         val transport = Design.row(context,
             Design.symbol(context, "⏮", "Previous cut", fill = 0) { jump(false) }, play,
             Design.symbol(context, "⏭", "Next cut", fill = 0) { jump(true) }, spacing = 12f, gravity = Gravity.CENTER)
-        val status = FrameLayout(context)
-        status.addView(time, Design.frame(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin = Design.dp(context, 12f) })
-        status.addView(transport, Design.frame(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
-        status.addView(Design.symbol(context, "◆", "Add bookmark", fill = 0) { addBookmark() }, Design.frame(Design.dp(context, 48f), Design.dp(context, 48f), Gravity.END or Gravity.CENTER_VERTICAL).apply { rightMargin = Design.dp(context, 8f) })
+        // Equal sides keep the transport centred; the time shrinks to its side instead of running under Previous cut.
+        val status = LinearLayout(context).apply { orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        time.maxLines = 1; time.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        time.setAutoSizeTextTypeUniformWithConfiguration(9, 15, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+        time.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or, _ -> if (r - l != or - ol) fitTime() }
+        status.addView(time, LayoutParams(0, Design.dp(context, 48f), 1f).apply { leftMargin = Design.dp(context, 12f); rightMargin = Design.dp(context, 4f) })
+        status.addView(transport, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val end = FrameLayout(context)
+        end.addView(Design.symbol(context, "◆", "Add bookmark", fill = 0) { addBookmark() }, Design.frame(Design.dp(context, 48f), Design.dp(context, 48f), Gravity.END or Gravity.CENTER_VERTICAL).apply { rightMargin = Design.dp(context, 8f) })
+        status.addView(end, LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = Design.dp(context, 16f) })
         addView(status, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         feedback.gravity = Gravity.CENTER; feedback.minHeight = Design.dp(context, 20f)
@@ -140,7 +146,10 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             else if (previous != null && feedback.text.toString() == previous) feedback.text = beforeAudioStatus
         }
         time.text = Design.timecode(editor.playhead) + " / " + Design.timecode(editor.duration)
-        play.text = if (editor.playing) "❚❚" else "▶"; play.contentDescription = if (editor.playing) "Pause" else "Play"
+        fitTime()
+        // Waiting for enhanced sound counts as playing: the button offers to cancel it.
+        val going = editor.playing || editor.waitingToPlay
+        play.text = if (going) "❚❚" else "▶"; play.contentDescription = if (going) "Pause" else "Play"
         timeline.playhead = editor.playhead; timeline.selected = selected
         timeline.invalidate()
         // Keep the screen awake while the movie plays.
@@ -157,6 +166,16 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         if (params.width != width || params.height != height) { params.width = width; params.height = height; preview.layoutParams = params }
     }
 
+    private val timeProbe = android.graphics.Paint()
+    /// One line while the readout fits at a readable size; on a narrow screen
+    /// with large text, the duration wraps under the position instead of being cut.
+    private fun fitTime() {
+        val room = time.width - time.totalPaddingLeft - time.totalPaddingRight
+        if (room <= 0) return
+        timeProbe.set(time.paint); timeProbe.textSize = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, 11f, resources.displayMetrics)
+        val lines = if (timeProbe.measureText(time.text.toString()) <= room) 1 else 2
+        if (time.maxLines != lines) time.maxLines = lines
+    }
     private fun select(ids: Set<UUID>) { selected = ids; rebuildTools(); refreshTransport() }
     private fun selection(edit: EditState) = edit.timeline.selection(selected)
     private fun say(message: String) { feedback.text = message }

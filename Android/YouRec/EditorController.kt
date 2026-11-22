@@ -76,27 +76,39 @@ class EditorController {
 
     /// Enhance audio processes whole sources before they can be heard: how far
     /// that has come, or why it could not be done. Null when there is nothing to say.
-    var audioStatus: String? = null; private set
+    val audioStatus: String? get() = preparationStatus?.let { if (playWhenReady) "$it · Plays when ready" else it }
+    private var preparationStatus: String? = null
+    /// Play was pressed while sound is still being processed: playback starts when it is ready.
+    val waitingToPlay: Boolean get() = playWhenReady
     private val preparer = java.util.concurrent.Executors.newSingleThreadExecutor()
     @Volatile private var preparation = 0
     private var preparing = false
     private var playWhenReady = false
+    // What the running preparation is producing, so an edit that leaves it unchanged does not restart it.
+    private var preparingFiles: RenderSources? = null
+    private var preparingWork: List<String>? = null
     private fun prepareAudio(files: RenderSources, timeline: TrackTimeline) {
+        val work = files.pendingAudio(timeline)
+        // A long DeepFilterNet3 pass survives edits that do not change the sound it is making.
+        // ponytail: a removed chain still finishes in the background; restart on removal if that CPU matters.
+        // Nothing left to make (Undo, Remove) falls through, so the job is cancelled and Play is free.
+        if (preparing && work.isNotEmpty() && files === preparingFiles && preparingWork?.containsAll(work) == true) return
         val generation = ++preparation
-        if (files.audioPrepared(timeline)) { preparing = false; audioStatus = null; return }
+        preparingFiles = files; preparingWork = work
+        if (files.audioPrepared(timeline)) { preparing = false; preparationStatus = null; return }
         preparing = AudioEnhancements.unavailable(timeline) == null
-        audioStatus = if (preparing) "Enhancing audio…" else AudioProcessingError.UnavailableModel().message
+        preparationStatus = if (preparing) "Enhancing audio…" else AudioProcessingError.UnavailableModel().message
         if (!preparing) return
         preparer.execute {
             var failure: String? = null
             try {
-                files.prepareAudio(timeline, { value -> main.post { if (generation == preparation) { audioStatus = "Enhancing audio " + (value * 100).toInt() + "%"; onChange?.invoke() } } },
+                files.prepareAudio(timeline, { value -> main.post { if (generation == preparation) { preparationStatus = "Enhancing audio " + (value * 100).toInt() + "%"; onChange?.invoke() } } },
                     { generation != preparation })
             } catch (e: AudioProcessingError.Cancelled) { return@execute
             } catch (e: Exception) { failure = (e.message ?: "The audio could not be enhanced.") + " The original sound plays instead." }
             main.post {
                 if (generation != preparation) return@post
-                preparing = false; audioStatus = failure; onChange?.invoke()
+                preparing = false; preparationStatus = failure; onChange?.invoke()
                 if (playWhenReady) { playWhenReady = false; play() }
             }
         }
@@ -133,12 +145,12 @@ class EditorController {
     }
 
     fun seek(time: Double) {
-        if (playing) pause()
+        if (playing || playWhenReady) pause()
         playhead = time.coerceIn(0.0, duration)
         requestDraw()
         onChange?.invoke()
     }
-    fun togglePlay() { if (playing) pause() else play() }
+    fun togglePlay() { if (playing || playWhenReady) pause() else play() }
     fun play() {
         val plan = audioPlan ?: return; val files = audioSources ?: return
         if (playing || duration <= 0) return
@@ -152,7 +164,8 @@ class EditorController {
         onChange?.invoke()
     }
     fun pause() {
-        playWhenReady = false
+        // Cancelling a wait for processed sound is a pause too: the button and message change back.
+        if (playWhenReady) { playWhenReady = false; if (!playing) { onChange?.invoke(); return } }
         if (!playing) return
         playing = false
         Choreographer.getInstance().removeFrameCallback(frameCallback)
