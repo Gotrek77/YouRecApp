@@ -40,11 +40,12 @@ class RenderSources(private val project: Project, private val folder: File, priv
         while (frames.size >= 6) { val oldest = frames.keys.first(); frames.remove(oldest)?.release() }
         val reader = try { FrameReader(file) } catch (e: Exception) {
             // A decoder that will not start is usually out of codec memory, not a bad
-            // file: close the ones held here and try once more before giving up.
+            // file: close the ones held here and try once more before giving up. An export
+            // keeps the readers this frame already uses (a dissolve draws two).
             android.util.Log.w("YouRec", "decoder for ${file.name} did not start with ${frames.size} open: ${e.message}")
-            if (frames.isNotEmpty()) {
-                for (open in frames.values) try { open.release() } catch (ignored: Exception) { }
-                frames.clear()
+            val idle = frames.keys.filter { it !in used }
+            if (idle.isNotEmpty()) {
+                for (open in idle) try { frames.remove(open)?.release() } catch (ignored: Exception) { }
                 try { FrameReader(file) } catch (again: Exception) { null }
             } else null
         } ?: run {
