@@ -5,6 +5,7 @@ local.properties
 *.aab
 *.jks
 *.keystore
+!debug.keystore
 .idea/
 *.iml
 .kotlin/

@@ -32,7 +32,19 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    // One debug key for every build, here and in CI: each runner would otherwise
+    // make its own, and a phone refuses to update over a differently signed APK.
+    // It signs debug builds only and is no secret.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
     buildTypes {
+        debug { signingConfig = signingConfigs.getByName("debug") }
         release { isMinifyEnabled = false }
     }
     lint { abortOnError = false }
