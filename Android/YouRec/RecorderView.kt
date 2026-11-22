@@ -222,7 +222,7 @@ class RecorderView(context: Context, private val store: ProjectStore, private va
     private fun showMicrophone() {
         val audio = capture.audio
         val name = if (!audio.running) "No microphone" else if (audio.stalled) "No signal" else if (audio.silenced) "In use by another app" else audio.activeName
-        microphoneName.text = name
+        microphoneName.show(name)
         microphoneName.setTextColor(if (name == audio.activeName && audio.running) Design.text else Design.warning)
         microphone.contentDescription = "Microphone: $name"
         if (!audio.running || audio.stalled) { meter.show(CaptureAudio.floor, CaptureAudio.floor, false); clip.visibility = INVISIBLE }
@@ -236,12 +236,12 @@ class RecorderView(context: Context, private val store: ProjectStore, private va
         val recording = capture.state == CaptureController.State.Recording
         val total = if (capture.hasTake) takeBase + capture.elapsed else current()?.capturedDuration ?: 0.0
         // Words and a shape, not only red: the state must read without colour.
-        status.text = when (capture.state) {
+        status.show(when (capture.state) {
             CaptureController.State.Recording -> "● REC  " + Design.clock(total)
             CaptureController.State.Paused -> "❚❚ PAUSED  " + Design.clock(total)
             CaptureController.State.Saving -> "Saving…"
             else -> Design.clock(total)
-        }
+        })
         status.setTextColor(if (recording) Design.recording else if (capture.state == CaptureController.State.Paused) Design.accent else Design.text)
         status.contentDescription = when (capture.state) {
             CaptureController.State.Recording -> "Recording, " + Design.clock(total)
@@ -250,6 +250,10 @@ class RecorderView(context: Context, private val store: ProjectStore, private va
             else -> if (total > 0) "Ready to continue recording, " + Design.clock(total) + " captured" else "Ready to record"
         }
     }
+
+    // The clock runs four times a second: an unchanged text must not relayout the
+    // screen or tell accessibility services (TalkBack, UI tests) that it changed.
+    private fun TextView.show(value: String) { if (text.toString() != value) text = value }
 
     private fun enable(view: View, on: Boolean) { view.isEnabled = on; view.alpha = if (on) 1f else 0.4f }
 
@@ -274,7 +278,7 @@ class RecorderView(context: Context, private val store: ProjectStore, private va
             else -> if (current() != null) "Record into this project" else "Record a new project"
         }
         pause.visibility = if (state == CaptureController.State.Recording || state == CaptureController.State.Paused) VISIBLE else INVISIBLE
-        pause.text = if (state == CaptureController.State.Paused) "■" else "❚❚"
+        pause.show(if (state == CaptureController.State.Paused) "■" else "❚❚")
         pause.contentDescription = if (state == CaptureController.State.Paused) "Finish paused recording" else "Pause recording"
         bookmark.visibility = if (state == CaptureController.State.Recording) VISIBLE else INVISIBLE
 
@@ -283,7 +287,7 @@ class RecorderView(context: Context, private val store: ProjectStore, private va
         enable(flip, !capture.switching && opposite != null && state != CaptureController.State.Saving)
         flip.contentDescription = if (opposite == null) "Switch camera" else "Switch to " + (if (opposite.front) "front" else "back") + " camera, " + opposite.name
         enable(cameraName, !capture.switching && state != CaptureController.State.Saving)
-        cameraName.text = if (capture.switching) "Switching…" else (camera?.name ?: "Camera") + " ▾"
+        cameraName.show(if (capture.switching) "Switching…" else (camera?.name ?: "Camera") + " ▾")
         cameraName.contentDescription = "Camera, " + (camera?.name ?: "unavailable")
 
         if (camera?.id != shownCamera) { shownCamera = camera?.id; buildPresets(camera) }
@@ -294,12 +298,12 @@ class RecorderView(context: Context, private val store: ProjectStore, private va
             val selected = abs((button.tag as Double) - shown) < 0.04
             button.setTextColor(if (selected) Design.accent else Design.text); button.isSelected = selected
         }
-        zoomReadout.text = CaptureController.magnification(shown)
+        zoomReadout.show(CaptureController.magnification(shown))
         zoomReadout.contentDescription = "Zoom, " + CaptureController.magnification(shown).replace("×", " times")
         showDuration()
 
         enable(focus, usable && camera?.fixedFocus == false)
-        focus.text = if (camera?.fixedFocus != false) "FIXED" else if (capture.focusLocked) "AF LOCK" else "AF"
+        focus.show(if (camera?.fixedFocus != false) "FIXED" else if (capture.focusLocked) "AF LOCK" else "AF")
         focus.setTextColor(if (capture.focusLocked) Design.accent else Design.text)
         focus.contentDescription = if (camera?.fixedFocus != false) "Fixed focus" else if (capture.focusLocked) (if (camera.manualFocus) "Manual focus" else "Focus locked") else "Autofocus"
 
