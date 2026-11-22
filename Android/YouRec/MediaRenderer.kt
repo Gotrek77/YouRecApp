@@ -35,9 +35,18 @@ class RenderSources(private val project: Project, private val folder: File, priv
         frames[key]?.let { return it }
         if (source in failed) return null
         val file = file(source) ?: return null
-        // Hardware decoders are a scarce system resource: keep four at most.
+        // Hardware decoders are a scarce system resource: keep six at most.
         while (frames.size >= 6) { val oldest = frames.keys.first(); frames.remove(oldest)?.release() }
         val reader = try { FrameReader(file) } catch (e: Exception) {
+            // A decoder that will not start is usually out of codec memory, not a bad
+            // file: close the ones held here and try once more before giving up.
+            android.util.Log.w("YouRec", "decoder for ${file.name} did not start with ${frames.size} open: ${e.message}")
+            if (frames.isNotEmpty()) {
+                for (open in frames.values) try { open.release() } catch (ignored: Exception) { }
+                frames.clear()
+                try { FrameReader(file) } catch (again: Exception) { null }
+            } else null
+        } ?: run {
             if (strict) throw ProjectError.InvalidMedia()
             // Remember the failure: retrying on every frame would stall the preview.
             failed.add(source); return null
@@ -651,7 +660,10 @@ class MovieExport(project: Project, private val folder: File, private val export
                 val t0 = System.nanoTime()
                 FrameProgram.clear(width, height)
                 // A take that yields no picture must not become a black movie.
-                if (!sources.draw(plan.layers(time), program, width, height, plan.transition(time), fps.toDouble())) throw ProjectError.InvalidMedia()
+                if (!sources.draw(plan.layers(time), program, width, height, plan.transition(time), fps.toDouble())) {
+                    android.util.Log.w("YouRec", "export frame $n at ${time.seconds} s has no picture: " + plan.layers(time).joinToString { "${it.picture.source} @ ${it.picture.sourceTime} slot ${it.slot}" })
+                    throw ProjectError.InvalidMedia()
+                }
                 sources.drawCaptions(plan.captions(time), width, height)
                 val t1 = System.nanoTime()
                 egl.setPresentationTime(window, n * 1_000_000_000L / fps)
