@@ -84,9 +84,9 @@ class YouRecActivity : Activity(), Navigation {
         show(view)
     }
 
-    override fun onResume() { super.onResume(); resumed = true; (current as? Screen)?.appear() }
+    override fun onResume() { super.onResume(); resumed = true; (current as? Screen)?.appear(); TestControls.start(this) }
     // Another app, a call or the lock screen: give up the camera and stop playback at once.
-    override fun onPause() { resumed = false; (current as? Screen)?.disappear(); super.onPause() }
+    override fun onPause() { resumed = false; TestControls.stop(this); (current as? Screen)?.disappear(); super.onPause() }
     override fun onDestroy() { editor?.release(); super.onDestroy() }
     @Deprecated("Deprecated in the platform; still the callback available from API 29.")
     override fun onBackPressed() {
@@ -182,4 +182,38 @@ class ExportProvider : ContentProvider() {
     override fun insert(uri: Uri, values: ContentValues?): Uri? = null
     override fun delete(uri: Uri, selection: String?, arguments: Array<out String>?) = 0
     override fun update(uri: Uri, values: ContentValues?, selection: String?, arguments: Array<out String>?) = 0
+}
+
+/// Debug builds only: the device test (scripts/emulator-smoke.py) asks for the
+/// named controls on screen with a broadcast and reads them from a file, in
+/// uiautomator's XML form. uiautomator itself cannot read a phone's screen while
+/// a take records (the preview and meters never let the window settle).
+object TestControls {
+    private var receiver: android.content.BroadcastReceiver? = null
+    fun start(activity: Activity) {
+        if (activity.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE == 0 || receiver != null) return
+        val r = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
+                val out = StringBuilder("<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy>")
+                val at = IntArray(2)
+                fun escape(text: CharSequence) = text.toString().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+                fun walk(view: android.view.View) {
+                    if (!view.isShown) return
+                    view.getLocationOnScreen(at)
+                    val name = view.contentDescription ?: ""; val text = (view as? android.widget.TextView)?.text ?: ""
+                    if (name.isNotEmpty() || text.isNotEmpty())
+                        out.append("<node content-desc=\"").append(escape(name)).append("\" text=\"").append(escape(text)).append("\" enabled=\"").append(view.isEnabled)
+                            .append("\" bounds=\"[").append(at[0]).append(',').append(at[1]).append("][").append(at[0] + view.width).append(',').append(at[1] + view.height).append("]\" />")
+                    if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+                }
+                walk(activity.window.decorView)
+                out.append("</hierarchy>")
+                java.io.File(activity.getExternalFilesDir(null), "test-controls.xml").writeText(out.toString())
+            }
+        }
+        receiver = r
+        if (android.os.Build.VERSION.SDK_INT >= 33) activity.registerReceiver(r, android.content.IntentFilter("yourec.TEST_CONTROLS"), android.content.Context.RECEIVER_EXPORTED)
+        else activity.registerReceiver(r, android.content.IntentFilter("yourec.TEST_CONTROLS"))
+    }
+    fun stop(activity: Activity) { receiver?.let { try { activity.unregisterReceiver(it) } catch (e: Exception) { } }; receiver = null }
 }

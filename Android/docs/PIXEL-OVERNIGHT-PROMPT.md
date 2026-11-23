@@ -23,17 +23,6 @@ Prima di lanciarlo, decidi la riga `DATI_SACRIFICABILI` qui sotto: con `no`
 (predefinito) la sessione non disinstalla mai l'app e salta i test che lo fanno
 se sul telefono ci sono già progetti YouRec.
 
----8<---$/,$p' Android/docs/PIXEL-OVERNIGHT-PROMPT.md | tail -n +2 | \
-  claude -p --allowedTools "Bash(adb *)" "Bash(python3 *)" "Bash(ffprobe *)" "Bash(ffmpeg *)" \
-  "Bash(./gradlew *)" "Bash(git log *)" "Bash(git rev-parse *)" "Bash(git status *)" "Bash(gh run *)" \
-  "Bash(mkdir *)" "Bash(ls *)" "Bash(sha256sum *)" "Bash(sleep *)" "Bash(tar *)" "Bash(cat *)" "Bash(cp *)" \
-  "Read" "Write" "Glob" "Grep" 2>&1 | tee pixel-run.log
-```
-
-Prima di lanciarlo, decidi la riga `DATI_SACRIFICABILI` qui sotto: con `no`
-(predefinito) la sessione non disinstalla mai l'app e salta i test che lo fanno
-se sul telefono ci sono già progetti YouRec.
-
 ---8<---
 Sei in una sessione autonoma e non presidiata, di notte. Il Pixel è collegato via
 USB a questo PC. Il tuo compito: eseguire sul telefono tutti i test sul

@@ -41,14 +41,63 @@ BUSY = False           # the last dump failed because the window never went idle
 RECORDING = False      # a take is running: its clock keeps the window from going idle
 SWITCH_BUTTON = None   # centre of the camera switch, learnt while the recorder is idle
 
+def app_controls():
+    """Debug builds list their named controls on request, in uiautomator's form:
+    the fallback when the window never goes idle (a phone's preview while recording)."""
+    adb("shell", "rm", "-f", FILES + "/test-controls.xml")
+    # Foreground delivery: a background broadcast can wait in the queue for many seconds.
+    try: adb("shell", "am", "broadcast", "-f", "0x10000000", "-a", "yourec.TEST_CONTROLS", "-p", PACKAGE, timeout=20)
+    except subprocess.TimeoutExpired: return ""
+    for _ in range(10):
+        time.sleep(0.3)
+        xml = adb("shell", "cat", FILES + "/test-controls.xml")
+        if xml.startswith("<?xml") and xml.rstrip().endswith("</hierarchy>"):
+            return xml
+    return ""
+
+DIALOGS = 0   # system "isn't responding" dialogs closed so far
+
 def nodes(tries=6):
-    """Every on-screen control with a name: (name, text, enabled, centre)."""
+    """Every on-screen control with a name: (name, text, enabled, centre).
+    A system "isn't responding" dialog over the app is closed first: on a freshly
+    booted emulator the launcher's comes back again and again, and covers the app."""
+    global DIALOGS
+    for attempt in range(4):
+        found = screen(tries)
+        if not any("isn't responding" in (n[0] or n[1]) for n in found) or DIALOGS >= 12:
+            return found
+        DIALOGS += 1
+        note("system dialog: " + " | ".join(sorted({n[0] or n[1] for n in found})))
+        # The launcher is not under test: close it; for anything else, wait.
+        launcher = any("Launcher isn't responding" in (n[0] or n[1]) for n in found)
+        button = [n for n in found if (n[0] or n[1]) == ("Close app" if launcher else "Wait")]
+        if button:
+            adb("shell", "input", "tap", str(button[0][3][0]), str(button[0][3][1]))
+            note("tap  " + (button[0][0] or button[0][1]))
+            time.sleep(2)
+        if launcher:
+            adb("shell", "am", "start", "-W", "-n", PACKAGE + "/yourec.YouRecActivity")
+            time.sleep(2)
+    return screen(tries)
+
+def screen(tries):
     global BUSY
     for attempt in range(tries):
         # Remove the last dump first: a failed dump must not be mistaken for the screen.
         adb("shell", "rm", "-f", "/sdcard/yourec-ui.xml")
-        result = adb("shell", "uiautomator", "dump", "/sdcard/yourec-ui.xml")
+        # A dump left hanging (another tool's, or one that never saw the window idle)
+        # blocks every later one: only one UiAutomation can connect at a time.
+        try:
+            adb("shell", "uiautomator", "dump", "/sdcard/yourec-ui.xml", timeout=15)
+        except subprocess.TimeoutExpired:
+            note("uiautomator dump did not finish in 15 s; stopping it")
+            try: adb("shell", "pkill", "-f", "uiautomator", timeout=10)
+            except subprocess.TimeoutExpired: pass
         xml = adb("shell", "cat", "/sdcard/yourec-ui.xml")
+        if xml.startswith("<?xml"):
+            BUSY = False
+            break
+        xml = app_controls()
         if xml.startswith("<?xml"):
             BUSY = False
             break
@@ -251,19 +300,8 @@ def main():
     time.sleep(4)
 
     # Recorder.
-    # A freshly booted emulator can show a system "isn't responding" dialog over the app.
-    for attempt in range(4):
-        shown = nodes(tries=2)
-        if any("isn't responding" in (n[0] or n[1]) for n in shown):
-            note("system dialog: " + describe())
-            # The launcher is not under test: close it; for anything else, wait.
-            launcher = any("Launcher isn't responding" in (n[0] or n[1]) for n in shown)
-            if launcher and find("Close app", exact=True):
-                tap("Close app", 5)
-                adb("shell", "am", "start", "-W", "-n", PACKAGE + "/yourec.YouRecActivity")
-            elif find("Wait", exact=True):
-                tap("Wait", 5)
-            time.sleep(3)
+    # A freshly booted emulator can show a system "isn't responding" dialog over
+    # the app: nodes() closes it whenever it appears.
     if not wait("Record a new project", 40):
         shot("recorder-not-ready"); return
     note("recorder: " + describe())
