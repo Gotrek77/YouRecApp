@@ -662,7 +662,8 @@ def pauses():
         fail("pause detection did not finish. On screen: " + describe()); return
     if summary.startswith("No pauses"):
         tap("Cancel", 5); return
-    saved = float(re.search(r"· ([0-9.]+) s shorter", summary).group(1))
+    # The amount follows the device locale: "2.5" in English, "2,5" in Italian.
+    saved = float(re.search(r"· ([0-9.,]+) s shorter", summary).group(1).replace(",", "."))
     tap("Apply pause cuts", 10); time.sleep(2)
     after = readout()
     note("pauses: before %s, after %s, saved %.1f s | %s" % (before, after, saved, describe()))
