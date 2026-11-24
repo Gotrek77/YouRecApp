@@ -62,8 +62,11 @@ capture, recording controls, the cut editor, export.
   with zoom, position, rotation and the project shapes (Original, 16:9, 9:16,
   1:1, 4:5), and **Mirror**, on the selected clips or the whole project.
   **Text** puts timed titles on the picture in the four plain styles and six
-  colours, with size, position and duration; a title stays with its footage
-  through cuts, moves and speed changes.
+  colours, or designed: the iPhone app's 24 looks, its ten bundled typefaces
+  with weight, italic and alignment, a border outside the letters, a drop
+  shadow, and a box behind the title or each line. Size, position and
+  duration as well; a title stays with its footage through cuts, moves and
+  speed changes, and designed titles from iPhone projects open with them.
   **Color** grades the selected clips or the whole project: the fourteen
   built-in looks or an imported `.cube` LUT (3D or 1D, Rec.709), with strength,
   after exposure, warmth and tint. Exposure and white balance are per-channel
@@ -150,8 +153,9 @@ them is **refused by name** on Android ("This project uses Video effects…")
 instead of being opened and quietly losing that work on the next save, the same
 policy older iPhone builds apply to newer projects.
 
-Title designs, looks and outlines, imported fonts,
-animated titles ·
+In titles: imported fonts and the iPhone's other system fonts, saved channel
+styles, the Text panel's gradient and colour pickers, eyedropper and fine
+sliders (shadow blur and offset, padding, corner radius), animated titles ·
 Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export · Inside video effects:
 Night fix Medium and Precise (motion-aligned fusion), a Chroma Key clean
 plate, a background movie's own sound, a freeze's Continue and Fade sound,

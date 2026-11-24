@@ -1646,6 +1646,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
 
     /// A title on the picture under the playhead. Typing and dragging preview
     /// the draft; every finished change is one undo step.
+    private var titleSection = TitleDesignControls.Section.Looks
     private fun openText(chosen: UUID?) {
         val project = project ?: return
         editor.pause()
@@ -1684,14 +1685,21 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             setOnFocusChangeListener { _, focused -> if (!focused) save("Text changed") }
         }
         add(field)
+        for (view in TitleDesignControls.views(context, title, titleSection, { titleSection = it; save("Text changed", reopen = true) }) { changed, message -> title = changed; save(message, reopen = true) })
+            add(view)
+        // The plain styles: choosing one leaves a design for the plain title.
         add(choices(*TextStyle.values().map { style ->
-            val on = style == title.style
-            Design.button(context, style.name, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) { title = title.copy(style = style); save("Text style", reopen = true) }
+            val on = style == title.style && title.appearance == null
+            Design.button(context, style.name, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) { title = title.copy(style = style, appearance = null); save("Text style", reopen = true) }
                 .apply { contentDescription = "Style " + style.name + if (on) ", selected" else "" }
         }.toTypedArray()))
         add(choices(*TextColor.values().map { color ->
-            val on = color == title.color
-            Design.button(context, if (on) "●" else " ", if (color == TextColor.White || color == TextColor.Yellow || color == TextColor.Mint) Design.background else Design.text, color.argb, 13f) { title = title.copy(color = color); save("Text colour", reopen = true) }
+            // On a designed title the swatch is the letters' fill, in place of any gradient.
+            val design = title.appearance
+            val on = if (design != null) design.gradient == null && design.fill == TitleInk.of(color) else color == title.color
+            Design.button(context, if (on) "●" else " ", if (color == TextColor.White || color == TextColor.Yellow || color == TextColor.Mint) Design.background else Design.text, color.argb, 13f) {
+                title = if (design != null) title.copy(appearance = design.copy(fill = TitleInk.of(color), gradient = null)) else title.copy(color = color); save("Text colour", reopen = true)
+            }
                 .apply { contentDescription = "Colour " + color.name + if (on) ", selected" else "" }
         }.toTypedArray()).apply { setPadding(0, Design.dp(context, 6f), 0, 0) })
         val values = List(3) { Design.label(context, "", 14f, mono = true) }

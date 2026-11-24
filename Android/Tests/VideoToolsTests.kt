@@ -265,13 +265,46 @@ private fun textTests() {
     project.commit(TimelineEditing.updatingText(title.copy(size = 0.5), titled))
     requireFailure<ProjectError.InvalidDocument>("A title outside its limits is not a valid document") { project.validate() }
     @Suppress("UNCHECKED_CAST")
-    for ((key, words) in listOf("appearance" to "title designs", "labelHeadline" to "cards", "motion" to "animated titles")) {
+    for ((key, words) in listOf("labelHeadline" to "cards", "motion" to "animated titles")) {
         val json = JSON.parse(JSON.write(ProjectCoding.encode(titled))) as MutableMap<String, Any?>
         val clip = (((json["timeline"] as MutableMap<String, Any?>)["video"] as List<Any?>)[0] as MutableMap<String, Any?>)["content"] as MutableMap<String, Any?>
         ((clip["texts"] as List<Any?>)[0] as MutableMap<String, Any?>)[key] = mapOf("x" to 1)
         try { ProjectCoding.editState(Fields.of(json)); require(false, "$words must be refused") } catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains(words), "The refusal names $words") }
     }
     require(TextColor.Yellow.argb == 0xFFFFD929.toInt() && TextColor.White.argb == 0xFFFFFFFF.toInt(), "Title colours are the iPhone app's")
+    titleDesignTests(titled)
+}
+
+/// Designed titles, in the form the iPhone app writes them (synthesized Codable: every field, the gradient only when set).
+@Suppress("UNCHECKED_CAST")
+private fun titleDesignTests(titled: EditState) {
+    require(TitleDesign.looks.size == 24 && TitleDesign.LookCollection.values().all { c -> TitleDesign.looks.count { it.collection == c } == 6 }
+        && TitleDesign.looks.all { it.design.valid && TitleTypeface.of(it.design.face) != null }, "Every look is valid and drawn with a bundled typeface, six to a collection")
+    val ink = TitleInk(0x112238, 102)
+    require(ink.rgba == 0x11223866L && ink.argb == 0x66112238 && TitleInk(0xFFFFFFFFL).argb == -1, "Inks pack RRGGBBAA as on iPhone and convert to Android colours")
+    require(TitleDesign.legacy(TextStyle.Box, TextColor.Yellow) == TitleDesign(shadow = false, plate = TitlePlate.Block, fill = TitleInk.of(TextColor.Yellow), backing = TitleInk(0x050505, 209))
+        && TitleDesign.legacy(TextStyle.Highlight, TextColor.Mint).backing == TitleInk.of(TextColor.Mint) && TitleDesign.legacy(TextStyle.Clean, TextColor.White).weight == 400,
+        "A plain title's design is the iPhone app's legacy design")
+    val iphone = """{"alignment":"center","backing":{"rgba":287455334},"border":{"rgba":255},"borderWidth":0.045,"face":"unbounded","fill":{"rgba":3740139519},"gradient":{"angle":90,"first":{"rgba":4109958399},"last":{"rgba":2848848639}},"italic":false,"lineSpacing":0.12,"outlined":false,"padding":0.22,"plate":"block","radius":0.075,"shade":{"rgba":422400255},"shadow":true,"shadowBlur":0.07,"shadowOffset":0.035,"tracking":0.065,"weight":500}"""
+    val design = ProjectCoding.titleDesign(Fields.of(JSON.parse(iphone.toByteArray())))
+    require(design == TitleDesign.looks.first { it.name == "Night drive" }.design, "An iPhone title design opens with every field")
+    require(JSON.parse(JSON.write(ProjectCoding.encode(design))) == JSON.parse(iphone.toByteArray()), "A title design is written back as the iPhone app writes it")
+    fun withAppearance(appearance: Map<String, Any?>): EditState {
+        val json = JSON.parse(JSON.write(ProjectCoding.encode(titled))) as MutableMap<String, Any?>
+        val clip = (((json["timeline"] as MutableMap<String, Any?>)["video"] as List<Any?>)[0] as MutableMap<String, Any?>)["content"] as MutableMap<String, Any?>
+        ((clip["texts"] as List<Any?>)[0] as MutableMap<String, Any?>)["appearance"] = appearance
+        return ProjectCoding.editState(Fields.of(JSON.parse(JSON.write(json))))
+    }
+    val designed = withAppearance(ProjectCoding.encode(design))
+    require(designed.clips[0].texts!!.single().appearance == design, "A designed title opens in its project")
+    require(ProjectCoding.encode(designed) == ProjectCoding.encode(withAppearance(ProjectCoding.encode(design))), "A designed title survives a save and a reopen")
+    for ((face, words) in listOf("import:ABCDEF.ttf#MyFont" to "imported fonts", "Avenir-Heavy" to "Avenir-Heavy")) {
+        try { withAppearance(ProjectCoding.encode(design.copy(face = face))); require(false, "$face must be refused") }
+        catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains(words), "A font this build cannot draw is refused by name ($words)") }
+    }
+    requireFailure<ProjectError.InvalidDocument>("A design outside its limits is not a valid document") { withAppearance(ProjectCoding.encode(design.copy(padding = 2.0))) }
+    require(TitleDesign().copy(outlined = true, borderWidth = 0.09).applyingLook(design).let { it.outlined && it.borderWidth == 0.09 && it.face == "unbounded" },
+        "Choosing a look keeps the title's border")
 }
 
 private fun placementTests() {

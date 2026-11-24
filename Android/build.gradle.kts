@@ -67,6 +67,8 @@ val neuralAssets by tasks.registering(Copy::class) {
     from(layout.buildDirectory.dir("neural-models")) { include("LavaSRv2.onnx"); into("LavaSR") }
     from(layout.buildDirectory.dir("neural-models")) { include("VoiceFixer.onnx"); into("VoiceFixer") }
     from("../ThirdParty/VoiceFixer/VoiceFixer-Mel.bin") { into("VoiceFixer") }
+    // The iPhone app's title typefaces, read in place, each with its SIL OFL licence beside it.
+    from("../ThirdParty/TitleFonts") { include("*/*.ttf", "*/OFL.txt"); into("TitleFonts") }
     into(layout.buildDirectory.dir("generated/neural-assets"))
 }
 tasks.named("preBuild") { dependsOn(neuralAssets) }

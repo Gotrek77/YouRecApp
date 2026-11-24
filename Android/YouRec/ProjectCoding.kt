@@ -31,12 +31,13 @@ internal object ProjectCoding {
         val crop = value.fieldsOrNull("crop")?.let { plain(it, "Crop") }?.let { CropSettings(it.uuid("id"), it.double("x"), it.double("y"), it.double("zoom"), it.doubleOrNull("rotation") ?: 0.0) }
         val mirror = value.fieldsOrNull("mirror")?.let { plain(it, "Mirror") }?.let { MirrorSettings(it.uuid("id"), it.bool("horizontal"), it.bool("vertical")) }
         val texts = value.listOrNull("texts")?.let { items -> list(items) { text ->
-            // Plain titles are edited here; designed, carded and animated ones are not yet.
-            for ((key, tool) in mapOf("appearance" to "title designs", "labelHeadline" to "label and headline cards", "motion" to "animated titles", "playbackClock" to "titles limited to a range"))
+            // Plain and designed titles are edited here; carded and animated ones are not yet.
+            for ((key, tool) in mapOf("labelHeadline" to "label and headline cards", "motion" to "animated titles", "playbackClock" to "titles limited to a range"))
                 if (present(text.raw(key))) unsupported(tool)
             TextOverlay(text.uuid("id"), text.string("text"), text.double("start"), text.double("end"), text.double("x"), text.double("y"), text.double("size"),
                 TextStyle.values().firstOrNull { it.name.lowercase() == text.string("style") } ?: throw ProjectError.InvalidDocument(),
-                TextColor.values().firstOrNull { it.name.lowercase() == text.string("color") } ?: throw ProjectError.InvalidDocument())
+                TextColor.values().firstOrNull { it.name.lowercase() == text.string("color") } ?: throw ProjectError.InvalidDocument(),
+                text.fieldsOrNull("appearance")?.let { titleDesign(it) })
         } }
         val color = value.fieldsOrNull("color")?.let { grade ->
             if (present(grade.raw("motion"))) unsupported("animated Color")
@@ -84,7 +85,7 @@ internal object ProjectCoding {
         "images" to clip.images?.map { jsonObject("id" to it.id.text, "filename" to it.filename, "start" to it.start, "end" to it.end, "x" to it.x, "y" to it.y,
             "width" to it.width, "opacity" to it.opacity) },
         "texts" to clip.texts?.map { jsonObject("id" to it.id.text, "text" to it.text, "start" to it.start, "end" to it.end, "x" to it.x, "y" to it.y,
-            "size" to it.size, "style" to it.style.name.lowercase(), "color" to it.color.name.lowercase()) },
+            "size" to it.size, "style" to it.style.name.lowercase(), "color" to it.color.name.lowercase(), "appearance" to it.appearance?.let { design -> encode(design) }) },
         "videoEffects" to clip.videoEffects?.map { encode(it) },
         "frozenFrame" to clip.frozenFrame?.let { jsonObject("sourceTime" to it.sourceTime, "duration" to it.duration, "offset" to it.offset) },
         "effectWindows" to clip.effectWindows?.entries?.sortedBy { it.key.text }?.flatMap { listOf(it.key.text, it.value.map { i -> jsonObject("start" to i.start, "end" to i.end) }) })
@@ -228,6 +229,31 @@ internal object ProjectCoding {
             "audioBlend" to t.audioBlend, "wipeAngle" to t.wipeAngle, "hardEdge" to t.hardEdge, "highlightsFirst" to t.highlightsFirst, "flashCount" to t.flashCount,
             "flashAcceleration" to t.flashAcceleration, "stillDissolve" to t.stillDissolve, "blurAmount" to t.blurAmount)
     }
+
+    // TitleDesign: the iPhone's synthesized Codable writes every field, and the gradient only when set.
+    private fun ink(value: Fields) = TitleInk(value.long("rgba").also { if (it !in 0..0xFFFFFFFFL) throw ProjectError.InvalidDocument() })
+    private fun encode(ink: TitleInk): Map<String, Any?> = jsonObject("rgba" to ink.rgba)
+    fun titleDesign(value: Fields): TitleDesign {
+        val face = value.string("face")
+        // Only the bundled typefaces are drawn here; a font imported into the iPhone app or one of its system fonts is not yet.
+        if (face.startsWith("import:")) unsupported("imported fonts")
+        if (TitleTypeface.of(face) == null) unsupported("the font $face")
+        fun <T> choice(values: Array<T>, raw: String, name: (T) -> String) = values.firstOrNull { name(it) == raw } ?: throw ProjectError.InvalidDocument()
+        val design = TitleDesign(face, value.int("weight"), value.bool("italic"), choice(TitleAlignment.values(), value.string("alignment")) { it.raw },
+            value.double("tracking"), value.double("lineSpacing"), ink(value.fields("fill")),
+            value.fieldsOrNull("gradient")?.let { TitleGradient(ink(it.fields("first")), ink(it.fields("last")), it.double("angle")) },
+            value.bool("outlined"), ink(value.fields("border")), value.double("borderWidth"),
+            value.bool("shadow"), ink(value.fields("shade")), value.double("shadowBlur"), value.double("shadowOffset"),
+            choice(TitlePlate.values(), value.string("plate")) { it.raw }, ink(value.fields("backing")), value.double("padding"), value.double("radius"))
+        if (!design.valid) throw ProjectError.InvalidDocument()
+        return design
+    }
+    fun encode(d: TitleDesign): Map<String, Any?> = jsonObject("face" to d.face, "weight" to d.weight, "italic" to d.italic, "alignment" to d.alignment.raw,
+        "tracking" to d.tracking, "lineSpacing" to d.lineSpacing, "fill" to encode(d.fill),
+        "gradient" to d.gradient?.let { jsonObject("first" to encode(it.first), "last" to encode(it.last), "angle" to it.angle) },
+        "outlined" to d.outlined, "border" to encode(d.border), "borderWidth" to d.borderWidth,
+        "shadow" to d.shadow, "shade" to encode(d.shade), "shadowBlur" to d.shadowBlur, "shadowOffset" to d.shadowOffset,
+        "plate" to d.plate.raw, "backing" to encode(d.backing), "padding" to d.padding, "radius" to d.radius)
 
     fun editState(value: Fields): EditState {
         // The sequential "clips" form predates the first public release.

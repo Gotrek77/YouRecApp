@@ -41,6 +41,7 @@ class ProjectStore(private val context: Context) {
         OfflineAudioPipeline.cacheFolder = File(context.cacheDir, "Enhanced audio")
         VideoEffectAnalysis.cacheFolder = File(context.cacheDir, "Effect analysis")
         val assets = context.applicationContext.assets
+        TitleFonts.assets = assets
         NeuralAssets.read = { name -> assets.open(name).use { it.readBytes() } }
         val extracted = File(context.filesDir, "Neural")
         NeuralAssets.folder = extracted
