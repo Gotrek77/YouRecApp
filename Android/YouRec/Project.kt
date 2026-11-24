@@ -234,6 +234,8 @@ class Project(var title: String) {
         if (state.timeline.audio.any { it.fadeIn != null || it.fadeOut != null }) schemaVersion = maxOf(schemaVersion, 11)
         if (sources.any { it.audioOnly == true } || state.timeline.audio.any { it.censors.isNotEmpty() }) schemaVersion = maxOf(schemaVersion, 9)
         if (state.timeline.subtitles != null) schemaVersion = maxOf(schemaVersion, 8)
+        // An older reader would drop the label and the card.
+        if (state.timeline.video.any { item -> item.content.texts?.any { it.labelHeadline != null } == true }) schemaVersion = maxOf(schemaVersion, 14)
         // Older readers must reject transitions rather than silently change the running time.
         if (state.timeline.transitions.isNotEmpty()) schemaVersion = maxOf(schemaVersion, 6)
         val base = state.timeline.captureBase ?: captureLedger.size

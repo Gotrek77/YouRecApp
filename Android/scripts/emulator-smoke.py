@@ -405,7 +405,10 @@ def main():
     if readout and readout.split(" / ")[0] == readout.split(" / ")[-1]:
         tap("Previous cut", 10); time.sleep(1)
     if tool("Text") and wait("Title text", 10):
-        option("Style Box", "Style "); option("Colour Yellow", "Colour "); tap("Done", 10)
+        # The Text panel scrolls; each choice reopens it at the top.
+        for label, family in (("Style Box", "Style "), ("Colour Yellow", "Colour ")):
+            reveal(label, anchor="Title layout", fallback=2300); option(label, family)
+        reveal("Done", anchor="Title layout", fallback=2300); tap("Done", 10)
         note("after Text: " + describe())
     # Before the photo: a photo has no sound and so no link, and does not ripple
     # when a transition pulls the clips before it closer (as on iPhone).
@@ -528,14 +531,14 @@ def enhance():
     note("after Enhance (%.0f s of processing): %s" % (time.time() - began, describe()))
     return True
 
-def reveal(label, tries=10):
+def reveal(label, tries=10, anchor="Effects · ", fallback=1700):
     """Scroll the open panel's list until `label` is on screen."""
     for attempt in range(tries):
         node = find(label)
         if node:
             return node
-        title = find("Effects · ")
-        y = title[3][1] + 500 if title else 1700
+        title = find(anchor)
+        y = title[3][1] + 500 if title else fallback
         adb("shell", "input", "swipe", "540", str(y + 300), "540", str(y), "400")
         time.sleep(0.8)
     return None

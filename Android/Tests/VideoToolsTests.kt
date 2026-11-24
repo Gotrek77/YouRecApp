@@ -265,7 +265,7 @@ private fun textTests() {
     project.commit(TimelineEditing.updatingText(title.copy(size = 0.5), titled))
     requireFailure<ProjectError.InvalidDocument>("A title outside its limits is not a valid document") { project.validate() }
     @Suppress("UNCHECKED_CAST")
-    for ((key, words) in listOf("labelHeadline" to "cards", "motion" to "animated titles")) {
+    for ((key, words) in listOf("motion" to "animated titles", "playbackClock" to "titles limited to a range")) {
         val json = JSON.parse(JSON.write(ProjectCoding.encode(titled))) as MutableMap<String, Any?>
         val clip = (((json["timeline"] as MutableMap<String, Any?>)["video"] as List<Any?>)[0] as MutableMap<String, Any?>)["content"] as MutableMap<String, Any?>
         ((clip["texts"] as List<Any?>)[0] as MutableMap<String, Any?>)[key] = mapOf("x" to 1)
@@ -305,6 +305,55 @@ private fun titleDesignTests(titled: EditState) {
     requireFailure<ProjectError.InvalidDocument>("A design outside its limits is not a valid document") { withAppearance(ProjectCoding.encode(design.copy(padding = 2.0))) }
     require(TitleDesign().copy(outlined = true, borderWidth = 0.09).applyingLook(design).let { it.outlined && it.borderWidth == 0.09 && it.face == "unbounded" },
         "Choosing a look keeps the title's border")
+    labelHeadlineTests(titled)
+}
+
+/// Label and headline cards, in the form the iPhone app writes them: every key, the offsets only when set.
+@Suppress("UNCHECKED_CAST")
+private fun labelHeadlineTests(titled: EditState) {
+    require(LabelHeadline.looks.map { it.first } == listOf("Graphite", "Editorial", "Broadcast", "Notebook", "Terminal", "Poster")
+        && LabelHeadline.looks.all { (_, l) -> LabelHeadline().applyingLook(l).valid && TitleTypeface.of(l.label.face) != null && TitleTypeface.of(l.headline.face) != null },
+        "Every card look is valid and drawn with bundled typefaces")
+    require(LabelHeadline.looks[0].second == LabelHeadline().look, "Graphite is the default card")
+    val encoded = JSON.parse(JSON.write(ProjectCoding.encode(LabelHeadline()))) as Map<String, Any?>
+    val card = encoded["card"] as Map<String, Any?>
+    require(encoded.keys == setOf("label", "labelStyle", "headlineStyle", "labelScale", "headlineScale", "card")
+        && card.keys == setOf("fill", "border", "borderWidth", "padding", "radius", "spacing")
+        && (card["fill"] as Map<String, Any?>)["rgba"] == 134810507L && (card["border"] as Map<String, Any?>)["rgba"] == 4294967112L,
+        "A card is written with the iPhone app's keys, without offsets it does not have")
+    fun withGroup(group: Map<String, Any?>, text: String = "Headline"): EditState {
+        val json = JSON.parse(JSON.write(ProjectCoding.encode(titled))) as MutableMap<String, Any?>
+        val clip = (((json["timeline"] as MutableMap<String, Any?>)["video"] as List<Any?>)[0] as MutableMap<String, Any?>)["content"] as MutableMap<String, Any?>
+        val item = (clip["texts"] as List<Any?>)[0] as MutableMap<String, Any?>
+        item["labelHeadline"] = group; item["text"] = text
+        return ProjectCoding.editState(Fields.of(JSON.parse(JSON.write(json))))
+    }
+    val moved = LabelHeadline(label = "Chapter one").applyingLook(LabelHeadline.looks[1].second).let { it.copy(card = it.card.copy(labelOffset = TitleCard.Offset(0.5, -0.25))) }
+    val opened = withGroup(ProjectCoding.encode(moved))
+    require(opened.clips[0].texts!!.single().labelHeadline == moved, "An iPhone card opens with every field, offsets included")
+    require(ProjectCoding.encode(withGroup(ProjectCoding.encode(moved))) == ProjectCoding.encode(opened), "A card survives a save and a reopen")
+    require(moved.applyingLook(LabelHeadline.looks[5].second).card.labelOffset == TitleCard.Offset(0.5, -0.25), "Choosing a card look keeps where its lines were moved")
+    require(withGroup(ProjectCoding.encode(LabelHeadline()), text = "").clips[0].texts!!.single().let { it.hasText && it.displayText == "First text" },
+        "A card without a headline shows its label")
+    requireFailure<ProjectError.InvalidDocument>("A card outside its limits is not a valid document") { withGroup(ProjectCoding.encode(LabelHeadline(labelScale = 1.5))) }
+    requireFailure<ProjectError.InvalidDocument>("A card missing a key is not a valid document") {
+        withGroup((ProjectCoding.encode(LabelHeadline()) as Map<String, Any?>).filterKeys { it != "headlineScale" })
+    }
+    try { withGroup(ProjectCoding.encode(LabelHeadline(labelStyle = TitleDesign(face = "import:ABCDEF.ttf#MyFont")))); require(false, "An imported label font must be refused") }
+    catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains("imported fonts"), "A card's imported font is refused by name") }
+    val project = Project("Cards"); project.history = listOf(titled)
+    project.commit(opened)
+    require(project.schemaVersion >= 14, "A project with a card is marked for readers that know cards")
+
+    // Geometry, as the iPhone's LabelHeadlineLayout places the lines (sizes include each line's insets).
+    val shape = LabelHeadline().geometry(200.0 to 40.0, 300.0 to 100.0, 100.0)
+    require(shape.width == 300.0 + 2 * 42 && shape.height == 42 + 40 + 8 + 100 + 42.0, "The card wraps both lines, its padding and the gap between them")
+    require(shape.label == LabelHeadline.Rect(42.0, 42.0, 200.0, 40.0) && shape.headline == LabelHeadline.Rect(42.0, 90.0, 300.0, 100.0), "Left-aligned lines start at the padding, one under the other")
+    val centred = LabelHeadline(labelStyle = LabelHeadline().labelStyle.copy(alignment = TitleAlignment.Center),
+        card = TitleCard(labelOffset = TitleCard.Offset(1.0, -1.0))).geometry(200.0 to 40.0, 300.0 to 100.0, 100.0)
+    require(centred.label == LabelHeadline.Rect(184.0, 0.0, 200.0, 40.0), "An offset of one moves a line all the way to that edge")
+    val alone = LabelHeadline().geometry(null, 300.0 to 100.0, 100.0)
+    require(alone.label == null && alone.height == 42 + 100 + 42.0, "Without a label there is no gap")
 }
 
 private fun placementTests() {

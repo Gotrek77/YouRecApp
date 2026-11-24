@@ -101,6 +101,7 @@ class TitleTextures {
         /// letters on a plate of the chosen colour. Long lines wrap at 84% of the frame.
         fun picture(title: TextOverlay, canvasWidth: Int, canvasHeight: Int): Bitmap? {
             if (!title.hasText) return null
+            title.labelHeadline?.let { return StyledTitle.card(title, it, canvasWidth, canvasHeight) }
             title.appearance?.let { return StyledTitle.picture(title, it, canvasWidth, canvasHeight) }
             val size = maxOf(8f, (title.size * minOf(canvasWidth, canvasHeight)).toFloat())
             val plate = title.style == TextStyle.Box || title.style == TextStyle.Highlight

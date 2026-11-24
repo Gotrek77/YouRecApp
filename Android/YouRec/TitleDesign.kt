@@ -149,3 +149,84 @@ data class TitleTypeface(val id: String, val name: String, val upright: String, 
         }
     }
 }
+
+/// A card behind a label and a headline. Dimensions are relative to the base
+/// headline size, so the whole design scales together.
+data class TitleCard(val fill: TitleInk = TitleInk(0x08090B, 139), val border: TitleInk = TitleInk(0xFFFFFF, 72),
+                     val borderWidth: Double = 0.017, val padding: Double = 0.42, val radius: Double = 0.29, val spacing: Double = 0.08,
+                     val labelOffset: Offset? = null, val headlineOffset: Offset? = null) {
+    /// Each axis is a fraction of the travel from the preset position to that edge.
+    data class Offset(val x: Double = 0.0, val y: Double = 0.0) { val valid: Boolean get() = x in -1.0..1.0 && y in -1.0..1.0 }
+    val valid: Boolean get() = borderWidth in 0.0..0.1 && padding in 0.0..1.0 && radius in 0.0..1.0 && spacing in 0.0..1.0
+        && labelOffset?.valid != false && headlineOffset?.valid != false
+}
+
+/// Two lines on one card, after the iPhone's LabelHeadline. Both share the
+/// overlay's anchor, size and timing; the headline's words are the overlay's text.
+data class LabelHeadline(val label: String = "First text",
+                         val labelStyle: TitleDesign = TitleDesign(face = "system", weight = 700, alignment = TitleAlignment.Left, tracking = 0.09,
+                             fill = TitleInk.black, shadow = false, plate = TitlePlate.Block, backing = TitleInk.white, padding = 0.32, radius = 0.27),
+                         val headlineStyle: TitleDesign = TitleDesign(face = "archivoblack", weight = 400, alignment = TitleAlignment.Left, tracking = -0.045, shadow = false),
+                         val labelScale: Double = 0.36, val headlineScale: Double = 1.0, val card: TitleCard = TitleCard()) {
+    enum class Part(val title: String) { Label("Label"), Headline("Headline"), Card("Card") }
+    val valid: Boolean get() = label.length <= 500 && labelStyle.valid && headlineStyle.valid && card.valid
+        && labelScale in 0.2..1.0 && headlineScale in 0.5..1.8
+
+    /// A reusable look holds appearance only: words and manual placement belong to the title.
+    data class Look(val label: TitleDesign, val headline: TitleDesign, val labelScale: Double, val headlineScale: Double, val card: TitleCard)
+    val look: Look get() = Look(TitleDesign().applyingLook(labelStyle), TitleDesign().applyingLook(headlineStyle), labelScale, headlineScale,
+        card.copy(labelOffset = null, headlineOffset = null))
+    fun applyingLook(look: Look) = copy(labelStyle = labelStyle.applyingLook(look.label), headlineStyle = headlineStyle.applyingLook(look.headline),
+        labelScale = look.labelScale, headlineScale = look.headlineScale, card = look.card.copy(labelOffset = card.labelOffset, headlineOffset = card.headlineOffset))
+
+    /// Where the two lines go on the card, from each line's drawn size (its own insets included). Top-left origin.
+    class Geometry(val width: Double, val height: Double, val label: Rect?, val headline: Rect?)
+    data class Rect(val x: Double, val y: Double, val width: Double, val height: Double) {
+        fun contains(px: Double, py: Double) = px >= x && px < x + width && py >= y && py < y + height
+    }
+    fun geometry(label: Pair<Double, Double>?, headline: Pair<Double, Double>?, fontSize: Double): Geometry {
+        val pad = Math.ceil(card.padding * fontSize)
+        val content = maxOf(label?.first ?: 0.0, headline?.first ?: 0.0)
+        val gap = if (label != null && headline != null) Math.ceil(card.spacing * fontSize) else 0.0
+        val headlineTop = pad + (label?.second ?: 0.0) + gap
+        val width = content + 2 * pad; val height = headlineTop + (headline?.second ?: 0.0) + pad
+        fun travel(fraction: Double, origin: Double, available: Double) = origin + fraction * (if (fraction < 0) origin else maxOf(0.0, available - origin))
+        fun place(size: Pair<Double, Double>?, style: TitleDesign, y: Double, offset: TitleCard.Offset?): Rect? {
+            val (w, h) = size ?: return null
+            val slack = content - w
+            val x = pad + when (style.alignment) { TitleAlignment.Left -> 0.0; TitleAlignment.Right -> slack; TitleAlignment.Center -> slack / 2 }
+            return Rect(travel(offset?.x ?: 0.0, x, width - w), travel(offset?.y ?: 0.0, y, height - h), w, h)
+        }
+        return Geometry(width, height, place(label, labelStyle, pad, card.labelOffset), place(headline, headlineStyle, headlineTop, card.headlineOffset))
+    }
+
+    companion object {
+        const val defaultHeadline = "Second text"
+        private val L = TitleAlignment.Left
+        val looks: List<Pair<String, Look>> = listOf(
+            "Graphite" to LabelHeadline().look,
+            "Editorial" to Look(
+                TitleDesign(face = "ibmplexmono", weight = 500, alignment = L, tracking = 0.075, fill = TitleInk.of(0x962C26), shadow = false),
+                TitleDesign(face = "sourceserif4", weight = 600, alignment = L, tracking = -0.01, fill = TitleInk.of(0x221D1A), shadow = false),
+                0.42, 1.0, TitleCard(fill = TitleInk(0xF7F3EA, 246), border = TitleInk.of(0x51463C), borderWidth = 0.022, padding = 0.46, radius = 0.04, spacing = 0.12)),
+            "Broadcast" to Look(
+                TitleDesign(face = "barlowcondensed", weight = 700, alignment = L, tracking = 0.08, fill = TitleInk.of(0x111111), shadow = false,
+                    plate = TitlePlate.Block, backing = TitleInk.of(0xFFD60A), padding = 0.20, radius = 0.06),
+                TitleDesign(face = "barlowcondensed", weight = 700, alignment = L, shadow = false),
+                0.44, 1.0, TitleCard(fill = TitleInk(0x0B0F14, 236), borderWidth = 0.0, padding = 0.36, radius = 0.08, spacing = 0.12)),
+            "Notebook" to Look(
+                TitleDesign(face = "caveat", weight = 700, alignment = L, fill = TitleInk.of(0xFFE066), shadow = false),
+                TitleDesign(face = "fraunces", weight = 600, italic = true, alignment = L, tracking = -0.01, shadow = false),
+                0.62, 1.0, TitleCard(fill = TitleInk(0x14213D, 232), borderWidth = 0.0, padding = 0.44, radius = 0.30, spacing = 0.06)),
+            "Terminal" to Look(
+                TitleDesign(face = "ibmplexmono", weight = 500, alignment = L, tracking = 0.06, fill = TitleInk.of(0x61E3A5), shadow = false),
+                TitleDesign(face = "ibmplexmono", weight = 700, alignment = L, tracking = -0.025, fill = TitleInk.of(0xE6EDF3), shadow = false),
+                0.41, 0.94, TitleCard(fill = TitleInk(0x0D1517, 240), border = TitleInk.of(0x61E3A5), borderWidth = 0.025, padding = 0.40, radius = 0.12, spacing = 0.12)),
+            "Poster" to Look(
+                TitleDesign(face = "barlowcondensed", weight = 700, alignment = L, tracking = 0.07, fill = TitleInk.black, shadow = false,
+                    plate = TitlePlate.Block, backing = TitleInk.white, padding = 0.18, radius = 0.0),
+                TitleDesign(face = "archivoblack", weight = 400, alignment = L, tracking = -0.035, shadow = false,
+                    plate = TitlePlate.Block, backing = TitleInk.of(0xB7251F), padding = 0.15, radius = 0.0),
+                0.44, 1.0, TitleCard(fill = TitleInk(0, 0), borderWidth = 0.0, padding = 0.12, radius = 0.0, spacing = 0.03)))
+    }
+}

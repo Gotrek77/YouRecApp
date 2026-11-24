@@ -14,18 +14,20 @@ import android.widget.LinearLayout
 object TitleDesignControls {
     enum class Section(val title: String) { Looks("Looks"), Font("Font"), Border("Border"), Shadow("Shadow"), Background("Background") }
 
-    fun views(context: Context, title: TextOverlay, section: Section, choose: (Section) -> Unit, change: (TextOverlay, String) -> Unit): List<View> {
-        val design = title.design
-        fun designed(next: TitleDesign, message: String) = change(title.copy(appearance = next), message)
+    /// `plain` is a title without a design; `looks` offers the single-title looks (not shown for a card's lines).
+    fun views(context: Context, design: TitleDesign, plain: Boolean, section: Section, looks: Boolean, choose: (Section) -> Unit, change: (TitleDesign?, String) -> Unit): List<View> {
+        fun designed(next: TitleDesign, message: String) = change(next, message)
         fun option(label: String, description: String, on: Boolean, action: () -> Unit) =
             Design.button(context, label, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) { action() }
                 .apply { contentDescription = description + if (on) ", selected" else "" }
-        val tabs = choices(context, Section.values().map { s -> option(s.title, "Title " + s.title, s == section) { choose(s) } })
+        val shown = Section.values().filter { looks || it != Section.Looks }
+        val section = if (section in shown) section else Section.Font
+        val tabs = choices(context, shown.map { s -> option(s.title, "Title " + s.title, s == section) { choose(s) } })
         val body: List<View> = when (section) {
-            Section.Looks -> listOf(choices(context, listOf(option("Plain", "Look Plain", title.appearance == null) { change(title.copy(appearance = null), "Text look") }) +
+            Section.Looks -> listOf(choices(context, listOf(option("Plain", "Look Plain", plain) { change(null, "Text look") }) +
                 TitleDesign.looks.map { look ->
                     val chosen = design.applyingLook(look.design)
-                    option(look.name, "Look " + look.name, title.appearance == chosen) { designed(chosen, "Text look") }
+                    option(look.name, "Look " + look.name, !plain && design == chosen) { designed(chosen, "Text look") }
                 }))
             Section.Font -> {
                 val family = TitleTypeface.of(design.face)
@@ -61,7 +63,7 @@ object TitleDesignControls {
 
     private fun weightName(weight: Int) = when (weight) { 400 -> "Regular"; 500 -> "Medium"; 600 -> "Semibold"; 700 -> "Bold"; 800 -> "Heavy"; else -> weight.toString() }
 
-    private fun choices(context: Context, items: List<View>) = HorizontalScrollView(context).apply {
+    fun choices(context: Context, items: List<View>) = HorizontalScrollView(context).apply {
         isHorizontalScrollBarEnabled = false
         addView(LinearLayout(context).apply {
             for (item in items) addView(item, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = Design.dp(context, 6f) })

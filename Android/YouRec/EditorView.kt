@@ -1647,6 +1647,23 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
     /// A title on the picture under the playhead. Typing and dragging preview
     /// the draft; every finished change is one undo step.
     private var titleSection = TitleDesignControls.Section.Looks
+    private val MAX_PANEL_SHARE = 0.33
+    private var titlePart = LabelHeadline.Part.Headline
+    // Switching layout and back restores what the other layout had, as on iPhone.
+    private var previousGroup: Pair<LabelHeadline, Double>? = null
+    private var previousSingleSize: Double? = null
+    private fun cardTitle(title: TextOverlay): TextOverlay {
+        previousSingleSize = title.size
+        val (group, size) = previousGroup ?: (LabelHeadline() to minOf(0.20, 0.14 * maxOf(1.0, editor.canvas.width / maxOf(1.0, minOf(editor.canvas.width, editor.canvas.height)))))
+        val words = if (title.text.isBlank() || title.text == TextOverlay.starterText) LabelHeadline.defaultHeadline else title.text
+        return title.copy(text = words, labelHeadline = group, size = size)
+    }
+    private fun singleTitle(title: TextOverlay): TextOverlay {
+        val group = title.labelHeadline ?: return title
+        previousGroup = group to title.size
+        val words = if (title.text == LabelHeadline.defaultHeadline) TextOverlay.starterText else title.text
+        return title.copy(text = words, labelHeadline = null, size = previousSingleSize ?: title.size)
+    }
     private fun openText(chosen: UUID?) {
         val project = project ?: return
         editor.pause()
@@ -1671,23 +1688,66 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         }
         val content = Design.column(context, Design.label(context, "Text", 15f, bold = true), spacing = 4f)
         fun add(view: View) = content.addView(view, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        val field = android.widget.EditText(context).apply {
-            setText(title.text); setTextColor(Design.text); setHintTextColor(Design.secondary); hint = "Title"
+        fun pick(label: String, description: String, on: Boolean, action: () -> Unit) =
+            Design.button(context, label, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) { action() }
+                .apply { contentDescription = description + if (on) ", selected" else "" }
+        // Single text, or a label and a headline on a card (as on iPhone).
+        val group = title.labelHeadline
+        add(TitleDesignControls.choices(context, listOf(
+            pick("Single text", "Title layout Single text", group == null) { if (group != null) { title = singleTitle(title); save("Title layout", reopen = true) } },
+            pick("Label + headline", "Title layout Label and headline", group != null) { if (group == null) { title = cardTitle(title); titlePart = LabelHeadline.Part.Headline; save("Title layout", reopen = true) } })))
+        if (group != null) add(TitleDesignControls.choices(context, LabelHeadline.Part.values().map { part ->
+            pick(part.title, "Edit title part " + part.title, part == titlePart) { titlePart = part; save("Text changed", reopen = true) }
+        }))
+        val part = if (group == null) null else titlePart
+        if (part != LabelHeadline.Part.Card) add(android.widget.EditText(context).apply {
+            val isLabel = part == LabelHeadline.Part.Label
+            setText(if (isLabel) group?.label else title.text); setTextColor(Design.text); setHintTextColor(Design.secondary)
+            hint = if (part == null) "Title" else part.title
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
             maxLines = 3; filters = arrayOf(android.text.InputFilter.LengthFilter(500))
-            contentDescription = "Title text"
+            contentDescription = if (part == null) "Title text" else part.title + " text"
             addTextChangedListener(object : android.text.TextWatcher {
                 override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) { }
                 override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) { }
-                override fun afterTextChanged(text: android.text.Editable?) { title = title.copy(text = text?.toString() ?: ""); preview() }
+                override fun afterTextChanged(text: android.text.Editable?) {
+                    val words = text?.toString() ?: ""
+                    title = if (isLabel) title.copy(labelHeadline = title.labelHeadline?.copy(label = words)) else title.copy(text = words); preview()
+                }
             })
             // Leaving the field is the end of one edit of the words.
             setOnFocusChangeListener { _, focused -> if (!focused) save("Text changed") }
+        })
+        if (group != null) {
+            add(TitleDesignControls.choices(context, LabelHeadline.looks.map { (name, look) ->
+                val chosen = group.applyingLook(look)
+                pick(name, "Card look " + name, group == chosen) { title = title.copy(labelHeadline = chosen); save("Title look", reopen = true) }
+            }))
+            if (part == LabelHeadline.Part.Card) {
+                // Opacity of the card's own colour; sliders for colour, padding, radius and spacing are not ported yet.
+                add(TitleDesignControls.choices(context, listOf(0 to "Clear", 140 to "Light", 200 to "Strong", 245 to "Solid").map { (alpha, name) ->
+                    pick(name, "Card opacity " + name, Math.round(group.card.fill.alpha * 255).toInt() == alpha) {
+                        title = title.copy(labelHeadline = group.copy(card = group.card.copy(fill = TitleInk(group.card.fill.rgb, alpha)))); save("Card opacity", reopen = true)
+                    }
+                } + listOfNotNull(if (group.card.labelOffset == null && group.card.headlineOffset == null) null else pick("Reset positions", "Reset positions", false) {
+                    title = title.copy(labelHeadline = group.copy(card = group.card.copy(labelOffset = null, headlineOffset = null))); save("Card positions", reopen = true)
+                })))
+            }
         }
-        add(field)
-        for (view in TitleDesignControls.views(context, title, titleSection, { titleSection = it; save("Text changed", reopen = true) }) { changed, message -> title = changed; save(message, reopen = true) })
-            add(view)
-        // The plain styles: choosing one leaves a design for the plain title.
+        if (part != LabelHeadline.Part.Card) {
+            val isLabel = part == LabelHeadline.Part.Label
+            val design = when (part) { null -> title.design; LabelHeadline.Part.Label -> group!!.labelStyle; else -> group!!.headlineStyle }
+            for (view in TitleDesignControls.views(context, design, part == null && title.appearance == null, titleSection, part == null, { titleSection = it; save("Text changed", reopen = true) }) { changed, message ->
+                title = when {
+                    part == null -> title.copy(appearance = changed)
+                    isLabel -> title.copy(labelHeadline = group!!.copy(labelStyle = changed ?: group.labelStyle))
+                    else -> title.copy(labelHeadline = group!!.copy(headlineStyle = changed ?: group.headlineStyle))
+                }
+                save(message, reopen = true)
+            }) add(view)
+        }
+        // The plain styles and colours of a single title: choosing a style leaves a design for the plain title.
+        if (group == null) {
         add(choices(*TextStyle.values().map { style ->
             val on = style == title.style && title.appearance == null
             Design.button(context, style.name, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) { title = title.copy(style = style, appearance = null); save("Text style", reopen = true) }
@@ -1702,6 +1762,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             }
                 .apply { contentDescription = "Colour " + color.name + if (on) ", selected" else "" }
         }.toTypedArray()).apply { setPadding(0, Design.dp(context, 6f), 0, 0) })
+        }
         val values = List(3) { Design.label(context, "", 14f, mono = true) }
         fun describe() { values[0].text = String.format("%.0f%%", title.size * 100); values[1].text = String.format("%.0f%%", title.x * 100); values[2].text = String.format("%.0f%%", title.y * 100) }
         fun bar(max: Int, start: Int, update: (Int) -> Unit) = SeekBar(context).apply {
@@ -1714,7 +1775,20 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         }
         describe()
         // Size from 2% to 30% of the shorter side of the frame.
-        add(labelled("Size", bar(280, Math.round(title.size * 1000).toInt() - 20) { title = title.copy(size = (it + 20) / 1000.0) }, values[0]))
+        add(labelled(if (group == null) "Size" else "Whole title size", bar(280, Math.round(title.size * 1000).toInt() - 20) { title = title.copy(size = (it + 20) / 1000.0) }, values[0]))
+        // A card line's size relative to the whole title: label 20-100%, headline 50-180%.
+        if (group != null && part != LabelHeadline.Part.Card) {
+            val isLabel = part == LabelHeadline.Part.Label
+            val (low, high) = if (isLabel) 20 to 100 else 50 to 180
+            val shownScale = Design.label(context, "", 14f, mono = true)
+            fun scale() = (if (isLabel) title.labelHeadline?.labelScale else title.labelHeadline?.headlineScale) ?: 1.0
+            shownScale.text = String.format("%.0f%%", scale() * 100)
+            add(labelled(if (isLabel) "Label size" else "Headline size", bar(high - low, Math.round(scale() * 100).toInt() - low) { value ->
+                val chosen = (value + low) / 100.0
+                title = title.copy(labelHeadline = title.labelHeadline?.let { if (isLabel) it.copy(labelScale = chosen) else it.copy(headlineScale = chosen) })
+                shownScale.text = String.format("%.0f%%", chosen * 100)
+            }, shownScale))
+        }
         add(labelled("Across", bar(100, Math.round(title.x * 100).toInt()) { title = title.copy(x = it / 100.0) }, values[1]))
         add(labelled("Down", bar(100, Math.round(title.y * 100).toInt()) { title = title.copy(y = it / 100.0) }, values[2]))
         val rate = owner.content.rate
@@ -1737,7 +1811,13 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                 if (created != null) { commit(added, "Text added"); openText(created) }
             },
             Design.button(context, "Done", Design.accent) { save("Text changed"); closePanel() }, spacing = 6f).apply { setPadding(0, Design.dp(context, 6f), 0, 0) })
-        showPanel(content)
+        // The card controls make this panel taller than the space under the timeline: it scrolls so the preview stays visible.
+        val bounded = object : android.widget.ScrollView(context) {
+            override fun onMeasure(widthSpec: Int, heightSpec: Int) =
+                super.onMeasure(widthSpec, MeasureSpec.makeMeasureSpec((this@EditorView.height * MAX_PANEL_SHARE).toInt(), MeasureSpec.AT_MOST))
+        }
+        bounded.addView(content)
+        showPanel(bounded)
     }
 
     private fun openExport() {

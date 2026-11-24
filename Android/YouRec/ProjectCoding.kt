@@ -31,13 +31,13 @@ internal object ProjectCoding {
         val crop = value.fieldsOrNull("crop")?.let { plain(it, "Crop") }?.let { CropSettings(it.uuid("id"), it.double("x"), it.double("y"), it.double("zoom"), it.doubleOrNull("rotation") ?: 0.0) }
         val mirror = value.fieldsOrNull("mirror")?.let { plain(it, "Mirror") }?.let { MirrorSettings(it.uuid("id"), it.bool("horizontal"), it.bool("vertical")) }
         val texts = value.listOrNull("texts")?.let { items -> list(items) { text ->
-            // Plain and designed titles are edited here; carded and animated ones are not yet.
-            for ((key, tool) in mapOf("labelHeadline" to "label and headline cards", "motion" to "animated titles", "playbackClock" to "titles limited to a range"))
+            // Plain, designed and carded titles are edited here; animated ones are not yet.
+            for ((key, tool) in mapOf("motion" to "animated titles", "playbackClock" to "titles limited to a range"))
                 if (present(text.raw(key))) unsupported(tool)
             TextOverlay(text.uuid("id"), text.string("text"), text.double("start"), text.double("end"), text.double("x"), text.double("y"), text.double("size"),
                 TextStyle.values().firstOrNull { it.name.lowercase() == text.string("style") } ?: throw ProjectError.InvalidDocument(),
                 TextColor.values().firstOrNull { it.name.lowercase() == text.string("color") } ?: throw ProjectError.InvalidDocument(),
-                text.fieldsOrNull("appearance")?.let { titleDesign(it) })
+                text.fieldsOrNull("appearance")?.let { titleDesign(it) }, text.fieldsOrNull("labelHeadline")?.let { labelHeadline(it) })
         } }
         val color = value.fieldsOrNull("color")?.let { grade ->
             if (present(grade.raw("motion"))) unsupported("animated Color")
@@ -85,7 +85,8 @@ internal object ProjectCoding {
         "images" to clip.images?.map { jsonObject("id" to it.id.text, "filename" to it.filename, "start" to it.start, "end" to it.end, "x" to it.x, "y" to it.y,
             "width" to it.width, "opacity" to it.opacity) },
         "texts" to clip.texts?.map { jsonObject("id" to it.id.text, "text" to it.text, "start" to it.start, "end" to it.end, "x" to it.x, "y" to it.y,
-            "size" to it.size, "style" to it.style.name.lowercase(), "color" to it.color.name.lowercase(), "appearance" to it.appearance?.let { design -> encode(design) }) },
+            "size" to it.size, "style" to it.style.name.lowercase(), "color" to it.color.name.lowercase(), "appearance" to it.appearance?.let { design -> encode(design) },
+            "labelHeadline" to it.labelHeadline?.let { group -> encode(group) }) },
         "videoEffects" to clip.videoEffects?.map { encode(it) },
         "frozenFrame" to clip.frozenFrame?.let { jsonObject("sourceTime" to it.sourceTime, "duration" to it.duration, "offset" to it.offset) },
         "effectWindows" to clip.effectWindows?.entries?.sortedBy { it.key.text }?.flatMap { listOf(it.key.text, it.value.map { i -> jsonObject("start" to i.start, "end" to i.end) }) })
@@ -254,6 +255,25 @@ internal object ProjectCoding {
         "outlined" to d.outlined, "border" to encode(d.border), "borderWidth" to d.borderWidth,
         "shadow" to d.shadow, "shade" to encode(d.shade), "shadowBlur" to d.shadowBlur, "shadowOffset" to d.shadowOffset,
         "plate" to d.plate.raw, "backing" to encode(d.backing), "padding" to d.padding, "radius" to d.radius)
+
+    // LabelHeadline: every key is required, as the iPhone's synthesized decoder requires them; only the offsets are optional.
+    fun labelHeadline(value: Fields): LabelHeadline {
+        fun offset(it: Fields) = TitleCard.Offset(it.double("x"), it.double("y"))
+        val card = value.fields("card").let { c -> TitleCard(ink(c.fields("fill")), ink(c.fields("border")), c.double("borderWidth"), c.double("padding"),
+            c.double("radius"), c.double("spacing"), c.fieldsOrNull("labelOffset")?.let(::offset), c.fieldsOrNull("headlineOffset")?.let(::offset)) }
+        val group = LabelHeadline(value.string("label"), titleDesign(value.fields("labelStyle")), titleDesign(value.fields("headlineStyle")),
+            value.double("labelScale"), value.double("headlineScale"), card)
+        if (!group.valid) throw ProjectError.InvalidDocument()
+        return group
+    }
+    fun encode(g: LabelHeadline): Map<String, Any?> {
+        fun offset(o: TitleCard.Offset?) = o?.let { jsonObject("x" to it.x, "y" to it.y) }
+        val c = g.card
+        return jsonObject("label" to g.label, "labelStyle" to encode(g.labelStyle), "headlineStyle" to encode(g.headlineStyle),
+            "labelScale" to g.labelScale, "headlineScale" to g.headlineScale,
+            "card" to jsonObject("fill" to encode(c.fill), "border" to encode(c.border), "borderWidth" to c.borderWidth, "padding" to c.padding,
+                "radius" to c.radius, "spacing" to c.spacing, "labelOffset" to offset(c.labelOffset), "headlineOffset" to offset(c.headlineOffset)))
+    }
 
     fun editState(value: Fields): EditState {
         // The sequential "clips" form predates the first public release.

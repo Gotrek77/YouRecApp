@@ -162,5 +162,42 @@ class StyledTitle(text: String, val design: TitleDesign, val fontSize: Float, ma
             val styled = StyledTitle(title.text, design, maxOf(8f, (title.size * minOf(canvasWidth, canvasHeight)).toFloat()), canvasWidth * 0.94f)
             return styled.picture(minOf(1f, canvasWidth / styled.width, canvasHeight / styled.height))
         }
+
+        /// A label and a headline on their card, as the iPhone's LabelHeadlineLayout draws them; the card shrinks to fit the frame.
+        fun card(title: TextOverlay, group: LabelHeadline, canvasWidth: Int, canvasHeight: Int): Bitmap? {
+            if (!title.hasText || canvasWidth <= 0 || canvasHeight <= 0) return null
+            val fontSize = maxOf(8f, (title.size * minOf(canvasWidth, canvasHeight)).toFloat())
+            val room = maxOf(1f, canvasWidth * 0.94f - 2 * Math.ceil(group.card.padding * fontSize).toFloat())
+            fun line(words: String, style: TitleDesign, scale: Double) = if (words.isBlank()) null else StyledTitle(words, style, (fontSize * scale).toFloat(), room)
+            val label = line(group.label, group.labelStyle, group.labelScale)
+            val headline = line(title.text, group.headlineStyle, group.headlineScale)
+            val shape = group.geometry(label?.let { it.width.toDouble() to it.height.toDouble() }, headline?.let { it.width.toDouble() to it.height.toDouble() }, fontSize.toDouble())
+            val width = shape.width.toFloat(); val height = shape.height.toFloat()
+            if (width <= 0 || height <= 0) return null
+            val scale = minOf(1f, canvasWidth / width, canvasHeight / height)
+            val w = Math.ceil((width * scale).toDouble()).toInt(); val h = Math.ceil((height * scale).toDouble()).toInt()
+            if (w < 1 || h < 1 || w > 16384 || h > 16384 || w.toLong() * h > 32_000_000) return null
+            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            canvas.save(); canvas.scale(scale, scale)
+            val card = group.card
+            val radius = minOf((card.radius * fontSize).toFloat(), minOf(width, height) / 2)
+            canvas.drawRoundRect(RectF(0f, 0f, width, height), radius, radius, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = card.fill.argb })
+            val stroke = minOf((card.borderWidth * fontSize).toFloat(), minOf(width, height))
+            if (stroke > 0) {
+                val inset = stroke / 2; val r = maxOf(0f, radius - inset)
+                canvas.drawRoundRect(RectF(inset, inset, width - inset, height - inset), r, r,
+                    Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = stroke; color = card.border.argb })
+            }
+            canvas.restore()
+            for ((styled, rect) in listOf(label to shape.label, headline to shape.headline)) {
+                if (styled == null || rect == null) continue
+                val picture = styled.picture(scale) ?: run { bitmap.recycle(); return null }
+                val target = RectF((rect.x * scale).toFloat(), (rect.y * scale).toFloat(), ((rect.x + rect.width) * scale).toFloat(), ((rect.y + rect.height) * scale).toFloat())
+                canvas.drawBitmap(picture, null, target, Paint(Paint.FILTER_BITMAP_FLAG))
+                picture.recycle()
+            }
+            return bitmap
+        }
     }
 }
