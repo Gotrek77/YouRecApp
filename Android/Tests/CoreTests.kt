@@ -142,6 +142,16 @@ private fun persistenceTests(root: File) {
         "An iPhone project document opens with its timeline, bookmark and settings")
     require(imported.revision == name, "An untouched snapshot keeps the bytes and name it arrived with")
     require(TrackTimeline.counterpart(UUID.fromString(clipID)).text == soundID, "Counterpart identities agree with the iPhone app")
+    // The iPhone app keeps transitions only in the timeline's list (clips carry none since the
+    // timeline format): an opening Dissolve written there opens here with its settings.
+    val fadeID = "7C3D2B1A-0000-4000-8000-0000000000F1"
+    val dissolve = """"transitions":[{"factor":1,"incoming":"$clipID","origin":{"ticks":0},"settings":{"audio":"crossfade","axis":"horizontal","divider":0.5,"duration":0.5,"first":{"x":0.5,"y":0.5,"zoom":1},"id":"$fadeID","reverse":false,"second":{"x":0.5,"y":0.5,"zoom":1},"style":"dissolve"}}]"""
+    val withDissolve = String(swiftSnapshot).replace("\"transitions\":[]", dissolve).toByteArray()
+    val dissolveName = RecoveryFile.hash(withDissolve) + ".json"
+    val faded = Project.readManifest(String(swiftHeader).replace(name, dissolveName).toByteArray()) { withDissolve }
+    val opening = faded.edit.timeline.transitions.single()
+    require(opening.settings.style == TransitionStyle.Dissolve && opening.settings.duration == 0.5 && opening.edge == -1 && opening.id.text == fadeID,
+        "An iPhone project with an opening Dissolve opens with that transition")
 
     // Complete movies no document mentions are found again, and nothing else.
     val folder = disk.folder(project.id)
