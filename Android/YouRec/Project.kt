@@ -236,6 +236,8 @@ class Project(var title: String) {
         if (state.timeline.subtitles != null) schemaVersion = maxOf(schemaVersion, 8)
         // An older reader would drop the label and the card.
         if (state.timeline.video.any { item -> item.content.texts?.any { it.labelHeadline != null } == true }) schemaVersion = maxOf(schemaVersion, 14)
+        // An older reader would restart an animation that runs across a title's edited pieces.
+        if (state.timeline.video.any { item -> item.content.texts?.any { it.playbackClock != null } == true }) schemaVersion = maxOf(schemaVersion, 16)
         // Older readers must reject transitions rather than silently change the running time.
         if (state.timeline.transitions.isNotEmpty()) schemaVersion = maxOf(schemaVersion, 6)
         val base = state.timeline.captureBase ?: captureLedger.size

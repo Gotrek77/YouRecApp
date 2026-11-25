@@ -59,18 +59,24 @@ class TitleTextures {
     private val entries = LinkedHashMap<Pair<TextOverlay, Pair<Int, Int>>, Entry>(16, 0.75f, true)
     private var program: OverlayProgram? = null
 
-    /// Draw one title on a canvas of `width` by `height`, through `placement` when its picture has a window of its own.
-    fun draw(title: TextOverlay, width: Int, height: Int, placement: Affine?, alpha: Float = 1f) {
-        // Position and time do not change the picture of a title: share it.
-        val key = title.copy(start = 0.0, end = 0.0, x = 0.0, y = 0.0) to (width to height)
+    /// Draw one title on a canvas of `width` by `height`, through `placement` when its picture has a window of its own,
+    /// in the `pose` of its animation (as the iPhone app moves the title's picture in square canvas pixels).
+    fun draw(title: TextOverlay, width: Int, height: Int, placement: Affine?, alpha: Float = 1f, pose: TitleMotion.Pose? = null) {
+        if (pose != null && (pose.opacity <= 0 || pose.right <= pose.left || pose.bottom <= pose.top)) return
+        // Position, time and animation do not change the picture of a title: share it.
+        val key = title.copy(start = 0.0, end = 0.0, x = 0.0, y = 0.0, motion = null, playbackClock = null) to (width to height)
         val entry = entries.getOrPut(key) { render(key.first, width, height) ?: return }
         while (entries.size > 24) { val oldest = entries.keys.first(); entries.remove(oldest)?.let { GLES20.glDeleteTextures(1, intArrayOf(it.texture), 0) } }
         val shader = program ?: OverlayProgram().also { program = it }
         // Kept inside the recorded frame, not the device screen or its safe area.
-        var place = Affine.translation((title.x * width - entry.size.width / 2).coerceIn(0.0, maxOf(0.0, width - entry.size.width)),
-                                       (title.y * height - entry.size.height / 2).coerceIn(0.0, maxOf(0.0, height - entry.size.height)))
+        val x = (title.x * width - entry.size.width / 2).coerceIn(0.0, maxOf(0.0, width - entry.size.width))
+        val y = (title.y * height - entry.size.height / 2).coerceIn(0.0, maxOf(0.0, height - entry.size.height))
+        val moved = pose?.rect(x, y, entry.size.width, entry.size.height) ?: doubleArrayOf(x, y, entry.size.width, entry.size.height)
+        val part = pose?.takeIf { it.cropped }?.let { floatArrayOf(it.left.toFloat(), it.top.toFloat(), it.right.toFloat(), it.bottom.toFloat()) }
+        val shown = CanvasSize(entry.size.width * ((pose?.right ?: 1.0) - (pose?.left ?: 0.0)), entry.size.height * ((pose?.bottom ?: 1.0) - (pose?.top ?: 0.0)))
+        var place = Affine(a = moved[2] / shown.width, d = moved[3] / shown.height, tx = moved[0], ty = moved[1])
         if (placement != null) place = place.then(placement)
-        shader.draw(entry.texture, place, entry.size, CanvasSize(width.toDouble(), height.toDouble()), alpha)
+        shader.draw(entry.texture, place, shown, CanvasSize(width.toDouble(), height.toDouble()), alpha * (pose?.opacity ?: 1.0).toFloat(), part)
     }
 
     private fun render(title: TextOverlay, width: Int, height: Int): Entry? {

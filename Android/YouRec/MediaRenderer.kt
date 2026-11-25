@@ -108,6 +108,8 @@ class RenderSources(private val project: Project, private val folder: File, priv
     /// Draw one moment of the edit into the current surface, already cleared to
     /// black. Preview and export both come through here. False if a picture
     /// that should be there could not be shown.
+    /// The plan's animated title runs; set with the plan by whoever draws it. Without it a title animates within its own piece.
+    var titleRanges: TitleMotionRanges? = null
     fun draw(layers: List<RenderPlan.Layer>, program: FrameProgram, width: Int, height: Int, transition: RenderPlan.TransitionFrame? = null,
              framesPerSecond: Double = 30.0): Boolean {
         if (transition != null && layers.none { it.placement != null }) return drawTransition(transition, program, width, height, framesPerSecond)
@@ -498,9 +500,16 @@ class RenderSources(private val project: Project, private val folder: File, priv
         blocks[key] = identity to sum
         return sum
     }
+    private val noRanges = TitleMotionRanges(emptyList())
     private fun drawOverlays(layer: RenderPlan.Layer, width: Int, height: Int, placement: Affine?) {
         for (image in layer.picture.clip.visibleImages(layer.picture.sourceTime)) pictures.draw(image, width, height, placement)
-        for (title in layer.picture.clip.visibleTexts(layer.picture.sourceTime)) titles.draw(title, width, height, placement)
+        val picture = layer.picture
+        for (title in picture.clip.visibleTexts(picture.sourceTime)) {
+            val motion = title.motion?.takeIf { it.active }
+            if (motion == null) { titles.draw(title, width, height, placement); continue }
+            val (elapsed, duration) = (titleRanges ?: noRanges).clock(title, picture.sourceTime, picture.interval.start.seconds + picture.elapsed)
+            titles.draw(title, width, height, placement, pose = motion.pose(elapsed, duration))
+        }
     }
 
     // Each partner is drawn whole into a texture of its own, then the two are
@@ -670,6 +679,7 @@ class MovieExport(project: Project, private val folder: File, private val export
                 val t0 = System.nanoTime()
                 FrameProgram.clear(width, height)
                 // A take that yields no picture must not become a black movie.
+                sources.titleRanges = plan.titleRanges
                 if (!sources.draw(plan.layers(time), program, width, height, plan.transition(time), fps.toDouble())) {
                     android.util.Log.w("YouRec", "export frame $n at ${time.seconds} s has no picture: " + plan.layers(time).joinToString { "${it.picture.source} @ ${it.picture.sourceTime} slot ${it.slot}" })
                     throw ProjectError.InvalidMedia()

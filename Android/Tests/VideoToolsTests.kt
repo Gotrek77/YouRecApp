@@ -264,15 +264,55 @@ private fun textTests() {
     val project = Project("Titles"); project.sources = listOf(source); project.history = listOf(edit)
     project.commit(TimelineEditing.updatingText(title.copy(size = 0.5), titled))
     requireFailure<ProjectError.InvalidDocument>("A title outside its limits is not a valid document") { project.validate() }
-    @Suppress("UNCHECKED_CAST")
-    for ((key, words) in listOf("motion" to "animated titles", "playbackClock" to "titles limited to a range")) {
-        val json = JSON.parse(JSON.write(ProjectCoding.encode(titled))) as MutableMap<String, Any?>
-        val clip = (((json["timeline"] as MutableMap<String, Any?>)["video"] as List<Any?>)[0] as MutableMap<String, Any?>)["content"] as MutableMap<String, Any?>
-        ((clip["texts"] as List<Any?>)[0] as MutableMap<String, Any?>)[key] = mapOf("x" to 1)
-        try { ProjectCoding.editState(Fields.of(json)); require(false, "$words must be refused") } catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains(words), "The refusal names $words") }
-    }
     require(TextColor.Yellow.argb == 0xFFFFD929.toInt() && TextColor.White.argb == 0xFFFFFFFF.toInt(), "Title colours are the iPhone app's")
     titleDesignTests(titled)
+    titleMotionTests(title, titled, split)
+}
+
+/// Title animation, as the iPhone's TitleMotion poses it and its compositor times it.
+@Suppress("UNCHECKED_CAST")
+private fun titleMotionTests(title: TextOverlay, titled: EditState, split: EditState) {
+    fun near(a: Double, b: Double) = Math.abs(a - b) < 1e-9
+    val fade = TitleMotion(entrance = TitleMove.Fade, exit = TitleMove.Fade)
+    require(fade.pose(0.0, 3.0).opacity == 0.0 && near(fade.pose(0.175, 3.0).opacity, 0.5) && fade.pose(1.5, 3.0) == TitleMotion.Pose() && near(fade.pose(3.0, 3.0).opacity, 0.0),
+        "A fade eases in over its entrance and out over its exit, fully readable between")
+    // Both ends asking for more than the title lasts are shrunk together, keeping a readable moment.
+    val long = TitleMotion(entrance = TitleMove.Fade, inSeconds = 2.0, exit = TitleMove.Fade, outSeconds = 2.0)
+    require(near(long.pose(1.0, 2.0).opacity, 1.0) && long.pose(0.9, 2.0).opacity < 1.0 && long.pose(1.1, 2.0).opacity < 1.0, "Too long an animation is fitted inside its title")
+    require(near(TitleMotion(entrance = TitleMove.Drift).pose(0.0, 3.0).rise, 0.32) && near(TitleMotion(exit = TitleMove.Drift, outDirection = TitleDirection.Left).pose(3.0, 3.0).shift, -0.32),
+        "A drift rises into place by default and leaves in its chosen direction")
+    require(near(TitleMotion(entrance = TitleMove.Scale).pose(0.0, 3.0).scale, 0.88), "A scale entrance grows from 88%")
+    val wipe = TitleMotion(entrance = TitleMove.Wipe).pose(0.175, 3.0)
+    require(wipe.cropped && near(wipe.right, 0.5) && wipe.left == 0.0 && wipe.opacity == 1.0, "A wipe reveals the title from the left by default")
+    require(wipe.rect(100.0, 50.0, 200.0, 40.0).toList() == listOf(100.0, 50.0, 100.0, 40.0), "A wiped title shows only its revealed part, in place")
+
+    // The iPhone's encoding: moves and durations always, directions only when chosen.
+    val iphone = """{"entrance":"drift","exit":"wipe","inSeconds":0.5,"outSeconds":0.35,"outDirection":"left"}"""
+    val decoded = ProjectCoding.titleMotion(Fields.of(JSON.parse(iphone.toByteArray())))
+    require(decoded == TitleMotion(TitleMove.Drift, TitleMove.Wipe, 0.5, 0.35, null, TitleDirection.Left), "An iPhone title animation opens")
+    require(JSON.parse(JSON.write(ProjectCoding.encode(decoded))) == JSON.parse(iphone.toByteArray()), "A title animation is written back as the iPhone app writes it")
+    requireFailure<ProjectError.InvalidDocument>("An animation outside its limits is not a valid document") { ProjectCoding.titleMotion(Fields.of(JSON.parse("""{"entrance":"fade","exit":"none","inSeconds":9,"outSeconds":0.35}""".toByteArray()))) }
+
+    // A title split by a cut animates once across its pieces.
+    val animated = TimelineEditing.updatingText(title.copy(motion = fade), split)
+    val ranges = TitleMotionRanges(animated.timeline.video)
+    val first = animated.clips[0].texts!!.single(); val second = animated.clips[1].texts!!.single()
+    require(ranges.clock(first, 3.0, 3.0) == 1.0 to 3.5 && ranges.clock(second, 5.0, 5.0) == 3.0 to 3.5, "A cut through an animated title does not restart its animation")
+    val reopened = ProjectCoding.editState(Fields.of(JSON.parse(JSON.write(ProjectCoding.encode(animated)))))
+    require(reopened == animated, "An animated title survives a save and a reopen")
+
+    // An iPhone clock: kept per piece while the animation is unchanged, followed when drawing, and marked for readers that know it.
+    val clock = TitlePlaybackClock(6.0, listOf(StrobeTimePoint(2.0, 1.0), StrobeTimePoint(5.5, 4.5)))
+    require(clock.elapsed(3.0) == 2.0 && clock.elapsed(0.0) == 1.0 && clock.elapsed(9.0) == 4.5, "A title clock maps source time to its animation time")
+    require(ranges.clock(first.copy(playbackClock = clock), 3.0, 99.0) == 2.0 to 6.0, "A title with a clock follows it")
+    val clocked = animated.copy(); clocked.timeline.replaceContents(mapOf(clocked.timeline.video[0].id to clocked.timeline.video[0].content.copy(texts = listOf(first.copy(playbackClock = clock)))))
+    val retitled = TimelineEditing.updatingText(first.copy(text = "Sicily"), clocked)
+    require(retitled.clips[0].texts!!.single().playbackClock == clock && retitled.clips[1].texts!!.single().playbackClock == null, "Editing the words keeps each piece's own clock")
+    require(TimelineEditing.updatingText(first.copy(motion = TitleMotion(entrance = TitleMove.Wipe)), clocked).clips[0].texts!!.single().playbackClock == null, "A new animation drops the old clock")
+    require(ProjectCoding.editState(Fields.of(JSON.parse(JSON.write(ProjectCoding.encode(clocked))))) == clocked, "A title clock survives a save and a reopen")
+    val project = Project("Clock"); project.history = listOf(titled)
+    project.commit(clocked)
+    require(project.schemaVersion >= 16, "A project with a title clock is marked for readers that know clocks")
 }
 
 /// Designed titles, in the form the iPhone app writes them (synthesized Codable: every field, the gradient only when set).

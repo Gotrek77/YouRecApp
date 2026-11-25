@@ -9,6 +9,8 @@ class RenderPlan(edit: EditState) {
     val timeline: TrackTimeline = edit.timeline.copy()
     val duration: EditTime = timeline.duration
     private val pictures = timeline.video.sortedWith(TrackTimeline.backToFront)
+    /// Animated titles that run across cuts, as one animation each.
+    val titleRanges by lazy { TitleMotionRanges(timeline.video) }
     // Subtitles are captions in project time, over every picture.
     private val captionCues = SubtitleEditing.cues(timeline)
     /// The captions on screen at `time`, styled by the project's subtitle settings.

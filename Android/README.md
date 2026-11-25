@@ -66,9 +66,11 @@ capture, recording controls, the cut editor, export.
   with weight, italic and alignment, a border outside the letters, a drop
   shadow, and a box behind the title or each line. Label + headline puts a
   small label and a headline on a card, in the iPhone's six card looks, each
-  line with its own font and size. Size, position and duration as well; a
+  line with its own font and size. Titles animate in and out (fade, drift,
+  scale or wipe, with direction and duration), once across the cuts they
+  span, as on iPhone. Size, position and duration as well; a
   title stays with its footage through cuts, moves and speed changes, and
-  designed and carded titles from iPhone projects open with them.
+  designed, carded and animated titles from iPhone projects open with them.
   **Color** grades the selected clips or the whole project: the fourteen
   built-in looks or an imported `.cube` LUT (3D or 1D, Rec.709), with strength,
   after exposure, warmth and tint. Exposure and white balance are per-channel
@@ -159,7 +161,8 @@ In titles: imported fonts and the iPhone's other system fonts, saved channel
 styles, the Text panel's gradient and colour pickers, eyedropper and fine
 sliders (shadow blur and offset, padding, corner radius), the card's colour,
 padding, radius and spacing sliders and its X/Y offsets for each line (offsets
-made on iPhone are kept and drawn), animated titles ·
+made on iPhone are kept and drawn), the animation's replay button and its
+duration slider (presets instead) ·
 Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export · Inside video effects:
 Night fix Medium and Precise (motion-aligned fusion), a Chroma Key clean
 plate, a background movie's own sound, a freeze's Continue and Fade sound,

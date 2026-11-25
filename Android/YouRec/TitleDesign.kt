@@ -230,3 +230,118 @@ data class LabelHeadline(val label: String = "First text",
                 0.44, 1.0, TitleCard(fill = TitleInk(0, 0), borderWidth = 0.0, padding = 0.12, radius = 0.0, spacing = 0.03)))
     }
 }
+
+/// Title animation, ported from the iPhone's TitleMotion: an entrance and an
+/// exit, each a fade, drift, scale or wipe, eased and fitted inside the title's time.
+enum class TitleDirection(val raw: String) { Up("up"), Down("down"), Left("left"), Right("right") }
+enum class TitleMove(val raw: String) { None("none"), Fade("fade"), Drift("drift"), Scale("scale"), Wipe("wipe") }
+data class TitleMotion(val entrance: TitleMove = TitleMove.None, val exit: TitleMove = TitleMove.None,
+                       val inSeconds: Double = 0.35, val outSeconds: Double = 0.35,
+                       val inDirection: TitleDirection? = null, val outDirection: TitleDirection? = null) {
+    val active: Boolean get() = entrance != TitleMove.None || exit != TitleMove.None
+    val valid: Boolean get() = inSeconds in 0.05..5.0 && outSeconds in 0.05..5.0
+
+    /// `rise` and `shift` are in title heights; `left`…`bottom` the visible part of the picture.
+    data class Pose(val opacity: Double = 1.0, val scale: Double = 1.0, val rise: Double = 0.0, val shift: Double = 0.0,
+                    val left: Double = 0.0, val right: Double = 1.0, val top: Double = 0.0, val bottom: Double = 1.0) {
+        val cropped: Boolean get() = left > 0 || right < 1 || top > 0 || bottom < 1
+        /// The rectangle (x, y, width, height, y down) the visible part covers, for a title at `rect`.
+        fun rect(x: Double, y: Double, width: Double, height: Double): DoubleArray {
+            val w = width * scale; val h = height * scale
+            return doubleArrayOf(x + width / 2 - w / 2 + w * left + shift * height, y + height / 2 - h / 2 + rise * height + h * top, w * (right - left), h * (bottom - top))
+        }
+    }
+    private fun fittedEnds(duration: Double): Pair<Double, Double> {
+        val a = if (entrance == TitleMove.None) 0.0 else inSeconds
+        val b = if (exit == TitleMove.None) 0.0 else outSeconds
+        if (a + b <= 0) return 0.0 to 0.0
+        // Keep a fully readable interval even if both requested transitions exceed the title.
+        val hold = minOf(0.1, maxOf(0.0, duration * 0.2))
+        val fit = minOf(1.0, maxOf(0.0, duration - hold) / (a + b))
+        return a * fit to b * fit
+    }
+    fun pose(time: Double, duration: Double): Pose {
+        val (inEnd, outEnd) = fittedEnds(duration)
+        val entering = inEnd > 0 && time < inEnd
+        val leaving = outEnd > 0 && time > duration - outEnd
+        if (!entering && !leaving) return Pose()
+        val t = (if (entering) time / inEnd else (duration - time) / outEnd).coerceIn(0.0, 1.0)
+        val eased = t * t * (3 - 2 * t)
+        val direction = if (entering) inDirection else outDirection
+        return when (if (entering) entrance else exit) {
+            TitleMove.None -> Pose()
+            TitleMove.Fade -> Pose(opacity = eased)
+            TitleMove.Drift -> {
+                val offset = (if (entering) -0.32 else 0.32) * (1 - eased)
+                when (direction ?: TitleDirection.Up) {
+                    TitleDirection.Up -> Pose(opacity = eased, rise = -offset)
+                    TitleDirection.Down -> Pose(opacity = eased, rise = offset)
+                    TitleDirection.Left -> Pose(opacity = eased, shift = -offset)
+                    TitleDirection.Right -> Pose(opacity = eased, shift = offset)
+                }
+            }
+            TitleMove.Scale -> Pose(opacity = eased, scale = 1 + (if (entering) -0.12 else 0.08) * (1 - eased))
+            TitleMove.Wipe -> when (direction ?: TitleDirection.Right) {
+                TitleDirection.Right -> if (entering) Pose(right = eased) else Pose(left = 1 - eased)
+                TitleDirection.Left -> if (entering) Pose(left = 1 - eased) else Pose(right = eased)
+                TitleDirection.Down -> if (entering) Pose(bottom = eased) else Pose(top = 1 - eased)
+                TitleDirection.Up -> if (entering) Pose(top = 1 - eased) else Pose(bottom = eased)
+            }
+        }
+    }
+}
+
+/// A source-anchored title clock, written by the iPhone app when only the middle
+/// of an animated title is edited: the animation keeps running across the pieces.
+data class TitlePlaybackClock(val duration: Double, val points: List<StrobeTimePoint>) {
+    fun elapsed(source: Double): Double {
+        if (source <= points.first().source) return points.first().elapsed
+        if (source >= points.last().source) return points.last().elapsed
+        var lo = 0; var hi = points.size - 1
+        while (hi - lo > 1) { val mid = (lo + hi) / 2; if (points[mid].source < source) lo = mid else hi = mid }
+        val a = points[lo]; val b = points[hi]
+        return a.elapsed + (b.elapsed - a.elapsed) * (source - a.source) / (b.source - a.source)
+    }
+    val valid: Boolean get() = duration.isFinite() && duration > 0 && points.isNotEmpty() && points.all { it.source.isFinite() && it.elapsed.isFinite() }
+        && points.zipWithNext().all { (a, b) -> a.source <= b.source && a.elapsed <= b.elapsed }
+}
+
+/// Like the iPhone's TitleMotionRanges: an animated title split by straight cuts
+/// animates once across its pieces; a real gap or a changed motion starts a new run.
+class TitleMotionRanges(video: List<VideoTimelineItem>) {
+    private val intervals = HashMap<Pair<java.util.UUID, TitleMotion>, List<ClosedFloatingPointRange<Double>>>()
+    init {
+        val parts = HashMap<Pair<java.util.UUID, TitleMotion>, MutableList<ClosedFloatingPointRange<Double>>>()
+        for (item in video) {
+            val clip = item.content
+            for (title in clip.texts ?: emptyList()) {
+                val motion = title.motion
+                if (motion == null || !motion.active || title.end <= clip.start || title.start >= clip.end) continue
+                val start = item.start.seconds
+                val clock = title.playbackClock
+                val range = if (clock != null) (start - clock.elapsed(clip.start)).let { it..it + clock.duration }
+                    else (start + clip.timelineTime(maxOf(clip.start, title.start)))..(start + clip.timelineTime(minOf(clip.end, title.end)))
+                if (clock != null || range.endInclusive > range.start) parts.getOrPut(title.id to motion) { mutableListOf() }.add(range)
+            }
+        }
+        for ((key, list) in parts) {
+            val runs = ArrayList<ClosedFloatingPointRange<Double>>()
+            for (part in list.sortedBy { it.start }) {
+                val previous = runs.lastOrNull()
+                if (previous != null && part.start <= previous.endInclusive + 1.0 / EditTime.scale) runs[runs.size - 1] = previous.start..maxOf(previous.endInclusive, part.endInclusive)
+                else runs.add(part)
+            }
+            intervals[key] = runs
+        }
+    }
+    fun range(text: TextOverlay, time: Double): ClosedFloatingPointRange<Double>? {
+        val motion = text.motion?.takeIf { it.active } ?: return null
+        return intervals[text.id to motion]?.firstOrNull { time >= it.start - 0.00001 && time <= it.endInclusive + 0.00001 }
+    }
+    /// How far into its animation a title is, and how long the animation lasts, as the iPhone's compositor reckons them.
+    fun clock(text: TextOverlay, sourceTime: Double, time: Double): Pair<Double, Double> {
+        text.playbackClock?.let { return it.elapsed(sourceTime) to it.duration }
+        val global = range(text, time) ?: return (sourceTime - text.start) to (text.end - text.start)
+        return (time - global.start) to (global.endInclusive - global.start)
+    }
+}

@@ -1649,6 +1649,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
     private var titleSection = TitleDesignControls.Section.Looks
     private val MAX_PANEL_SHARE = 0.33
     private var titlePart = LabelHeadline.Part.Headline
+    private var titleMotionExit = false
     // Switching layout and back restores what the other layout had, as on iPhone.
     private var previousGroup: Pair<LabelHeadline, Double>? = null
     private var previousSingleSize: Double? = null
@@ -1745,6 +1746,36 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                 }
                 save(message, reopen = true)
             }) add(view)
+        }
+        // Entrance and exit animation, for the whole title (both lines of a card move together).
+        val motion = title.motion ?: TitleMotion()
+        val exitSide = titleMotionExit
+        val move = if (exitSide) motion.exit else motion.entrance
+        fun moved(next: TitleMotion, message: String) { title = title.copy(motion = next.takeIf { it != TitleMotion() }); save(message, reopen = true) }
+        add(TitleDesignControls.choices(context, listOf(
+            pick("Entrance", "Animation Entrance", !exitSide) { titleMotionExit = false; save("Text changed", reopen = true) },
+            pick("Exit", "Animation Exit", exitSide) { titleMotionExit = true; save("Text changed", reopen = true) }) +
+            TitleMove.values().map { m ->
+                val name = m.raw.replaceFirstChar { it.uppercase() }
+                pick(name, (if (exitSide) "Exit " else "Entrance ") + name, m == move) {
+                    moved(if (exitSide) motion.copy(exit = m) else motion.copy(entrance = m), "Text animation")
+                }
+            }))
+        if (move == TitleMove.Drift || move == TitleMove.Wipe) {
+            val direction = (if (exitSide) motion.outDirection else motion.inDirection) ?: if (move == TitleMove.Drift) TitleDirection.Up else TitleDirection.Right
+            add(TitleDesignControls.choices(context, TitleDirection.values().map { d ->
+                val name = d.raw.replaceFirstChar { it.uppercase() }
+                pick(name, "Direction " + name, d == direction) { moved(if (exitSide) motion.copy(outDirection = d) else motion.copy(inDirection = d), "Text animation") }
+            }))
+        }
+        if (move != TitleMove.None) {
+            val seconds = if (exitSide) motion.outSeconds else motion.inSeconds
+            add(TitleDesignControls.choices(context, listOf(0.2, 0.35, 0.7, 1.0, 2.0).map { value ->
+                val name = ZoomTransition.number(value) + " s"
+                pick(name, "Animation lasts " + name, Math.abs(seconds - value) < 0.001) {
+                    moved(if (exitSide) motion.copy(outSeconds = value) else motion.copy(inSeconds = value), "Text animation")
+                }
+            }))
         }
         // The plain styles and colours of a single title: choosing a style leaves a design for the plain title.
         if (group == null) {

@@ -51,6 +51,7 @@ class EditFrames(project: Project, folder: File) {
             GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, ids[0], 0)
             if (GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) != GLES20.GL_FRAMEBUFFER_COMPLETE) return null
             FrameProgram.clear(width, height)
+            sources.titleRanges = plan.titleRanges
             if (!sources.draw(plan.layers(time), shader, width, height, plan.transition(time))) return null
             sources.drawCaptions(plan.captions(time), width, height)
             val pixels = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())

@@ -215,6 +215,7 @@ class EditorController {
             val layers = (if (time >= duration && duration > 0) plan?.ending else plan?.layers(EditTime.seconds(time))) ?: emptyList()
             val mix = if (time >= duration && duration > 0) plan?.transition(EditTime.seconds(duration) - EditTime.ticks(EditTime.scale / 60)) else plan?.transition(EditTime.seconds(time))
             try {
+                sources?.titleRanges = plan?.titleRanges
                 sources?.draw(layers, shader, width, height, mix)
                 plan?.let { sources?.drawCaptions(it.captions(EditTime.seconds(minOf(time, duration - 1.0 / 60).coerceAtLeast(0.0))), width, height) }
             }

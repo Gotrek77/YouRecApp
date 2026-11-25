@@ -308,7 +308,8 @@ class OverlayProgram {
     }
 
     /// `placement` maps the image's own pixels to canvas pixels, both with y down.
-    fun draw(textureID: Int, placement: Affine, size: CanvasSize, canvas: CanvasSize, alpha: Float = 1f) {
+    /// `part` is the piece of the texture to draw (left, top, right, bottom, as fractions, top down); the whole of it by default.
+    fun draw(textureID: Int, placement: Affine, size: CanvasSize, canvas: CanvasSize, alpha: Float = 1f, part: FloatArray? = null) {
         val px = doubleArrayOf(0.0, size.width, 0.0, size.width); val py = doubleArrayOf(size.height, size.height, 0.0, 0.0)
         for (i in 0 until 4) {
             quad[i * 2] = (placement.x(px[i], py[i]) * 2 / canvas.width - 1).toFloat()
@@ -325,11 +326,15 @@ class OverlayProgram {
         GLES20.glEnableVertexAttribArray(position)
         GLES20.glVertexAttribPointer(position, 2, GLES20.GL_FLOAT, false, 0, quadBuffer)
         GLES20.glEnableVertexAttribArray(coordinate)
-        GLES20.glVertexAttribPointer(coordinate, 2, GLES20.GL_FLOAT, false, 0, coordinates)
+        val uv = if (part == null) coordinates else partBuffer.apply {
+            position(0); put(floatArrayOf(part[0], part[3], part[2], part[3], part[0], part[1], part[2], part[1])); position(0)
+        }
+        GLES20.glVertexAttribPointer(coordinate, 2, GLES20.GL_FLOAT, false, 0, uv)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         GLES20.glDisableVertexAttribArray(position); GLES20.glDisableVertexAttribArray(coordinate)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
         GLES20.glDisable(GLES20.GL_BLEND)
     }
+    private val partBuffer: FloatBuffer = ByteBuffer.allocateDirect(32).order(ByteOrder.nativeOrder()).asFloatBuffer()
     fun release() { GLES20.glDeleteProgram(program) }
 }

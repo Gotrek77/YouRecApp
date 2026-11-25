@@ -199,7 +199,8 @@ object TimelineEditing {
     fun updatingText(text: TextOverlay, state: EditState): EditState {
         val result = state.copy()
         result.timeline.replaceContents(result.timeline.video.filter { item -> item.content.texts?.any { it.id == text.id } == true }
-            .associate { it.id to it.content.copy(texts = it.content.texts!!.map { old -> if (old.id == text.id) text else old }) })
+            // Each piece keeps its own iPhone clock while the animation is unchanged; a new animation starts afresh.
+            .associate { it.id to it.content.copy(texts = it.content.texts!!.map { old -> if (old.id == text.id) text.copy(playbackClock = old.playbackClock.takeIf { old.motion == text.motion }) else old }) })
         return result
     }
     fun imagesAt(time: Double, state: EditState): List<ImageOverlay> {

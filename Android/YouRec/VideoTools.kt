@@ -103,7 +103,10 @@ data class TextOverlay(val id: UUID = UUID.randomUUID(), val text: String = star
                        /** A designed title (font, colours, outline, shadow, plate); null draws `style` and `color`. */
                        val appearance: TitleDesign? = null,
                        /** A label and a headline on a card; the headline's words are `text`. */
-                       val labelHeadline: LabelHeadline? = null) {
+                       val labelHeadline: LabelHeadline? = null,
+                       /** Entrance and exit animation. */ val motion: TitleMotion? = null,
+                       /** Written by the iPhone app when the middle of an animated title was edited; kept, and followed, here. */
+                       val playbackClock: TitlePlaybackClock? = null) {
     companion object { const val starterText = "Text" }
     /// A card with no headline still shows its label.
     val displayText: String get() = if (text.isBlank()) labelHeadline?.label ?: "" else text
@@ -111,6 +114,7 @@ data class TextOverlay(val id: UUID = UUID.randomUUID(), val text: String = star
     val design: TitleDesign get() = appearance ?: TitleDesign.legacy(style, color)
     fun valid(sourceDuration: Double) = start.isFinite() && end.isFinite() && start >= 0 && end > start && end <= sourceDuration + 0.001
         && text.length <= 500 && x.isFinite() && y.isFinite() && x in 0.0..1.0 && y in 0.0..1.0 && size.isFinite() && size in 0.02..0.3 && appearance?.valid != false && labelHeadline?.valid != false
+        && motion?.valid != false && playbackClock?.valid != false
 }
 object EditorDurationPresets { val wholeSeconds: List<Double> = (1..10).map { it.toDouble() } + listOf(15.0, 30.0, 60.0) }
 
