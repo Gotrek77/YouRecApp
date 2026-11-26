@@ -712,8 +712,34 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                     })
                 }, Design.label(context, "${settings.maxWords}", 14f, mono = true)))
             else add(Design.label(context, "The edit changed since transcription: transcribe again to change caption length.", 12f, Design.secondary))
-            add(choices(*TextStyle.values().map { style -> pick(style.name, style == settings.style) { change("Subtitle style") { it.subtitles = it.subtitles?.copy(style = style) } } }.toTypedArray()))
-            add(choices(*TextColor.values().map { color -> pick(color.name, color == settings.color) { change("Subtitle colour") { it.subtitles = it.subtitles?.copy(color = color) } } }.toTypedArray()))
+            // Title designs and animations for every caption, as on iPhone; Plain returns to Style and Colour.
+            fun restyle(message: String, apply: (SubtitleSettings) -> SubtitleSettings) = change(message.replace("Text", "Subtitle")) { it.subtitles = it.subtitles?.let(apply) }
+            val design = settings.design
+            val folder = store.folder(project)
+            val missing = design.face.takeIf { it.startsWith("import:") && ImportedFonts.resolve(it, folder) == null }?.let { ImportedFonts.label(it, folder) ?: it }
+            val importFont = {
+                navigation.pickMedia("*/*") { uri ->
+                    if (uri != null) store.importFont(uri, project.id) { faces, failure ->
+                        if (faces.isNullOrEmpty()) return@importFont say(failure ?: "The font could not be imported.")
+                        // Importing the missing font restores it with its saved face and weight.
+                        if (faces.any { it.id == design.face }) return@importFont openSubtitles()
+                        val face = faces.first()
+                        restyle("Text font") { it.copy(appearance = design.copy(face = face.id, weight = face.defaultWeight, italic = false)) }
+                    }
+                }
+            }
+            for (view in TitleDesignControls.views(context, design, settings.appearance == null, subtitleSection, true, { subtitleSection = it; openSubtitles() },
+                ImportedFonts.faces(folder), missing, importFont) { next, message -> restyle(message) { it.copy(appearance = next) } }) add(view)
+            for (view in TitleDesignControls.motionViews(context, settings.motion ?: TitleMotion(), subtitleMotionExit, { subtitleMotionExit = it; openSubtitles() }) { next, message ->
+                restyle(message) { it.copy(motion = next) }
+            }) add(view)
+            add(choices(*TextStyle.values().map { style -> pick(style.name, style == settings.style && settings.appearance == null) {
+                change("Subtitle style") { it.subtitles = it.subtitles?.copy(style = style, appearance = null) } } }.toTypedArray()))
+            // On designed subtitles the swatch is the letters' fill, in place of any gradient.
+            add(choices(*TextColor.values().map { color ->
+                val on = settings.appearance?.let { it.gradient == null && it.fill == TitleInk.of(color) } ?: (color == settings.color)
+                pick(color.name, on) { change("Subtitle colour") { it.subtitles = it.subtitles?.let { s -> s.appearance?.let { a -> s.copy(appearance = a.copy(fill = TitleInk.of(color), gradient = null)) } ?: s.copy(color = color) } } }
+            }.toTypedArray()))
             add(choices(pick("Small", settings.size < 0.045) { change("Subtitle size") { it.subtitles = it.subtitles?.copy(size = 0.04) } },
                 pick("Medium", settings.size in 0.045..0.06) { change("Subtitle size") { it.subtitles = it.subtitles?.copy(size = 0.052) } },
                 pick("Large", settings.size > 0.06) { change("Subtitle size") { it.subtitles = it.subtitles?.copy(size = 0.07) } },
@@ -731,13 +757,15 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                         .setPositiveButton("Save") { _, _ -> change("Caption corrected") { SubtitleEditing.correct(it, cue, field.text.toString()) } }.show()
                 }.apply { contentDescription = "Caption " + cue.text })
             }
-            add(android.widget.ScrollView(context).apply { addView(list) }.also { it.layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Design.dp(context, 160f)) })
+            add(android.widget.ScrollView(context).apply { isNestedScrollingEnabled = true; addView(list) }.also { it.layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Design.dp(context, 160f)) })
             add(Design.button(context, "Remove subtitles", Design.recording) { change("Subtitles removed") { SubtitleEditing.remove(it) } }.apply { contentDescription = "Remove subtitles" })
         }
         add(Design.button(context, "Done") { openSubtitlesLanguage = null; closePanel() }.apply { contentDescription = "Done with subtitles" })
-        showPanel(content)
+        showBoundedPanel(content, "subtitles")
     }
     private var openSubtitlesLanguage: String? = null
+    private var subtitleSection = TitleDesignControls.Section.Looks
+    private var subtitleMotionExit = false
 
     /// Replace the marked sound with a tone: the selected sound parts, or all
     /// sound in the range when none is selected. Apply is one undo step.
@@ -1764,35 +1792,9 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                 ImportedFonts.faces(folder), missing, importFont, ::restyle)) add(view)
         }
         // Entrance and exit animation, for the whole title (both lines of a card move together).
-        val motion = title.motion ?: TitleMotion()
-        val exitSide = titleMotionExit
-        val move = if (exitSide) motion.exit else motion.entrance
-        fun moved(next: TitleMotion, message: String) { title = title.copy(motion = next.takeIf { it != TitleMotion() }); save(message, reopen = true) }
-        add(TitleDesignControls.choices(context, listOf(
-            pick("Entrance", "Animation Entrance", !exitSide) { titleMotionExit = false; save("Text changed", reopen = true) },
-            pick("Exit", "Animation Exit", exitSide) { titleMotionExit = true; save("Text changed", reopen = true) }) +
-            TitleMove.values().map { m ->
-                val name = m.raw.replaceFirstChar { it.uppercase() }
-                pick(name, (if (exitSide) "Exit " else "Entrance ") + name, m == move) {
-                    moved(if (exitSide) motion.copy(exit = m) else motion.copy(entrance = m), "Text animation")
-                }
-            }))
-        if (move == TitleMove.Drift || move == TitleMove.Wipe) {
-            val direction = (if (exitSide) motion.outDirection else motion.inDirection) ?: if (move == TitleMove.Drift) TitleDirection.Up else TitleDirection.Right
-            add(TitleDesignControls.choices(context, TitleDirection.values().map { d ->
-                val name = d.raw.replaceFirstChar { it.uppercase() }
-                pick(name, "Direction " + name, d == direction) { moved(if (exitSide) motion.copy(outDirection = d) else motion.copy(inDirection = d), "Text animation") }
-            }))
-        }
-        if (move != TitleMove.None) {
-            val seconds = if (exitSide) motion.outSeconds else motion.inSeconds
-            add(TitleDesignControls.choices(context, listOf(0.2, 0.35, 0.7, 1.0, 2.0).map { value ->
-                val name = ZoomTransition.number(value) + " s"
-                pick(name, "Animation lasts " + name, Math.abs(seconds - value) < 0.001) {
-                    moved(if (exitSide) motion.copy(outSeconds = value) else motion.copy(inSeconds = value), "Text animation")
-                }
-            }))
-        }
+        for (view in TitleDesignControls.motionViews(context, title.motion ?: TitleMotion(), titleMotionExit, { titleMotionExit = it; save("Text changed", reopen = true) }) { next, message ->
+            title = title.copy(motion = next); save(message, reopen = true)
+        }) add(view)
         // The plain styles and colours of a single title: choosing a style leaves a design for the plain title.
         if (group == null) {
         add(choices(*TextStyle.values().map { style ->
@@ -1859,12 +1861,22 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             },
             Design.button(context, "Done", Design.accent) { save("Text changed"); closePanel() }, spacing = 6f).apply { setPadding(0, Design.dp(context, 6f), 0, 0) })
         // The card controls make this panel taller than the space under the timeline: it scrolls so the preview stays visible.
+        showBoundedPanel(content, "text")
+    }
+    /// A tall panel scrolls in a third of the screen so the preview stays visible.
+    /// Reopening the same panel after a change keeps its scroll position.
+    private var boundedScroll = "" to 0
+    private fun showBoundedPanel(content: View, name: String) {
         val bounded = object : android.widget.ScrollView(context) {
             override fun onMeasure(widthSpec: Int, heightSpec: Int) =
                 super.onMeasure(widthSpec, MeasureSpec.makeMeasureSpec((this@EditorView.height * MAX_PANEL_SHARE).toInt(), MeasureSpec.AT_MOST))
         }
         bounded.addView(content)
+        val restore = if (boundedScroll.first == name) boundedScroll.second else 0
+        boundedScroll = name to restore
+        bounded.setOnScrollChangeListener { _, _, y, _, _ -> boundedScroll = name to y }
         showPanel(bounded)
+        bounded.post { bounded.scrollTo(0, restore) }
     }
 
     private fun openExport() {

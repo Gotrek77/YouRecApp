@@ -24,6 +24,8 @@ object SubtitleModelPack {
 
     /// Download every file not yet verified; progress is over all bytes.
     fun download(root: File, progress: (Double) -> Unit = {}, cancelled: () -> Boolean = { false }) {
+        // A folder that does not exist yet reports no free space at all.
+        root.mkdirs()
         if (root.usableSpace < byteCount + 150_000_000L - files.sumOf { StudioModelPack.installed(root, it)?.length() ?: 0L })
             throw SubtitleError("Free at least 2 GB to download the speech model.")
         var done = 0L

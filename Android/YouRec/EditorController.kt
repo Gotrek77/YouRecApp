@@ -217,7 +217,7 @@ class EditorController {
             try {
                 sources?.titleRanges = plan?.titleRanges
                 sources?.draw(layers, shader, width, height, mix)
-                plan?.let { sources?.drawCaptions(it.captions(EditTime.seconds(minOf(time, duration - 1.0 / 60).coerceAtLeast(0.0))), width, height) }
+                plan?.let { val at = EditTime.seconds(minOf(time, duration - 1.0 / 60).coerceAtLeast(0.0)); sources?.drawCaptions(it.captions(at), at, width, height) }
             }
             catch (e: Exception) {
                 // The system can reclaim a decoder at any time. Close them; the next frame opens new ones.

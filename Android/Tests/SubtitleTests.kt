@@ -59,9 +59,28 @@ fun subtitleTests() {
     require(pasted.audio.last().subtitleWords.map { it.id }.intersect(pasted.audio.first().subtitleWords.map { it.id }.toSet()).isEmpty(), "Pasted words have their own identity")
     SubtitleEditing.remove(moved)
     require(moved.subtitles == null && moved.audio.all { it.subtitleWords.isEmpty() }, "Removing subtitles removes every word")
-    requireFailure<ProjectError.UnsupportedTools>("Title designs in subtitles are refused by name") {
+    // Title designs and animations in subtitles, as on iPhone: kept, drawn on every caption, their fonts kept.
+    val designed = project.edit.copy()
+    val look = TitleDesign.looks.first().design.copy(face = "import:" + "a".repeat(64) + ":0:Demo-Bold")
+    val motion = TitleMotion(entrance = TitleMove.Drift, exit = TitleMove.Fade)
+    designed.timeline.subtitles = designed.timeline.subtitles!!.copy(appearance = look, motion = motion)
+    project.commit(designed); project.validate()
+    val reread = ProjectCoding.editState(Fields.of(JSON.parse(JSON.write(ProjectCoding.encode(project.edit)))))
+    require(reread.timeline.subtitles?.appearance == look && reread.timeline.subtitles?.motion == motion, "Subtitle designs and animations survive persistence")
+    val shown = RenderPlan(project.edit).captions(t(2.0)).single()
+    require(shown.appearance == look && shown.motion == motion && shown.design == look, "Every caption is drawn with the subtitle design and animation")
+    require(RenderPlan(project.edit).captions(t(2.0)).single().id == shown.id, "A caption keeps its id from frame to frame, so its drawing is reused")
+    val caption = shown
+    val fading = TitleMotion(exit = TitleMove.Fade, outSeconds = 0.35)
+    val still = SubtitleCue.pose(caption.copy(motion = fading), t((caption.start + caption.end) / 2))
+    val leaving = SubtitleCue.pose(caption.copy(motion = fading), t(caption.end - 0.1))
+    require(still != null && abs(still.opacity - 1.0) < 1e-9 && leaving != null && leaving.opacity < 1.0,
+        "A caption's animation runs on its own cue: whole mid-cue, fading near its end (${still?.opacity}, ${leaving?.opacity})")
+    require(SubtitleCue.pose(caption.copy(motion = null), t(2.0)) == null, "A caption without animation has no pose")
+    require(project.fontFiles.contains("font-" + "a".repeat(64) + ".sfnt"), "A font used only by subtitles is kept with the project (${project.fontFiles})")
+    requireFailure<ProjectError.InvalidDocument>("An invalid subtitle animation is refused") {
         @Suppress("UNCHECKED_CAST") val raw = JSON.parse(JSON.write(ProjectCoding.encode(project.edit))) as MutableMap<String, Any?>
-        @Suppress("UNCHECKED_CAST") ((raw["timeline"] as MutableMap<String, Any?>)["subtitles"] as MutableMap<String, Any?>)["appearance"] = mapOf("x" to 1)
+        @Suppress("UNCHECKED_CAST") (((raw["timeline"] as MutableMap<String, Any?>)["subtitles"] as MutableMap<String, Any?>)["motion"] as MutableMap<String, Any?>)["inSeconds"] = -1.0
         ProjectCoding.editState(Fields.of(raw))
     }
     transcriberTests()

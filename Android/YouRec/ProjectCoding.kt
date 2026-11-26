@@ -144,16 +144,17 @@ internal object ProjectCoding {
     private fun subtitleWord(value: Fields) = SubtitleWord(value.uuid("id"), value.uuid("phraseID"), value.string("text"), value.double("start"), value.double("end"))
     private fun encode(word: SubtitleWord) = jsonObject("id" to word.id.text, "phraseID" to word.phraseID.text, "text" to word.text, "start" to word.start, "end" to word.end)
     private fun subtitleSettings(value: Fields): SubtitleSettings {
-        if (present(value.raw("appearance")) || present(value.raw("motion"))) unsupported("Title designs in subtitles")
         return SubtitleSettings(value.uuid("id"), value.int("maxWords"),
             TextStyle.values().firstOrNull { it.name.lowercase() == value.string("style") } ?: throw ProjectError.InvalidDocument(),
             TextColor.values().firstOrNull { it.name.lowercase() == value.string("color") } ?: throw ProjectError.InvalidDocument(),
             value.double("size"), value.double("y"), value.string("language"), value.string("timingFingerprint"), value.doubleOrNull("x"),
-            value.stringOrNull("font")?.let { raw -> SubtitleFont.values().firstOrNull { it.raw == raw } ?: throw ProjectError.InvalidDocument() })
+            value.stringOrNull("font")?.let { raw -> SubtitleFont.values().firstOrNull { it.raw == raw } ?: throw ProjectError.InvalidDocument() },
+            value.fieldsOrNull("appearance")?.let { titleDesign(it) }, value.fieldsOrNull("motion")?.let { titleMotion(it) })
     }
     private fun encode(settings: SubtitleSettings) = jsonObject("id" to settings.id.text, "maxWords" to settings.maxWords, "style" to settings.style.name.lowercase(),
         "color" to settings.color.name.lowercase(), "size" to settings.size, "y" to settings.y, "language" to settings.language,
-        "timingFingerprint" to settings.timingFingerprint, "x" to settings.x, "font" to settings.font?.raw)
+        "timingFingerprint" to settings.timingFingerprint, "x" to settings.x, "font" to settings.font?.raw,
+        "appearance" to settings.appearance?.let { encode(it) }, "motion" to settings.motion?.let { encode(it) })
     private fun enhancement(value: Fields) = AudioEnhancementRegion(value.uuid("id"), interval(value.fields("interval")), list(value.list("effects"), ::effect))
     /// Kinds and models this build does not know are kept as written.
     private fun effect(value: Fields) = AudioEffect(value.uuid("id"), EffectKind(value.string("kind")), value.bool("enabled"), value.double("amount"),

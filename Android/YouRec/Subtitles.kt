@@ -19,19 +19,27 @@ enum class SubtitleFont(val raw: String, val title: String) {
 }
 
 /// How subtitles look and how many words make a caption. `appearance` and
-/// `motion` (title designs) are the iPhone app's and refused by name here.
+/// `motion` are title designs and animations, as on iPhone; null draws `style` and `color`.
 data class SubtitleSettings(val id: UUID = UUID.randomUUID(), val maxWords: Int = 6, val style: TextStyle = TextStyle.Box,
                             val color: TextColor = TextColor.White, val size: Double = 0.052, val y: Double = 0.86,
-                            val language: String = "Auto", val timingFingerprint: String = "", val x: Double? = null, val font: SubtitleFont? = null) {
+                            val language: String = "Auto", val timingFingerprint: String = "", val x: Double? = null, val font: SubtitleFont? = null,
+                            val appearance: TitleDesign? = null, val motion: TitleMotion? = null) {
     val centerX: Double get() = x ?: 0.5
     val resolvedFont: SubtitleFont get() = font ?: SubtitleFont.System
-    val valid: Boolean get() = maxWords in 1..16 && size.isFinite() && size in 0.0001..0.30 && y.isFinite() && y in 0.0..1.0 && centerX.isFinite() && centerX in 0.0..1.0
+    val design: TitleDesign get() = appearance ?: TitleDesign.legacy(style, color)
+    val valid: Boolean get() = appearance?.valid != false && motion?.valid != false && maxWords in 1..16 && size.isFinite() && size in 0.0001..0.30 && y.isFinite() && y in 0.0..1.0 && centerX.isFinite() && centerX in 0.0..1.0
 }
 
 /// One caption on screen, in project seconds.
 data class SubtitleCue(val id: String, val audioID: UUID, val wordIDs: List<UUID>, val text: String, val start: Double, val end: Double) {
-    fun overlay(settings: SubtitleSettings) = TextOverlay(text = text, start = start, end = end, x = settings.centerX, y = settings.y,
-        size = settings.size.coerceAtLeast(0.02), style = settings.style, color = settings.color)
+    /// The caption's id follows the cue, so its drawing is reused frame after frame.
+    fun overlay(settings: SubtitleSettings) = TextOverlay(id = UUID.nameUUIDFromBytes(id.toByteArray()), text = text, start = start, end = end, x = settings.centerX, y = settings.y,
+        size = settings.size.coerceAtLeast(0.02), style = settings.style, color = settings.color,
+        appearance = settings.appearance, motion = settings.motion)
+    companion object {
+        /// A caption's animation runs over its own cue, as on iPhone; null when it does not move.
+        fun pose(caption: TextOverlay, time: EditTime) = caption.motion?.takeIf { it.active }?.pose(time.seconds - caption.start, caption.end - caption.start)
+    }
 }
 
 object SubtitleTiming {

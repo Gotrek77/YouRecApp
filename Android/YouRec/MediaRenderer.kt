@@ -119,7 +119,9 @@ class RenderSources(private val project: Project, private val folder: File, priv
     }
 
     /// Subtitles, over everything else and inside the recorded frame.
-    fun drawCaptions(captions: List<TextOverlay>, width: Int, height: Int) { for (caption in captions) titles.draw(caption, width, height, null) }
+    fun drawCaptions(captions: List<TextOverlay>, time: EditTime, width: Int, height: Int) {
+        for (caption in captions) titles.draw(caption, width, height, null, pose = SubtitleCue.pose(caption, time))
+    }
 
     /// One picture with its grade, images and titles. False if it could not be shown.
     private fun drawLayer(layer: RenderPlan.Layer, program: FrameProgram, width: Int, height: Int, overlays: Boolean = true, framesPerSecond: Double = 30.0): Boolean {
@@ -684,7 +686,7 @@ class MovieExport(project: Project, private val folder: File, private val export
                     android.util.Log.w("YouRec", "export frame $n at ${time.seconds} s has no picture: " + plan.layers(time).joinToString { "${it.picture.source} @ ${it.picture.sourceTime} slot ${it.slot}" })
                     throw ProjectError.InvalidMedia()
                 }
-                sources.drawCaptions(plan.captions(time), width, height)
+                sources.drawCaptions(plan.captions(time), time, width, height)
                 sources.closeUnused()
                 val t1 = System.nanoTime()
                 egl.setPresentationTime(window, n * 1_000_000_000L / fps)

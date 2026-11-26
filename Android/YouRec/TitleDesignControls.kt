@@ -71,6 +71,41 @@ object TitleDesignControls {
         return listOf(tabs) + body
     }
 
+    /// Entrance or exit animation: the move, its direction and its length. `exitSide` picks which one is shown.
+    fun motionViews(context: Context, motion: TitleMotion, exitSide: Boolean, chooseSide: (Boolean) -> Unit, change: (TitleMotion?, String) -> Unit): List<View> {
+        fun option(label: String, description: String, on: Boolean, action: () -> Unit) =
+            Design.button(context, label, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) { action() }
+                .apply { contentDescription = description + if (on) ", selected" else "" }
+        fun moved(next: TitleMotion, message: String) = change(next.takeIf { it != TitleMotion() }, message)
+        val move = if (exitSide) motion.exit else motion.entrance
+        val views = arrayListOf<View>(choices(context, listOf(
+            option("Entrance", "Animation Entrance", !exitSide) { chooseSide(false) },
+            option("Exit", "Animation Exit", exitSide) { chooseSide(true) }) +
+            TitleMove.values().map { m ->
+                val name = m.raw.replaceFirstChar { it.uppercase() }
+                option(name, (if (exitSide) "Exit " else "Entrance ") + name, m == move) {
+                    moved(if (exitSide) motion.copy(exit = m) else motion.copy(entrance = m), "Text animation")
+                }
+            }))
+        if (move == TitleMove.Drift || move == TitleMove.Wipe) {
+            val direction = (if (exitSide) motion.outDirection else motion.inDirection) ?: if (move == TitleMove.Drift) TitleDirection.Up else TitleDirection.Right
+            views += choices(context, TitleDirection.values().map { d ->
+                val name = d.raw.replaceFirstChar { it.uppercase() }
+                option(name, "Direction " + name, d == direction) { moved(if (exitSide) motion.copy(outDirection = d) else motion.copy(inDirection = d), "Text animation") }
+            })
+        }
+        if (move != TitleMove.None) {
+            val seconds = if (exitSide) motion.outSeconds else motion.inSeconds
+            views += choices(context, listOf(0.2, 0.35, 0.7, 1.0, 2.0).map { value ->
+                val name = ZoomTransition.number(value) + " s"
+                option(name, "Animation lasts " + name, Math.abs(seconds - value) < 0.001) {
+                    moved(if (exitSide) motion.copy(outSeconds = value) else motion.copy(inSeconds = value), "Text animation")
+                }
+            })
+        }
+        return views
+    }
+
     private fun weightName(weight: Int) = when (weight) { 400 -> "Regular"; 500 -> "Medium"; 600 -> "Semibold"; 700 -> "Bold"; 800 -> "Heavy"; else -> weight.toString() }
 
     fun choices(context: Context, items: List<View>) = HorizontalScrollView(context).apply {

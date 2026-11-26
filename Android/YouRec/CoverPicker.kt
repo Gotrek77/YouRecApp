@@ -53,7 +53,7 @@ class EditFrames(project: Project, folder: File) {
             FrameProgram.clear(width, height)
             sources.titleRanges = plan.titleRanges
             if (!sources.draw(plan.layers(time), shader, width, height, plan.transition(time))) return null
-            sources.drawCaptions(plan.captions(time), width, height)
+            sources.drawCaptions(plan.captions(time), time, width, height)
             val pixels = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
             GLES20.glReadPixels(0, 0, width, height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, pixels)
             // GL rows start at the bottom of the picture.
