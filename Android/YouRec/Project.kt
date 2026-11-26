@@ -211,7 +211,10 @@ class Project(var title: String) {
         sources.flatMap { source -> (source.videoEffects ?: emptyList()).flatMap { it.mediaFiles } }).distinct().sorted()
     /// Pictures placed over the video in any retained edit.
     val imageFiles: List<String> get() = snapshots.flatMap { snapshot -> snapshot.state.clips.flatMap { clip -> clip.images?.map { it.filename } ?: emptyList() } }.distinct().sorted()
-    val mediaFiles: List<String> get() = sources.map { it.filename } + (imageFiles + effectFiles).distinct().sorted()
+    /// Fonts imported for titles in any retained edit or recorded take, as the iPhone app's fontFiles.
+    val fontFiles: List<String> get() = (snapshots.flatMap { snapshot -> snapshot.state.clips.flatMap { it.texts ?: emptyList() } } + captureLedger.flatMap { it.clip.texts ?: emptyList() })
+        .flatMap { it.fontFaces }.mapNotNull { ImportedFontFace.Reference.of(it)?.filename }.distinct().sorted()
+    val mediaFiles: List<String> get() = sources.map { it.filename } + (imageFiles + effectFiles + fontFiles).distinct().sorted()
     val hasSourceMedia: Boolean get() = sources.isNotEmpty()
     val capturedDuration: Double get() = sources.sumOf { it.duration }
     val canUndo: Boolean get() = (deferredHistory?.cursor ?: historyCursor) > 0

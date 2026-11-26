@@ -54,7 +54,7 @@ class ImageTextures(private val folder: java.io.File) {
     }
 }
 
-class TitleTextures {
+class TitleTextures(private val folder: java.io.File? = null) {
     class Entry(val texture: Int, val size: CanvasSize)
     private val entries = LinkedHashMap<Pair<TextOverlay, Pair<Int, Int>>, Entry>(16, 0.75f, true)
     private var program: OverlayProgram? = null
@@ -80,7 +80,7 @@ class TitleTextures {
     }
 
     private fun render(title: TextOverlay, width: Int, height: Int): Entry? {
-        val bitmap = picture(title, width, height) ?: return null
+        val bitmap = picture(title, width, height, folder) ?: return null
         val ids = IntArray(1); GLES20.glGenTextures(1, ids, 0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
@@ -105,10 +105,10 @@ class TitleTextures {
         /// Bold are coloured letters with a soft shadow to stay legible over
         /// footage; Box sets them on a dark rounded plate; Highlight sets near-black
         /// letters on a plate of the chosen colour. Long lines wrap at 84% of the frame.
-        fun picture(title: TextOverlay, canvasWidth: Int, canvasHeight: Int): Bitmap? {
+        fun picture(title: TextOverlay, canvasWidth: Int, canvasHeight: Int, folder: java.io.File? = null): Bitmap? {
             if (!title.hasText) return null
-            title.labelHeadline?.let { return StyledTitle.card(title, it, canvasWidth, canvasHeight) }
-            title.appearance?.let { return StyledTitle.picture(title, it, canvasWidth, canvasHeight) }
+            title.labelHeadline?.let { return StyledTitle.card(title, it, canvasWidth, canvasHeight, folder) }
+            title.appearance?.let { return StyledTitle.picture(title, it, canvasWidth, canvasHeight, folder) }
             val size = maxOf(8f, (title.size * minOf(canvasWidth, canvasHeight)).toFloat())
             val plate = title.style == TextStyle.Box || title.style == TextStyle.Highlight
             val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {

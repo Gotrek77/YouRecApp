@@ -139,7 +139,7 @@ object ProjectArchive {
             // Keep a backup usable if a LUT has gone missing, even when only an undo
             // state refers to it. Original recordings remain required.
             val preserved = preservedOriginals(project, folder, disk)
-            val files = project.sources.map { it.filename } + (project.imageFiles + project.effectFiles).distinct().sorted().filter { File(folder, it).exists() } + preserved.keys.sorted()
+            val files = project.sources.map { it.filename } + (project.imageFiles + project.effectFiles + project.fontFiles).distinct().sorted().filter { File(folder, it).exists() } + preserved.keys.sorted()
             var required = 256_000_000L
             for (name in files) {
                 val file = preserved[name] ?: File(folder, name)

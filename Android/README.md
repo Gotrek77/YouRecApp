@@ -63,7 +63,8 @@ capture, recording controls, the cut editor, export.
   1:1, 4:5), and **Mirror**, on the selected clips or the whole project.
   **Text** puts timed titles on the picture in the four plain styles and six
   colours, or designed: the iPhone app's 24 looks, its ten bundled typefaces
-  with weight, italic and alignment, a border outside the letters, a drop
+  with weight, italic and alignment, or a TTF, OTF, TTC or OTC font imported
+  into the project (kept with it as on iPhone), a border outside the letters, a drop
   shadow, and a box behind the title or each line. Label + headline puts a
   small label and a headline on a card, in the iPhone's six card looks, each
   line with its own font and size. Titles animate in and out (fade, drift,
@@ -157,7 +158,8 @@ them is **refused by name** on Android ("This project uses Video effects…")
 instead of being opened and quietly losing that work on the next save, the same
 policy older iPhone builds apply to newer projects.
 
-In titles: imported fonts and the iPhone's other system fonts, saved channel
+In titles: the iPhone's other system fonts, a font library shared between
+projects (Android keeps each font in its project; import it again elsewhere), saved channel
 styles, the Text panel's gradient and colour pickers, eyedropper and fine
 sliders (shadow blur and offset, padding, corner radius), the card's colour,
 padding, radius and spacing sliders and its X/Y offsets for each line (offsets

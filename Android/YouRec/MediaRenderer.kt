@@ -19,7 +19,7 @@ import java.util.UUID
 /// reused across cuts, closed together.
 class RenderSources(private val project: Project, private val folder: File, private val strict: Boolean = false) {
     private val failed = HashSet<UUID>()
-    private val titles = TitleTextures()
+    private val titles = TitleTextures(folder)
     private val pictures = ImageTextures(folder)
     private val looks = HashMap<Any, IntArray>()   // look or LUT file -> texture, dimension, columns, rows
     private val domains = HashMap<Any, Pair<FloatArray, FloatArray>>()

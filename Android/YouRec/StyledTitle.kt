@@ -22,7 +22,8 @@ object TitleFonts {
 
     /// The typeface for a design: the family's file for its slant, at its weight.
     /// A family without a slanted file is drawn upright, as on iPhone: italic is never synthesized.
-    fun typeface(design: TitleDesign): Typeface = synchronized(cache) {
+    fun typeface(design: TitleDesign, folder: java.io.File? = null): Typeface = synchronized(cache) {
+        if (design.face.startsWith("import:")) return imported(design, folder)
         val family = TitleTypeface.of(design.face)
         val italic = design.italic && family?.slanted != null
         val key = "${design.face}/${design.weight}/$italic"
@@ -31,6 +32,20 @@ object TitleFonts {
             else load(family.id, design.weight, italic)
         cache[key] = made
         made
+    }
+
+    /// A face imported into the project, at its weight when it has a weight axis. A missing
+    /// face is drawn in the system font, as on iPhone, and is not remembered: its file may arrive.
+    private fun imported(design: TitleDesign, folder: java.io.File?): Typeface {
+        val (file, face) = ImportedFonts.resolve(design.face, folder) ?: return Typeface.DEFAULT
+        val key = "${file.path}/${design.face}/${design.weight}"
+        cache[key]?.let { return it }
+        val index = ImportedFontFace.Reference.of(design.face)!!.index
+        val made = try {
+            Typeface.Builder(file).setTtcIndex(index).apply { if (face.weights.size > 1) setFontVariationSettings("'wght' ${design.weight}") }.build()
+        } catch (e: Exception) { android.util.Log.w("YouRec", "imported font ${file.name} cannot be read", e); null } ?: return Typeface.DEFAULT
+        cache[key] = made
+        return made
     }
 
     private fun load(id: String, weight: Int, italic: Boolean): Typeface {
@@ -59,9 +74,9 @@ object TitleFonts {
 /// A designed title, ported from the iPhone app's StyledTextLayout: the whole
 /// string is shaped first, then the plate, the outline outside the letters, the
 /// fill or gradient, and one shadow cast by the finished lettering (not the plate).
-class StyledTitle(text: String, val design: TitleDesign, val fontSize: Float, maxWidth: Float) {
+class StyledTitle(text: String, val design: TitleDesign, val fontSize: Float, maxWidth: Float, folder: java.io.File? = null) {
     private val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-        typeface = TitleFonts.typeface(design); textSize = fontSize; letterSpacing = design.tracking.toFloat()
+        typeface = TitleFonts.typeface(design, folder); textSize = fontSize; letterSpacing = design.tracking.toFloat()
     }
     private val inset: Float
     private val layout: StaticLayout
@@ -157,18 +172,18 @@ class StyledTitle(text: String, val design: TitleDesign, val fontSize: Float, ma
     companion object {
         /// A designed overlay title on a canvas of the given size, as the iPhone's TextRasterizer draws it:
         /// lines wrap at 94% of the frame, and the whole title shrinks to fit inside it.
-        fun picture(title: TextOverlay, design: TitleDesign, canvasWidth: Int, canvasHeight: Int): Bitmap? {
+        fun picture(title: TextOverlay, design: TitleDesign, canvasWidth: Int, canvasHeight: Int, folder: java.io.File? = null): Bitmap? {
             if (!title.hasText || canvasWidth <= 0 || canvasHeight <= 0) return null
-            val styled = StyledTitle(title.text, design, maxOf(8f, (title.size * minOf(canvasWidth, canvasHeight)).toFloat()), canvasWidth * 0.94f)
+            val styled = StyledTitle(title.text, design, maxOf(8f, (title.size * minOf(canvasWidth, canvasHeight)).toFloat()), canvasWidth * 0.94f, folder)
             return styled.picture(minOf(1f, canvasWidth / styled.width, canvasHeight / styled.height))
         }
 
         /// A label and a headline on their card, as the iPhone's LabelHeadlineLayout draws them; the card shrinks to fit the frame.
-        fun card(title: TextOverlay, group: LabelHeadline, canvasWidth: Int, canvasHeight: Int): Bitmap? {
+        fun card(title: TextOverlay, group: LabelHeadline, canvasWidth: Int, canvasHeight: Int, folder: java.io.File? = null): Bitmap? {
             if (!title.hasText || canvasWidth <= 0 || canvasHeight <= 0) return null
             val fontSize = maxOf(8f, (title.size * minOf(canvasWidth, canvasHeight)).toFloat())
             val room = maxOf(1f, canvasWidth * 0.94f - 2 * Math.ceil(group.card.padding * fontSize).toFloat())
-            fun line(words: String, style: TitleDesign, scale: Double) = if (words.isBlank()) null else StyledTitle(words, style, (fontSize * scale).toFloat(), room)
+            fun line(words: String, style: TitleDesign, scale: Double) = if (words.isBlank()) null else StyledTitle(words, style, (fontSize * scale).toFloat(), room, folder)
             val label = line(group.label, group.labelStyle, group.labelScale)
             val headline = line(title.text, group.headlineStyle, group.headlineScale)
             val shape = group.geometry(label?.let { it.width.toDouble() to it.height.toDouble() }, headline?.let { it.width.toDouble() to it.height.toDouble() }, fontSize.toDouble())

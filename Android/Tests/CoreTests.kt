@@ -25,6 +25,7 @@ fun main(arguments: Array<String>) {
     videoToolsTests()
     clipboardTests()
     archiveTests(File(root, "Archive"))
+    importedFontTests(File(root, "Fonts"))
     censorTests()
     enhanceTests()
     subtitleTests()

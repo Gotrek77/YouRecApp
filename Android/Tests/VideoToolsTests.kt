@@ -338,10 +338,11 @@ private fun titleDesignTests(titled: EditState) {
     val designed = withAppearance(ProjectCoding.encode(design))
     require(designed.clips[0].texts!!.single().appearance == design, "A designed title opens in its project")
     require(ProjectCoding.encode(designed) == ProjectCoding.encode(withAppearance(ProjectCoding.encode(design))), "A designed title survives a save and a reopen")
-    for ((face, words) in listOf("import:ABCDEF.ttf#MyFont" to "imported fonts", "Avenir-Heavy" to "Avenir-Heavy")) {
-        try { withAppearance(ProjectCoding.encode(design.copy(face = face))); require(false, "$face must be refused") }
-        catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains(words), "A font this build cannot draw is refused by name ($words)") }
-    }
+    try { withAppearance(ProjectCoding.encode(design.copy(face = "Avenir-Heavy"))); require(false, "Avenir-Heavy must be refused") }
+    catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains("Avenir-Heavy"), "An iPhone system font this build cannot draw is refused by name") }
+    for (face in listOf("import:${"0".repeat(64)}:0:MyFont-Bold", "import:ABCDEF.ttf#MyFont"))
+        require(withAppearance(ProjectCoding.encode(design.copy(face = face))).clips[0].texts!!.single().appearance?.face == face,
+            "An imported font opens and is kept as written, even when its file is missing ($face)")
     requireFailure<ProjectError.InvalidDocument>("A design outside its limits is not a valid document") { withAppearance(ProjectCoding.encode(design.copy(padding = 2.0))) }
     require(TitleDesign().copy(outlined = true, borderWidth = 0.09).applyingLook(design).let { it.outlined && it.borderWidth == 0.09 && it.face == "unbounded" },
         "Choosing a look keeps the title's border")
@@ -379,8 +380,9 @@ private fun labelHeadlineTests(titled: EditState) {
     requireFailure<ProjectError.InvalidDocument>("A card missing a key is not a valid document") {
         withGroup((ProjectCoding.encode(LabelHeadline()) as Map<String, Any?>).filterKeys { it != "headlineScale" })
     }
-    try { withGroup(ProjectCoding.encode(LabelHeadline(labelStyle = TitleDesign(face = "import:ABCDEF.ttf#MyFont")))); require(false, "An imported label font must be refused") }
-    catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains("imported fonts"), "A card's imported font is refused by name") }
+    val importedLabel = TitleDesign(face = "import:${"0".repeat(64)}:1:MyFont-Bold")
+    require(withGroup(ProjectCoding.encode(LabelHeadline(labelStyle = importedLabel))).clips[0].texts!!.single().labelHeadline?.labelStyle == importedLabel,
+        "A card's imported label font opens")
     val project = Project("Cards"); project.history = listOf(titled)
     project.commit(opened)
     require(project.schemaVersion >= 14, "A project with a card is marked for readers that know cards")

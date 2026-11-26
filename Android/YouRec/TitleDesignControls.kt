@@ -15,7 +15,9 @@ object TitleDesignControls {
     enum class Section(val title: String) { Looks("Looks"), Font("Font"), Border("Border"), Shadow("Shadow"), Background("Background") }
 
     /// `plain` is a title without a design; `looks` offers the single-title looks (not shown for a card's lines).
-    fun views(context: Context, design: TitleDesign, plain: Boolean, section: Section, looks: Boolean, choose: (Section) -> Unit, change: (TitleDesign?, String) -> Unit): List<View> {
+    fun views(context: Context, design: TitleDesign, plain: Boolean, section: Section, looks: Boolean, choose: (Section) -> Unit,
+              fonts: List<ImportedFontFace> = emptyList(), missingFont: String? = null, importFont: (() -> Unit)? = null,
+              change: (TitleDesign?, String) -> Unit): List<View> {
         fun designed(next: TitleDesign, message: String) = change(next, message)
         fun option(label: String, description: String, on: Boolean, action: () -> Unit) =
             Design.button(context, label, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) { action() }
@@ -31,6 +33,7 @@ object TitleDesignControls {
                 }))
             Section.Font -> {
                 val family = TitleTypeface.of(design.face)
+                val face = fonts.firstOrNull { it.id == design.face }
                 listOfNotNull(
                     choices(context, TitleTypeface.families.map { f ->
                         option(f.name, "Font " + f.name, f.id == design.face) {
@@ -38,10 +41,17 @@ object TitleDesignControls {
                             val weight = f.weights.minByOrNull { Math.abs(it - design.weight) } ?: design.weight
                             designed(design.copy(face = f.id, weight = weight, italic = design.italic && f.slanted != null), "Text font")
                         }
-                    }),
-                    family?.weights?.takeIf { it.size > 1 }?.let { weights -> choices(context, weights.map { w ->
+                    } + fonts.map { f ->
+                        // An imported face starts at its own default weight; italic is never synthesized.
+                        option(f.name, "Font " + f.name, f.id == design.face) {
+                            if (f.id != design.face) designed(design.copy(face = f.id, weight = f.defaultWeight, italic = false), "Text font")
+                        }
+                    } + listOfNotNull(missingFont?.let { option("$it (missing)", "Font $it, missing", true) { } },
+                        importFont?.let { action -> Design.button(context, "Import font…", Design.text, Design.raised, 13f) { action() }.apply { contentDescription = "Import font" } })),
+                    missingFont?.let { Design.label(context, "Using a fallback for $it. Import the original font to restore it.", 12f) },
+                    (family?.weights ?: face?.weights)?.takeIf { it.size > 1 }?.let { weights -> choices(context, weights.map { w ->
                         option(weightName(w), "Weight " + weightName(w), w == design.weight) { designed(design.copy(weight = w), "Text weight") }
-                    } + listOfNotNull(family.slanted?.let { option("Italic", "Italic", design.italic) { designed(design.copy(italic = !design.italic), "Text italic") } })) },
+                    } + listOfNotNull(family?.slanted?.let { option("Italic", "Italic", design.italic) { designed(design.copy(italic = !design.italic), "Text italic") } })) },
                     choices(context, TitleAlignment.values().map { a ->
                         val name = a.raw.replaceFirstChar { it.uppercase() }
                         option(name, "Align " + name, a == design.alignment) { designed(design.copy(alignment = a), "Text alignment") }

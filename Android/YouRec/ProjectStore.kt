@@ -396,6 +396,24 @@ class ProjectStore(private val context: Context) {
             main.post { completion(lut, failure) }
         }
     }
+    /// Copy a font into the project folder, as the iPhone app keeps a project's fonts with it.
+    fun importFont(uri: Uri, into: UUID, completion: (List<ImportedFontFace>?, String?) -> Unit) {
+        val project = projects.firstOrNull { it.id == into } ?: return completion(null, null)
+        val name = displayName(uri) ?: ""
+        worker.execute {
+            var faces: List<ImportedFontFace>? = null; var failure: String? = null
+            try {
+                if (name.substringAfterLast('.', "").lowercase() !in ImportedFonts.extensions) throw FontError("Choose a TTF, OTF, TTC, or OTC font file.")
+                val data = (context.contentResolver.openInputStream(uri) ?: throw java.io.IOException("The file could not be opened.")).use { input ->
+                    val bytes = java.io.ByteArrayOutputStream(); val buffer = ByteArray(1 shl 16)
+                    while (true) { val n = input.read(buffer); if (n < 0) break; bytes.write(buffer, 0, n); if (bytes.size() > ImportedFonts.MAXIMUM_BYTES) throw FontError("Choose a font file smaller than 64 MB.") }
+                    bytes.toByteArray()
+                }
+                faces = ImportedFonts.ingest(data, name, folder(project))
+            } catch (e: Exception) { failure = e.message ?: "The font could not be imported." }
+            main.post { completion(faces, failure) }
+        }
+    }
     private fun displayName(uri: Uri): String? = try {
         context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null }
     } catch (e: Exception) { null }

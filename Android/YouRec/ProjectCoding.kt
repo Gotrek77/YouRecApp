@@ -235,9 +235,9 @@ internal object ProjectCoding {
     private fun encode(ink: TitleInk): Map<String, Any?> = jsonObject("rgba" to ink.rgba)
     fun titleDesign(value: Fields): TitleDesign {
         val face = value.string("face")
-        // Only the bundled typefaces are drawn here; a font imported into the iPhone app or one of its system fonts is not yet.
-        if (face.startsWith("import:")) unsupported("imported fonts")
-        if (TitleTypeface.of(face) == null) unsupported("the font $face")
+        // A font imported into the project is drawn from its file, or as the system font while it is missing, as on iPhone.
+        // The iPhone's other system fonts are not drawn here yet.
+        if (!face.startsWith("import:") && TitleTypeface.of(face) == null) unsupported("the font $face")
         fun <T> choice(values: Array<T>, raw: String, name: (T) -> String) = values.firstOrNull { name(it) == raw } ?: throw ProjectError.InvalidDocument()
         val design = TitleDesign(face, value.int("weight"), value.bool("italic"), choice(TitleAlignment.values(), value.string("alignment")) { it.raw },
             value.double("tracking"), value.double("lineSpacing"), ink(value.fields("fill")),

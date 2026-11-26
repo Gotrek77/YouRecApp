@@ -1738,14 +1738,27 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         if (part != LabelHeadline.Part.Card) {
             val isLabel = part == LabelHeadline.Part.Label
             val design = when (part) { null -> title.design; LabelHeadline.Part.Label -> group!!.labelStyle; else -> group!!.headlineStyle }
-            for (view in TitleDesignControls.views(context, design, part == null && title.appearance == null, titleSection, part == null, { titleSection = it; save("Text changed", reopen = true) }) { changed, message ->
+            fun restyle(changed: TitleDesign?, message: String) {
                 title = when {
                     part == null -> title.copy(appearance = changed)
                     isLabel -> title.copy(labelHeadline = group!!.copy(labelStyle = changed ?: group.labelStyle))
                     else -> title.copy(labelHeadline = group!!.copy(headlineStyle = changed ?: group.headlineStyle))
                 }
                 save(message, reopen = true)
-            }) add(view)
+            }
+            // Fonts imported into this project; a face whose file is missing is drawn in the system font, as on iPhone.
+            val folder = store.folder(project)
+            val missing = design.face.takeIf { it.startsWith("import:") && ImportedFonts.resolve(it, folder) == null }?.let { ImportedFonts.label(it, folder) ?: it }
+            val importFont = {
+                navigation.pickMedia("*/*") { uri ->
+                    if (uri != null) store.importFont(uri, project.id) { faces, failure ->
+                        val face = faces?.firstOrNull() ?: return@importFont say(failure ?: "The font could not be imported.")
+                        restyle(design.copy(face = face.id, weight = face.defaultWeight, italic = false), "Text font")
+                    }
+                }
+            }
+            for (view in TitleDesignControls.views(context, design, part == null && title.appearance == null, titleSection, part == null, { titleSection = it; save("Text changed", reopen = true) },
+                ImportedFonts.faces(folder), missing, importFont, ::restyle)) add(view)
         }
         // Entrance and exit animation, for the whole title (both lines of a card move together).
         val motion = title.motion ?: TitleMotion()
