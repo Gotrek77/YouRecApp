@@ -1752,7 +1752,10 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             val importFont = {
                 navigation.pickMedia("*/*") { uri ->
                     if (uri != null) store.importFont(uri, project.id) { faces, failure ->
-                        val face = faces?.firstOrNull() ?: return@importFont say(failure ?: "The font could not be imported.")
+                        if (faces.isNullOrEmpty()) return@importFont say(failure ?: "The font could not be imported.")
+                        // Importing the missing font restores it with its saved face and weight.
+                        if (faces.any { it.id == design.face }) return@importFont openText(id)
+                        val face = faces.first()
                         restyle(design.copy(face = face.id, weight = face.defaultWeight, italic = false), "Text font")
                     }
                 }

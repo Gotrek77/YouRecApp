@@ -56,7 +56,7 @@ class ImageTextures(private val folder: java.io.File) {
 
 class TitleTextures(private val folder: java.io.File? = null) {
     class Entry(val texture: Int, val size: CanvasSize)
-    private val entries = LinkedHashMap<Pair<TextOverlay, Pair<Int, Int>>, Entry>(16, 0.75f, true)
+    private val entries = LinkedHashMap<Pair<TextOverlay, Triple<Int, Int, Int>>, Entry>(16, 0.75f, true)
     private var program: OverlayProgram? = null
 
     /// Draw one title on a canvas of `width` by `height`, through `placement` when its picture has a window of its own,
@@ -64,7 +64,9 @@ class TitleTextures(private val folder: java.io.File? = null) {
     fun draw(title: TextOverlay, width: Int, height: Int, placement: Affine?, alpha: Float = 1f, pose: TitleMotion.Pose? = null) {
         if (pose != null && (pose.opacity <= 0 || pose.right <= pose.left || pose.bottom <= pose.top)) return
         // Position, time and animation do not change the picture of a title: share it.
-        val key = title.copy(start = 0.0, end = 0.0, x = 0.0, y = 0.0, motion = null, playbackClock = null) to (width to height)
+        // A font imported while its title shows the fallback redraws it.
+        val fonts = title.fontFaces.count { it.startsWith("import:") && ImportedFonts.resolve(it, folder) != null }
+        val key = title.copy(start = 0.0, end = 0.0, x = 0.0, y = 0.0, motion = null, playbackClock = null) to Triple(width, height, fonts)
         val entry = entries.getOrPut(key) { render(key.first, width, height) ?: return }
         while (entries.size > 24) { val oldest = entries.keys.first(); entries.remove(oldest)?.let { GLES20.glDeleteTextures(1, intArrayOf(it.texture), 0) } }
         val shader = program ?: OverlayProgram().also { program = it }
