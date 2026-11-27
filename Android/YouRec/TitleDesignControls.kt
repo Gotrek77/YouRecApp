@@ -12,7 +12,8 @@ import android.graphics.drawable.GradientDrawable
 /// TitleInspector: one section at a time (Looks, Font, Fill, Border, Shadow,
 /// Background). Any change makes the title a designed one; Plain returns it to
 /// its Style and Colour. Sliders preview while dragging and save on release.
-/// Not ported yet: saved channel styles, the system colour wheel, the eyedropper
+/// Saved channel styles live on this phone, for every project.
+/// Not ported yet: saved card looks, the system colour wheel, the eyedropper
 /// and favourite fonts.
 object TitleDesignControls {
     enum class Section(val title: String) { Looks("Looks"), Font("Font"), Fill("Fill"), Border("Border"), Shadow("Shadow"), Background("Background") }
@@ -41,11 +42,23 @@ object TitleDesignControls {
                 designed(apply(it), message)
             }
         val body: List<View> = when (section) {
-            Section.Looks -> listOf(choices(context, listOf(option("Plain", "Look Plain", plain) { change(null, "Text look") }) +
-                TitleDesign.looks.map { look ->
-                    val chosen = design.applyingLook(look.design)
-                    option(look.name, "Look " + look.name, !plain && design == chosen) { designed(chosen, "Text look") }
-                }))
+            Section.Looks -> {
+                val saved = savedStyles(context)
+                listOfNotNull(choices(context, listOf(option("Plain", "Look Plain", plain) { change(null, "Text look") }) +
+                    TitleDesign.looks.map { look ->
+                        val chosen = design.applyingLook(look.design)
+                        option(look.name, "Look " + look.name, !plain && design == chosen) { designed(chosen, "Text look") }
+                    }),
+                    if (saved.isEmpty()) null else Design.label(context, "My styles", 13f, bold = true),
+                    if (saved.isEmpty()) null else choices(context, saved.flatMap { style ->
+                        val chosen = design.applyingLook(style.design)
+                        listOf(option(style.name, "My style " + style.name, !plain && design == chosen) { designed(chosen, "Text look") },
+                            Design.button(context, "✕", Design.secondary, Design.raised, 13f) { confirmDelete(context, style) { choose(section) } }
+                                .apply { contentDescription = "Delete " + style.name })
+                    }),
+                    Design.button(context, "Save as channel style", Design.text, Design.raised, 13f) { askName(context, design) { choose(section) } }
+                        .apply { contentDescription = "Save as channel style" })
+            }
             Section.Font -> {
                 val family = TitleTypeface.of(design.face)
                 val face = fonts.firstOrNull { it.id == design.face }
@@ -110,6 +123,64 @@ object TitleDesignControls {
                 slider("Corner radius", design.radius, 0.0..0.8, 0.01, "Text background") { design.copy(radius = it) }
         }
         return listOf(tabs) + body
+    }
+
+    /// The card behind a label and a headline, as on iPhone: colour and opacity, each line's
+    /// position on the card, padding, corner radius, space between lines and border.
+    fun cardViews(context: Context, card: TitleCard, refresh: () -> Unit, preview: (TitleCard) -> Unit, change: (TitleCard, String) -> Unit): List<View> {
+        fun slider(name: String, description: String, value: Double, range: ClosedFloatingPointRange<Double>, step: Double, apply: (Double) -> TitleCard) =
+            slider(context, name, description, value, range, step, { preview(apply(it)) }) { change(apply(it), "Card") }
+        fun color(title: String, ink: TitleInk, editsOpacity: Boolean, apply: (TitleInk) -> TitleCard) =
+            TitleColorControl.views(context, title, ink, openColor == title, { openColor = if (openColor == title) null else title; refresh() }, editsOpacity) { change(apply(it), "Card colour") }
+        fun position(name: String, offset: TitleCard.Offset?, apply: (TitleCard.Offset?) -> TitleCard): List<View> {
+            val now = offset ?: TitleCard.Offset()
+            fun moved(next: TitleCard.Offset) = apply(next.takeIf { it != TitleCard.Offset() })
+            return listOf(Design.row(context, Design.label(context, "$name position", 13f, bold = true).apply { layoutParams = Design.weighted(1f) },
+                Design.button(context, "Reset", if (offset == null) Design.secondary else Design.text, size = 13f) { if (offset != null) change(apply(null), "Card positions") }
+                    .apply { contentDescription = "Reset ${name.lowercase()} position"; isEnabled = offset != null }),
+                slider("X offset", "$name X offset", now.x, -1.0..1.0, 0.01) { moved(now.copy(x = it)) },
+                slider("Y offset", "$name Y offset", now.y, -1.0..1.0, 0.01) { moved(now.copy(y = it)) })
+        }
+        return color("Card color", card.fill, false) { card.copy(fill = it) } +
+            slider("Card opacity", "Card opacity", card.fill.alpha, 0.0..1.0, 0.01) { card.copy(fill = TitleInk(card.fill.rgb, Math.round(it * 255).toInt())) } +
+            position("Label", card.labelOffset) { card.copy(labelOffset = it) } +
+            position("Headline", card.headlineOffset) { card.copy(headlineOffset = it) } +
+            slider("Padding", "Card padding", card.padding, 0.0..1.0, 0.01) { card.copy(padding = it) } +
+            slider("Corner radius", "Card corner radius", card.radius, 0.0..1.0, 0.01) { card.copy(radius = it) } +
+            slider("Line space", "Space between lines", card.spacing, 0.0..1.0, 0.01) { card.copy(spacing = it) } +
+            slider("Border width", "Card border width", card.borderWidth, 0.0..0.1, 0.001) { card.copy(borderWidth = it) } +
+            if (card.borderWidth > 0) color("Card border color", card.border, true) { card.copy(border = it) } else emptyList()
+    }
+
+    private const val STYLE_KEY = "savedLooks.v1"
+    private fun preferences(context: Context) = context.getSharedPreferences("title", Context.MODE_PRIVATE)
+    private fun savedStyles(context: Context) = TitleStyleLibrary.decode((preferences(context).getString(STYLE_KEY, null) ?: "[]").toByteArray())
+    private fun storeStyles(context: Context, styles: List<TitleStyleLibrary.Style>) =
+        preferences(context).edit().putString(STYLE_KEY, String(TitleStyleLibrary.encode(styles), Charsets.UTF_8)).apply()
+
+    /// Saves the font and appearance for every project; border and motion stay with each title, as on iPhone.
+    private fun askName(context: Context, design: TitleDesign, done: () -> Unit) {
+        val field = android.widget.EditText(context).apply { hint = "Style name"; setSingleLine(); filters = arrayOf(android.text.InputFilter.LengthFilter(TitleStyleLibrary.NAME_LIMIT)) }
+        val dialog = android.app.AlertDialog.Builder(context).setTitle("Save channel style")
+            .setMessage("Saves the font and appearance across projects. Border and motion are set on each overlay.")
+            .setView(field).setNegativeButton("Cancel", null).setPositiveButton("Save", null).create()
+        dialog.setOnShowListener {
+            val save = dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
+            fun check() { save.isEnabled = TitleStyleLibrary.acceptable(field.text.toString(), savedStyles(context)) }
+            check()
+            field.addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) { }
+                override fun onTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) { check() }
+                override fun afterTextChanged(t: android.text.Editable?) { }
+            })
+            save.setOnClickListener { storeStyles(context, TitleStyleLibrary.saving(field.text.toString(), design, savedStyles(context))); dialog.dismiss(); done() }
+        }
+        dialog.show()
+    }
+
+    private fun confirmDelete(context: Context, style: TitleStyleLibrary.Style, done: () -> Unit) {
+        android.app.AlertDialog.Builder(context).setTitle("Delete this saved style?").setMessage(style.name).setNegativeButton("Cancel", null)
+            .setPositiveButton("Delete style") { _, _ -> storeStyles(context, savedStyles(context).filter { it.id != style.id }); done() }.show()
     }
 
     /// A named slider showing its value as a percentage (or in degrees). `preview` follows the drag; `commit` is the release.

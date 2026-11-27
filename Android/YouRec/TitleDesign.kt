@@ -353,3 +353,22 @@ class TitleMotionRanges(video: List<VideoTimelineItem>) {
         return (time - global.start) to (global.endInclusive - global.start)
     }
 }
+
+/// Title styles saved on this phone for use in any project ("channel styles"), as
+/// the iPhone app keeps them: a name and a design, newest first. Unreadable entries are skipped.
+object TitleStyleLibrary {
+    const val NAME_LIMIT = 60
+    data class Style(val id: java.util.UUID, val name: String, val design: TitleDesign)
+    fun decode(bytes: ByteArray): List<Style> = try {
+        (JSON.parse(bytes) as? List<*>)?.mapNotNull { entry ->
+            try { val f = Fields.of(entry); Style(f.uuid("id"), f.string("name"), ProjectCoding.titleDesign(f.fields("design"))) } catch (e: Exception) { null }
+        } ?: emptyList()
+    } catch (e: Exception) { emptyList() }
+    fun encode(styles: List<Style>): ByteArray = JSON.write(styles.map { jsonObject("id" to it.id.text, "name" to it.name, "design" to ProjectCoding.encode(it.design)) })
+    /// A name is saved trimmed, at most 60 characters, and unlike any other (ignoring case).
+    fun acceptable(name: String, styles: List<Style>): Boolean {
+        val clean = name.trim()
+        return clean.isNotEmpty() && clean.length <= NAME_LIMIT && styles.none { it.name.equals(clean, ignoreCase = true) }
+    }
+    fun saving(name: String, design: TitleDesign, styles: List<Style>) = listOf(Style(java.util.UUID.randomUUID(), name.trim(), design)) + styles
+}

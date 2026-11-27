@@ -594,3 +594,17 @@ private fun stretchTests() {
     require(abs(crossings(head, rate) - 220) <= 4, "A clip at double speed keeps its pitch in the mix")
     require((0 until rate).all { abs(out[(rate + it) * 2] - plain[it * 2] * 0f - (0.5 * sin(2 * Math.PI * 220 * (2 * rate + it) / rate)).toFloat()) < 1e-4 }, "The clip after a retimed one plays its own samples exactly")
 }
+
+/// Channel styles saved on the phone: kept newest first, named once, unreadable entries skipped.
+fun titleStyleLibraryTests() {
+    val look = TitleDesign.looks.first().design
+    val one = TitleStyleLibrary.saving("  Channel  ", look, emptyList())
+    require(one.single().name == "Channel" && TitleStyleLibrary.decode(TitleStyleLibrary.encode(one)) == one, "A saved style survives storage, trimmed")
+    require(!TitleStyleLibrary.acceptable("channel", one) && !TitleStyleLibrary.acceptable("   ", one) && !TitleStyleLibrary.acceptable("x".repeat(61), one)
+        && TitleStyleLibrary.acceptable("Other", one), "A style name is unique ignoring case, not blank, at most 60 characters")
+    val two = TitleStyleLibrary.saving("Other", look.copy(face = "Georgia-Bold"), one)
+    require(two.map { it.name } == listOf("Other", "Channel"), "The newest style comes first")
+    val broken = String(TitleStyleLibrary.encode(two)).replaceFirst("\"padding\":", "\"padding\":9,\"x\":")
+    require(TitleStyleLibrary.decode(broken.toByteArray()).map { it.name } == listOf("Channel") && TitleStyleLibrary.decode("not json".toByteArray()).isEmpty(),
+        "An unreadable style is skipped, not fatal")
+}

@@ -1754,14 +1754,10 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                 pick(name, "Card look " + name, group == chosen) { title = title.copy(labelHeadline = chosen); save("Title look", reopen = true) }
             }))
             if (part == LabelHeadline.Part.Card) {
-                // Opacity of the card's own colour; sliders for colour, padding, radius and spacing are not ported yet.
-                add(TitleDesignControls.choices(context, listOf(0 to "Clear", 140 to "Light", 200 to "Strong", 245 to "Solid").map { (alpha, name) ->
-                    pick(name, "Card opacity " + name, Math.round(group.card.fill.alpha * 255).toInt() == alpha) {
-                        title = title.copy(labelHeadline = group.copy(card = group.card.copy(fill = TitleInk(group.card.fill.rgb, alpha)))); save("Card opacity", reopen = true)
-                    }
-                } + listOfNotNull(if (group.card.labelOffset == null && group.card.headlineOffset == null) null else pick("Reset positions", "Reset positions", false) {
-                    title = title.copy(labelHeadline = group.copy(card = group.card.copy(labelOffset = null, headlineOffset = null))); save("Card positions", reopen = true)
-                })))
+                fun carded(card: TitleCard) = title.copy(labelHeadline = group.copy(card = card))
+                for (view in TitleDesignControls.cardViews(context, group.card, { save("Text changed", reopen = true) }, { title = carded(it); preview() }) { card, message ->
+                    title = carded(card); save(message, reopen = true)
+                }) add(view)
             }
         }
         if (part != LabelHeadline.Part.Card) {

@@ -23,6 +23,7 @@ fun main(arguments: Array<String>) {
     mixTests()
     journalTests(File(root, "Journal"))
     videoToolsTests()
+    titleStyleLibraryTests()
     clipboardTests()
     archiveTests(File(root, "Archive"))
     importedFontTests(File(root, "Fonts"))

@@ -127,8 +127,11 @@ capture, recording controls, the cut editor, export.
   automatic or chosen; captions regrouped by word count, styled (style,
   colour, size, position), corrected one by one keeping the other words'
   times, or removed. Projects with iPhone subtitles open and keep them.
-  Not ported yet: title designs and fonts for captions, dragging captions in
-  the preview, resuming an interrupted transcription.
+  Captions take the Text panel's designs and entrance/exit animations, each
+  caption animating over its own time; an iPhone subtitle font (Classic, Mono…)
+  is kept and drawn with an Android font of the same kind.
+  Not ported yet: dragging captions in the preview and the iPhone's size
+  limits from the largest caption, resuming an interrupted transcription.
   **Pauses** finds silence in the selected clips, at a measured or chosen
   level; as on iPhone, RNNoise tells a quiet syllable from silence in spoken
   takes. Each pause can be kept or cut; picture and sound shorten together;
@@ -158,13 +161,13 @@ them is **refused by name** on Android ("This project uses Video effects…")
 instead of being opened and quietly losing that work on the next save, the same
 policy older iPhone builds apply to newer projects.
 
-In titles: the iPhone's other system fonts, a font library shared between
-projects (Android keeps each font in its project; import it again elsewhere), saved channel
-styles, the Text panel's gradient and colour pickers, eyedropper and fine
-sliders (shadow blur and offset, padding, corner radius), the card's colour,
-padding, radius and spacing sliders and its X/Y offsets for each line (offsets
-made on iPhone are kept and drawn), the animation's replay button and its
-duration slider (presets instead) ·
+In titles: choosing among the iPhone's other system fonts (a title or subtitle
+in one opens, keeps it and is drawn with an Android font of the same kind), a
+font library shared between projects (Android keeps each font in its project;
+import it again elsewhere), favourite fonts, saved card looks, the system
+colour wheel and the eyedropper (colours are picked from the app's palette,
+recent colours or a hex value), the animation's replay button and its duration
+slider (presets instead) ·
 Log LUTs (Apple Log input), highlight recovery in Color, HDR capture and export · Inside video effects:
 Night fix Medium and Precise (motion-aligned fusion), a Chroma Key clean
 plate, a background movie's own sound, a freeze's Continue and Fade sound,
