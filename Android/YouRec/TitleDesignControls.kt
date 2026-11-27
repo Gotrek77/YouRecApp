@@ -135,7 +135,7 @@ object TitleDesignControls {
         fun position(name: String, offset: TitleCard.Offset?, apply: (TitleCard.Offset?) -> TitleCard): List<View> {
             val now = offset ?: TitleCard.Offset()
             fun moved(next: TitleCard.Offset) = apply(next.takeIf { it != TitleCard.Offset() })
-            return listOf(Design.row(context, Design.label(context, "$name position", 13f, bold = true).apply { layoutParams = Design.weighted(1f) },
+            return listOf(line(context, Design.label(context, "$name position", 13f, bold = true).apply { layoutParams = Design.weighted(1f) },
                 Design.button(context, "Reset", if (offset == null) Design.secondary else Design.text, size = 13f) { if (offset != null) change(apply(null), "Card positions") }
                     .apply { contentDescription = "Reset ${name.lowercase()} position"; isEnabled = offset != null }),
                 slider("X offset", "$name X offset", now.x, -1.0..1.0, 0.01) { moved(now.copy(x = it)) },
@@ -183,6 +183,12 @@ object TitleDesignControls {
             .setPositiveButton("Delete style") { _, _ -> storeStyles(context, savedStyles(context).filter { it.id != style.id }); done() }.show()
     }
 
+    /// A horizontal row that keeps each child's own layout (Design.row gives every child its content size).
+    fun line(context: Context, vararg children: View) = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
+        for (child in children) addView(child, child.layoutParams ?: LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+
     /// A named slider showing its value as a percentage (or in degrees). `preview` follows the drag; `commit` is the release.
     fun slider(context: Context, name: String, description: String, value: Double, range: ClosedFloatingPointRange<Double>, step: Double,
                preview: ((Double) -> Unit)?, degrees: Boolean = false, commit: (Double) -> Unit): View {
@@ -198,7 +204,7 @@ object TitleDesignControls {
                 override fun onStopTrackingTouch(b: SeekBar) { commit(at(b.progress)) }
             })
         }
-        return Design.row(context, Design.label(context, name, 13f).apply { layoutParams = LinearLayout.LayoutParams(Design.dp(context, 104f), ViewGroup.LayoutParams.WRAP_CONTENT) },
+        return line(context, Design.label(context, name, 13f).apply { layoutParams = LinearLayout.LayoutParams(Design.dp(context, 104f), ViewGroup.LayoutParams.WRAP_CONTENT) },
             bar.apply { layoutParams = Design.weighted(1f, Design.dp(context, 44f)) }, label.apply { layoutParams = LinearLayout.LayoutParams(Design.dp(context, 48f), ViewGroup.LayoutParams.WRAP_CONTENT) })
     }
 

@@ -26,7 +26,7 @@ object TitleColorControl {
             remember(context, if (editsOpacity) next else TitleInk.of(next.rgb))
             change(next)
         }
-        val header = Design.row(context, Design.label(context, title, 14f).apply { layoutParams = Design.weighted(1f) }, swatch(context, ink, 22f)).apply {
+        val header = TitleDesignControls.line(context, Design.label(context, title, 14f).apply { layoutParams = Design.weighted(1f) }, swatch(context, ink, 22f)).apply {
             minimumHeight = Design.dp(context, 44f); isClickable = true; setOnClickListener { toggle() }
             contentDescription = title + ", " + hex(ink) + if (open) ", expanded" else ", collapsed"
         }
@@ -50,7 +50,7 @@ object TitleColorControl {
             if (HEX.matches(clean)) select(TitleInk(clean.toLong(16), Math.round(ink.alpha * 255).toInt()))
             else field.error = "Six hex digits, as FFD60A"
         }.apply { contentDescription = "Set $title" }
-        val hexRow = Design.row(context, Design.label(context, "Hex", 14f), field.apply { layoutParams = Design.weighted(1f) }, set)
+        val hexRow = TitleDesignControls.line(context, Design.label(context, "Hex", 14f).apply { setPadding(0, 0, Design.dp(context, 8f), 0) }, field.apply { layoutParams = Design.weighted(1f) }, set)
         val views = mutableListOf<View>(header, row, hexRow)
         if (editsOpacity) views += TitleDesignControls.slider(context, "Opacity", "$title opacity", ink.alpha, 0.0..1.0, 0.01, null) { value ->
             change(TitleInk(ink.rgb, Math.round(value * 255).toInt()))
@@ -63,7 +63,7 @@ object TitleColorControl {
     private fun swatch(context: Context, ink: TitleInk, size: Float) = TextView(context).apply {
         background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(ink.argb); setStroke(Design.dp(context, 1f), 0xFF8E8E93.toInt()) }
         layoutParams = LinearLayout.LayoutParams(Design.dp(context, size), Design.dp(context, size)).apply { gravity = Gravity.CENTER_VERTICAL }
-        minimumHeight = Design.dp(context, size)
+        minimumHeight = Design.dp(context, size); minWidth = Design.dp(context, size)
     }
 
     private fun recents(context: Context): List<TitleInk> =
