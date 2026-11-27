@@ -23,6 +23,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
     private val timeline = EditorTimeline(context)
     private val preview = TextureView(context)
     private val previewBox = FrameLayout(context)
+    private val captionGuide = CaptionGuide(context)
     private val title = Design.label(context, "", 16f, bold = true)
     private val time = Design.label(context, "0:00.00", 15f, mono = true)
     private val feedback = Design.label(context, "", 13f, Design.secondary)
@@ -52,6 +53,8 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         addView(bar, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         previewBox.addView(preview, Design.frame(gravity = Gravity.CENTER))
+        previewBox.addView(captionGuide, Design.frame(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        preview.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ -> captionGuide.picture = android.graphics.RectF(l.toFloat(), t.toFloat(), r.toFloat(), b.toFloat()) }
         previewBox.contentDescription = "Preview. Tap to play or pause."
         previewBox.setOnClickListener { editor.togglePlay() }
         addView(previewBox, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -433,6 +436,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
     // Panels sit below the timeline, inside the editor: no dialog covers the preview.
     private fun showPanel(content: View) {
         releaseCover()
+        captionGuide.envelope = null
         panel.removeAllViews()
         editor.resume()
         content.setPadding(Design.dp(context, 16f), Design.dp(context, 12f), Design.dp(context, 16f), Design.dp(context, 16f))
@@ -441,6 +445,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
     }
     private fun closePanel() {
         releaseCover()
+        captionGuide.envelope = null
         panel.removeAllViews()
         editor.resume()
         // A control released outside its track may have left a draft on screen.
@@ -648,6 +653,8 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         fun change(message: String, apply: (TrackTimeline) -> Unit) {
             val now = this.project ?: return
             val edit = now.edit.copy(); apply(edit.timeline)
+            // A new design or new words can make the largest caption bigger: keep it inside the frame, as on iPhone.
+            edit.timeline.subtitles?.let { settings -> subtitleLayout(edit.timeline)?.let { edit.timeline.subtitles = it.constrained(settings) } }
             if (edit != now.edit) commit(edit, message)
             openSubtitles()
         }
@@ -741,12 +748,27 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                 val on = settings.appearance?.let { it.gradient == null && it.fill == TitleInk.of(color) } ?: (color == settings.color)
                 pick(color.name, on) { change("Subtitle colour") { it.subtitles = it.subtitles?.let { s -> s.appearance?.let { a -> s.copy(appearance = a.copy(fill = TitleInk.of(color), gradient = null)) } ?: s.copy(color = color) } } }
             }.toTypedArray()))
-            add(choices(pick("Small", settings.size < 0.045) { change("Subtitle size") { it.subtitles = it.subtitles?.copy(size = 0.04) } },
-                pick("Medium", settings.size in 0.045..0.06) { change("Subtitle size") { it.subtitles = it.subtitles?.copy(size = 0.052) } },
-                pick("Large", settings.size > 0.06) { change("Subtitle size") { it.subtitles = it.subtitles?.copy(size = 0.07) } },
-                pick("Bottom", settings.y > 0.7) { change("Subtitle position") { it.subtitles = it.subtitles?.copy(y = 0.86) } },
-                pick("Middle", settings.y in 0.3..0.7) { change("Subtitle position") { it.subtitles = it.subtitles?.copy(y = 0.5) } },
-                pick("Top", settings.y < 0.3) { change("Subtitle position") { it.subtitles = it.subtitles?.copy(y = 0.14) } }))
+            // Size and place: sliders here, or drag and pinch the outline in the preview (as on iPhone).
+            val layout = subtitleLayout(track)
+            fun placed(next: SubtitleSettings) = layout?.constrained(next) ?: next
+            fun showDraft(next: SubtitleSettings) { this.project?.let { now -> editor.show(now.edit.copy().also { it.timeline.subtitles = next }) }; captionGuide.envelope = layout?.envelope(next) }
+            add(Design.label(context, "Drag or pinch the outline to place all subtitles. It fits the largest caption in the project.", 12f, Design.secondary))
+            add(TitleDesignControls.slider(context, "Size", "Subtitle size", settings.size, (layout?.minimumSize ?: 0.012)..(layout?.maximumSize ?: 0.10), 0.001,
+                { showDraft(placed(settings.copy(size = it))) }) { size -> change("Subtitle size") { it.subtitles = it.subtitles?.let { s -> placed(s.copy(size = size)) } } })
+            add(TitleDesignControls.slider(context, "Across", "Subtitle horizontal position", settings.centerX, 0.0..1.0, 0.01,
+                { showDraft(placed(settings.copy(x = it))) }) { x -> change("Subtitle position") { it.subtitles = it.subtitles?.let { s -> placed(s.copy(x = x)) } } })
+            add(TitleDesignControls.slider(context, "Down", "Subtitle vertical position", settings.y, 0.0..1.0, 0.01,
+                { showDraft(placed(settings.copy(y = it))) }) { y -> change("Subtitle position") { it.subtitles = it.subtitles?.let { s -> placed(s.copy(y = y)) } } })
+            add(choices(pick("Bottom", settings.y > 0.7) { change("Subtitle position") { it.subtitles = it.subtitles?.let { s -> placed(s.copy(y = 0.86)) } } },
+                pick("Middle", settings.y in 0.3..0.7) { change("Subtitle position") { it.subtitles = it.subtitles?.let { s -> placed(s.copy(y = 0.5)) } } },
+                pick("Top", settings.y < 0.3) { change("Subtitle position") { it.subtitles = it.subtitles?.let { s -> placed(s.copy(y = 0.14)) } } },
+                pick("Reset position and size", false) { change("Subtitle position") { it.subtitles = it.subtitles?.let { s -> placed(s.copy(x = 0.5, y = 0.86, size = 0.052)) } } }))
+            if (layout != null) {
+                var draft = settings
+                captionGuide.onMove = { x, y -> editor.pause(); draft = layout.moved(draft, x, y); showDraft(draft) }
+                captionGuide.onResize = { factor, from, to -> editor.pause(); draft = layout.resized(draft, factor, from, to); showDraft(draft) }
+                captionGuide.onEnd = { if (draft != settings) change(if (draft.size != settings.size) "Subtitle size" else "Subtitle position") { it.subtitles = draft } }
+            }
             val cues = SubtitleEditing.cues(track)
             add(Design.label(context, "${cues.size} caption" + (if (cues.size == 1) "" else "s") + ". Tap one to correct it.", 13f, Design.secondary))
             val list = Design.column(context, spacing = 2f)
@@ -763,8 +785,32 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         }
         add(Design.button(context, "Done") { openSubtitlesLanguage = null; closePanel() }.apply { contentDescription = "Done with subtitles" })
         showBoundedPanel(content, "subtitles")
+        captionGuide.envelope = track.subtitles?.let { subtitleLayout(track)?.envelope(it) }
     }
     private var openSubtitlesLanguage: String? = null
+    /// Captions are measured once per transcript, design and canvas, as on iPhone; placing them reuses it.
+    private var subtitleLayoutCache: Pair<List<Any?>, SubtitleLayout>? = null
+    private fun subtitleLayout(timeline: TrackTimeline): SubtitleLayout? {
+        val settings = timeline.subtitles ?: return null
+        val project = project ?: return null
+        val canvas = editor.canvas
+        if (canvas.width <= 0 || canvas.height <= 0) return null
+        val cues = SubtitleEditing.cues(timeline)
+        val shape = settings.copy(x = null, y = 0.86, size = SubtitleLayout.referenceSize, timingFingerprint = "", maxWords = 1, language = "")
+        val key = listOf(cues.map { it.text }, shape, canvas)
+        subtitleLayoutCache?.takeIf { it.first == key }?.let { return it.second }
+        val folder = store.folder(project)
+        val measured = SubtitleLayout.canvas(canvas)
+        val width = Math.round(measured.width).toInt(); val height = Math.round(measured.height).toInt()
+        // ponytail: measures by drawing each distinct caption once; a measure-only path if long transcripts open slowly.
+        val layout = SubtitleLayout(cues, settings, canvas) { text ->
+            val picture = TitleTextures.picture(SubtitleCue("measure", UUID(0, 0), emptyList(), text, 0.0, 1.0).overlay(shape), width, height, folder,
+                SubtitleLayout.wrap(measured.width, SubtitleLayout.referenceSize).toFloat())
+            (picture?.width?.toDouble() ?: 1.0) to (picture?.height?.toDouble() ?: 1.0).also { picture?.recycle() }
+        }
+        subtitleLayoutCache = key to layout
+        return layout
+    }
     private var subtitleSection = TitleDesignControls.Section.Looks
     private var subtitleMotionExit = false
 

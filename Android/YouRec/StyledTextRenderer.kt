@@ -56,18 +56,18 @@ class ImageTextures(private val folder: java.io.File) {
 
 class TitleTextures(private val folder: java.io.File? = null) {
     class Entry(val texture: Int, val size: CanvasSize)
-    private val entries = LinkedHashMap<Pair<TextOverlay, Triple<Int, Int, Int>>, Entry>(16, 0.75f, true)
+    private val entries = LinkedHashMap<Pair<TextOverlay, List<Any?>>, Entry>(16, 0.75f, true)
     private var program: OverlayProgram? = null
 
     /// Draw one title on a canvas of `width` by `height`, through `placement` when its picture has a window of its own,
     /// in the `pose` of its animation (as the iPhone app moves the title's picture in square canvas pixels).
-    fun draw(title: TextOverlay, width: Int, height: Int, placement: Affine?, alpha: Float = 1f, pose: TitleMotion.Pose? = null) {
+    fun draw(title: TextOverlay, width: Int, height: Int, placement: Affine?, alpha: Float = 1f, pose: TitleMotion.Pose? = null, wrap: Float? = null) {
         if (pose != null && (pose.opacity <= 0 || pose.right <= pose.left || pose.bottom <= pose.top)) return
         // Position, time and animation do not change the picture of a title: share it.
         // A font imported while its title shows the fallback redraws it.
         val fonts = title.fontFaces.count { it.startsWith("import:") && ImportedFonts.resolve(it, folder) != null }
-        val key = title.copy(start = 0.0, end = 0.0, x = 0.0, y = 0.0, motion = null, playbackClock = null) to Triple(width, height, fonts)
-        val entry = entries.getOrPut(key) { render(key.first, width, height) ?: return }
+        val key = title.copy(start = 0.0, end = 0.0, x = 0.0, y = 0.0, motion = null, playbackClock = null) to listOf(width, height, fonts, wrap)
+        val entry = entries.getOrPut(key) { render(key.first, width, height, wrap) ?: return }
         while (entries.size > 24) { val oldest = entries.keys.first(); entries.remove(oldest)?.let { GLES20.glDeleteTextures(1, intArrayOf(it.texture), 0) } }
         val shader = program ?: OverlayProgram().also { program = it }
         // Kept inside the recorded frame, not the device screen or its safe area.
@@ -81,8 +81,8 @@ class TitleTextures(private val folder: java.io.File? = null) {
         shader.draw(entry.texture, place, shown, CanvasSize(width.toDouble(), height.toDouble()), alpha * (pose?.opacity ?: 1.0).toFloat(), part)
     }
 
-    private fun render(title: TextOverlay, width: Int, height: Int): Entry? {
-        val bitmap = picture(title, width, height, folder) ?: return null
+    private fun render(title: TextOverlay, width: Int, height: Int, wrap: Float?): Entry? {
+        val bitmap = picture(title, width, height, folder, wrap) ?: return null
         val ids = IntArray(1); GLES20.glGenTextures(1, ids, 0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
@@ -107,10 +107,11 @@ class TitleTextures(private val folder: java.io.File? = null) {
         /// Bold are coloured letters with a soft shadow to stay legible over
         /// footage; Box sets them on a dark rounded plate; Highlight sets near-black
         /// letters on a plate of the chosen colour. Long lines wrap at 84% of the frame.
-        fun picture(title: TextOverlay, canvasWidth: Int, canvasHeight: Int, folder: java.io.File? = null): Bitmap? {
+        /// `wrap` is the width a subtitle's lines wrap at, padding included, so its line breaks do not change with its size.
+        fun picture(title: TextOverlay, canvasWidth: Int, canvasHeight: Int, folder: java.io.File? = null, wrap: Float? = null): Bitmap? {
             if (!title.hasText) return null
             title.labelHeadline?.let { return StyledTitle.card(title, it, canvasWidth, canvasHeight, folder) }
-            title.appearance?.let { return StyledTitle.picture(title, it, canvasWidth, canvasHeight, folder) }
+            title.appearance?.let { return StyledTitle.picture(title, it, canvasWidth, canvasHeight, folder, wrap) }
             val size = maxOf(8f, (title.size * minOf(canvasWidth, canvasHeight)).toFloat())
             val plate = title.style == TextStyle.Box || title.style == TextStyle.Highlight
             val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
@@ -121,7 +122,7 @@ class TitleTextures(private val folder: java.io.File? = null) {
                 if (!plate) setShadowLayer(size * 0.12f, 0f, size * 0.04f, 0xE6000000.toInt())
             }
             val padding = size * 0.35f
-            val widest = canvasWidth * 0.84f - padding * 2
+            val widest = (wrap ?: (canvasWidth * 0.84f)) - padding * 2
             val lines = ArrayList<String>()
             for (paragraph in title.text.trim().split("\n")) {
                 var line = ""

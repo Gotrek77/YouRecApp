@@ -182,10 +182,10 @@ class StyledTitle(text: String, val design: TitleDesign, val fontSize: Float, ma
 
     companion object {
         /// A designed overlay title on a canvas of the given size, as the iPhone's TextRasterizer draws it:
-        /// lines wrap at 94% of the frame, and the whole title shrinks to fit inside it.
-        fun picture(title: TextOverlay, design: TitleDesign, canvasWidth: Int, canvasHeight: Int, folder: java.io.File? = null): Bitmap? {
+        /// lines wrap at 94% of the frame (or at `wrap`, for a subtitle), and the whole title shrinks to fit inside it.
+        fun picture(title: TextOverlay, design: TitleDesign, canvasWidth: Int, canvasHeight: Int, folder: java.io.File? = null, wrap: Float? = null): Bitmap? {
             if (!title.hasText || canvasWidth <= 0 || canvasHeight <= 0) return null
-            val styled = StyledTitle(title.text, design, maxOf(8f, (title.size * minOf(canvasWidth, canvasHeight)).toFloat()), canvasWidth * 0.94f, folder)
+            val styled = StyledTitle(title.text, design, maxOf(8f, (title.size * minOf(canvasWidth, canvasHeight)).toFloat()), wrap ?: (canvasWidth * 0.94f), folder)
             return styled.picture(minOf(1f, canvasWidth / styled.width, canvasHeight / styled.height))
         }
 

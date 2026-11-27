@@ -120,7 +120,7 @@ class RenderSources(private val project: Project, private val folder: File, priv
 
     /// Subtitles, over everything else and inside the recorded frame.
     fun drawCaptions(captions: List<TextOverlay>, time: EditTime, width: Int, height: Int) {
-        for (caption in captions) titles.draw(caption, width, height, null, pose = SubtitleCue.pose(caption, time))
+        for (caption in captions) titles.draw(caption, width, height, null, pose = SubtitleCue.pose(caption, time), wrap = SubtitleLayout.wrap(width.toDouble(), caption.size).toFloat())
     }
 
     /// One picture with its grade, images and titles. False if it could not be shown.

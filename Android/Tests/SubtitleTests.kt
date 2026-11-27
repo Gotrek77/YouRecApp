@@ -83,6 +83,7 @@ fun subtitleTests() {
         @Suppress("UNCHECKED_CAST") (((raw["timeline"] as MutableMap<String, Any?>)["subtitles"] as MutableMap<String, Any?>)["motion"] as MutableMap<String, Any?>)["inSeconds"] = -1.0
         ProjectCoding.editState(Fields.of(raw))
     }
+    subtitleLayoutTests()
     transcriberTests()
     println("Subtitles: ok")
 }
@@ -114,4 +115,25 @@ private fun transcriberTests() {
     require(heard.size == 2 && words.size == 6, "Each speech section is transcribed once (${heard.size} sections, ${words.size} words)")
     require(words.take(3).all { it.start >= 1.9 && it.end <= 4.2 } && words.drop(3).all { it.start >= 9.9 && it.end <= 12.2 }, "Words fall within their speech, in project time (${words.map { it.start to it.end }})")
     scratch.delete()
+}
+
+/// The iPhone's caption layout: limits from the largest caption, kept inside the frame, moved and pinched as on iPhone.
+private fun subtitleLayoutTests() {
+    fun cue(text: String) = SubtitleCue(text, UUID.randomUUID(), emptyList(), text, 0.0, 1.0)
+    // On a 1920 x 1080 canvas: a caption 1000 x 100 at the reference size.
+    val sizes = mapOf("long" to (1000.0 to 100.0), "short" to (200.0 to 100.0))
+    val layout = SubtitleLayout(listOf(cue("long"), cue("short"), cue("long")), SubtitleSettings(), CanvasSize(3840.0, 2160.0)) { sizes.getValue(it) }
+    require(layout.canvas == CanvasSize(1920.0, 1080.0), "Measured on a canvas whose shorter side is 1080 (${layout.canvas})")
+    require(abs(layout.maximumSize - 0.052 * 1920 * 0.94 / 1000) < 1e-12, "The largest caption may grow to 94% of the frame (${layout.maximumSize})")
+    require(layout.minimumSize == 0.012, "Captions shrink to 1.2%")
+    val big = layout.constrained(SubtitleSettings(size = 1.0, x = 0.0, y = 1.0))
+    val e = layout.envelope(big)
+    require(big.size == layout.maximumSize && e[0] >= 0.0 && e[1] >= 0.0 && e[0] + e[2] <= 1.0 && e[1] + e[3] <= 1.0, "The largest caption stays inside the frame (${e.toList()})")
+    require(layout.moved(SubtitleSettings(), 0.51, 0.3).centerX == 0.5, "The centre line catches a dragged caption")
+    val pinched = layout.resized(SubtitleSettings(x = 0.5, y = 0.5), 1.5, 0.5 to 0.5, 0.5 to 0.5)
+    require(abs(pinched.size - 0.052 * 1.5) < 1e-12 && pinched.centerX == 0.5 && pinched.y == 0.5, "A pinch about the caption's centre scales it in place")
+    require(layout.resized(SubtitleSettings(), 100.0, 0.5 to 0.5, 0.5 to 0.5).size == layout.maximumSize, "A pinch stops at the largest size")
+    val drifting = SubtitleLayout(listOf(cue("long")), SubtitleSettings(motion = TitleMotion(entrance = TitleMove.Drift)), CanvasSize(1920.0, 1080.0)) { sizes.getValue(it) }
+    require(abs(drifting.largestHeight - 164.0) < 1e-9 && drifting.largestWidth == 1000.0, "An upward drift leaves room above and below")
+    require(abs(SubtitleLayout.wrap(1920.0, 0.104) - 1920 * 0.84 * 2) < 1e-9, "Line breaks scale with the size, so they stay fixed")
 }

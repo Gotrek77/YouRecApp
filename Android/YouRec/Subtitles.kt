@@ -42,7 +42,7 @@ data class SubtitleSettings(val id: UUID = UUID.randomUUID(), val maxWords: Int 
 data class SubtitleCue(val id: String, val audioID: UUID, val wordIDs: List<UUID>, val text: String, val start: Double, val end: Double) {
     /// The caption's id follows the cue, so its drawing is reused frame after frame.
     fun overlay(settings: SubtitleSettings) = TextOverlay(id = UUID.nameUUIDFromBytes(id.toByteArray()), text = text, start = start, end = end, x = settings.centerX, y = settings.y,
-        size = settings.size.coerceAtLeast(0.02), style = settings.style, color = settings.color,
+        size = settings.size, style = settings.style, color = settings.color,
         // A subtitle font other than the system one is drawn as the design it stands for, as on iPhone.
         appearance = settings.appearance ?: settings.design.takeIf { settings.resolvedFont != SubtitleFont.System }, motion = settings.motion)
     companion object {
@@ -292,5 +292,76 @@ object SubtitleEditing {
             val added = SubtitleTiming.group(item.subtitleWords.filter { it.id in newIDs }, settings.maxWords)
             item.copy(subtitleWords = (preserved + added).sortedBy { it.start })
         }
+    }
+}
+
+/// The iPhone app's SubtitleLayout: every caption of the project measured once,
+/// at the reference size on a canvas whose shorter side is 1080, so line breaks
+/// stay fixed while the subtitles are resized. Gives the size limits, keeps the
+/// largest caption inside the frame, and the outline the editor shows.
+/// `measure` returns a caption's width and height at the reference size.
+/// Android draws simultaneous captions at the same place, so the largest is one caption, not a stack of two.
+class SubtitleLayout(cues: List<SubtitleCue>, settings: SubtitleSettings, input: CanvasSize, measure: (String) -> Pair<Double, Double>) {
+    companion object {
+        const val referenceSize = 0.052
+        const val minimumLimit = 0.012
+        private const val FIT = 0.94
+        private const val MARGIN = 0.025
+        private const val WRAP = 0.84
+        /// The canvas a layout measures on: the shorter side is 1080.
+        fun canvas(input: CanvasSize): CanvasSize {
+            val factor = 1080 / maxOf(1.0, minOf(input.width, input.height))
+            return CanvasSize(maxOf(1.0, input.width * factor), maxOf(1.0, input.height * factor))
+        }
+        /// The width lines wrap at, for a caption of `size` on a canvas `width` wide: 84% of it at the reference size.
+        fun wrap(width: Double, size: Double) = width * WRAP * size / referenceSize
+    }
+    val canvas = canvas(input)
+    val largestWidth: Double
+    val largestHeight: Double
+    val maximumSize: Double
+    val minimumSize: Double get() = minOf(minimumLimit, maximumSize)
+
+    init {
+        val sizes = cues.map { it.text }.distinct().map(measure)
+        var width = maxOf(1.0, sizes.maxOfOrNull { it.first } ?: 1.0); var height = maxOf(1.0, sizes.maxOfOrNull { it.second } ?: 1.0)
+        settings.motion?.let { motion ->
+            if (motion.exit == TitleMove.Scale) { width *= 1.08; height *= 1.08 }
+            val drift = listOf(motion.entrance to motion.inDirection, motion.exit to motion.outDirection).filter { it.first == TitleMove.Drift }.map { it.second ?: TitleDirection.Up }
+            val margin = height * 0.64
+            if (TitleDirection.Left in drift || TitleDirection.Right in drift) width += margin
+            if (TitleDirection.Up in drift || TitleDirection.Down in drift) height += margin
+        }
+        largestWidth = width; largestHeight = height
+        maximumSize = maxOf(0.0001, minOf(0.30, referenceSize * minOf(canvas.width * FIT / width, canvas.height * FIT / height)))
+    }
+
+    /// The size within the limits, and the centre where the largest caption stays inside the frame.
+    fun constrained(value: SubtitleSettings): SubtitleSettings {
+        val size = value.size.coerceIn(minimumSize, maximumSize)
+        val scale = size / referenceSize
+        val halfW = largestWidth * scale / canvas.width / 2 + MARGIN
+        val halfH = largestHeight * scale / canvas.height / 2 + MARGIN
+        return value.copy(size = size, x = value.centerX.coerceIn(halfW, maxOf(halfW, 1 - halfW)), y = value.y.coerceIn(halfH, maxOf(halfH, 1 - halfH)))
+    }
+
+    /// The outline of the largest caption, normalised, top-left origin: left, top, width, height.
+    fun envelope(value: SubtitleSettings): DoubleArray {
+        val placed = constrained(value); val scale = placed.size / referenceSize
+        val w = largestWidth * scale / canvas.width; val h = largestHeight * scale / canvas.height
+        return doubleArrayOf(placed.centerX - w / 2, placed.y - h / 2, w, h)
+    }
+
+    /// A pinch by `factor` from the fingers' old centre `from` to their new one `to`, in normalised points: the caption scales about the fingers.
+    fun resized(value: SubtitleSettings, factor: Double, from: Pair<Double, Double>, to: Pair<Double, Double>): SubtitleSettings {
+        val size = (value.size * factor).coerceIn(minimumSize, maximumSize)
+        val ratio = size / value.size
+        return constrained(value.copy(size = size, x = to.first + (value.centerX - from.first) * ratio, y = to.second + (value.y - from.second) * ratio))
+    }
+
+    /// A drag to `x`, `y`; the centre lines catch the caption, as on iPhone.
+    fun moved(value: SubtitleSettings, x: Double, y: Double): SubtitleSettings {
+        fun snap(v: Double) = if (Math.abs(v - 0.5) < 0.015) 0.5 else v.coerceIn(0.0, 1.0)
+        return constrained(value.copy(x = snap(x), y = snap(y)))
     }
 }
