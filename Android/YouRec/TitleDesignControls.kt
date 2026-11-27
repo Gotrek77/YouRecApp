@@ -5,26 +5,41 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.SeekBar
+import android.graphics.drawable.GradientDrawable
 
-/// The design part of the Text panel, after the iPhone app's TitleInspector:
-/// one section at a time (Looks, Font, Border, Shadow, Background). Any change
-/// makes the title a designed one; Plain returns it to its Style and Colour.
-/// Not ported yet: saved channel styles, gradient and colour pickers, the
-/// eyedropper, sliders for blur, offset, padding and radius, and imported fonts.
+/// The design part of the Text and Subtitles panels, after the iPhone app's
+/// TitleInspector: one section at a time (Looks, Font, Fill, Border, Shadow,
+/// Background). Any change makes the title a designed one; Plain returns it to
+/// its Style and Colour. Sliders preview while dragging and save on release.
+/// Not ported yet: saved channel styles, the system colour wheel, the eyedropper
+/// and favourite fonts.
 object TitleDesignControls {
-    enum class Section(val title: String) { Looks("Looks"), Font("Font"), Border("Border"), Shadow("Shadow"), Background("Background") }
+    enum class Section(val title: String) { Looks("Looks"), Font("Font"), Fill("Fill"), Border("Border"), Shadow("Shadow"), Background("Background") }
+
+    /// The colour control shown open, by its title; at most one at a time.
+    private var openColor: String? = null
+    /// The gradient a title had before Solid, restored by Gradient, as on iPhone.
+    private var lastGradient = TitleGradient.gallery[0].second
 
     /// `plain` is a title without a design; `looks` offers the single-title looks (not shown for a card's lines).
+    /// `preview` shows a slider's value while it is dragged; `change` saves it.
     fun views(context: Context, design: TitleDesign, plain: Boolean, section: Section, looks: Boolean, choose: (Section) -> Unit,
               fonts: List<ImportedFontFace> = emptyList(), missingFont: String? = null, importFont: (() -> Unit)? = null,
-              change: (TitleDesign?, String) -> Unit): List<View> {
+              preview: ((TitleDesign) -> Unit)? = null, change: (TitleDesign?, String) -> Unit): List<View> {
         fun designed(next: TitleDesign, message: String) = change(next, message)
         fun option(label: String, description: String, on: Boolean, action: () -> Unit) =
             Design.button(context, label, if (on) Design.background else Design.text, if (on) Design.accent else Design.raised, 13f) { action() }
                 .apply { contentDescription = description + if (on) ", selected" else "" }
         val shown = Section.values().filter { looks || it != Section.Looks }
         val section = if (section in shown) section else Section.Font
-        val tabs = choices(context, shown.map { s -> option(s.title, "Title " + s.title, s == section) { choose(s) } })
+        val tabs = choices(context, shown.map { s -> option(s.title, "Title " + s.title, s == section) { openColor = null; choose(s) } })
+        fun slider(name: String, value: Double, range: ClosedFloatingPointRange<Double>, step: Double, message: String, degrees: Boolean = false, apply: (Double) -> TitleDesign) =
+            slider(context, name, name, value, range, step, preview?.let { show -> { v: Double -> show(apply(v)) } }, degrees) { designed(apply(it), message) }
+        fun color(title: String, ink: TitleInk, message: String, editsOpacity: Boolean = true, apply: (TitleInk) -> TitleDesign) =
+            TitleColorControl.views(context, title, ink, openColor == title, { openColor = if (openColor == title) null else title; choose(section) }, editsOpacity) {
+                designed(apply(it), message)
+            }
         val body: List<View> = when (section) {
             Section.Looks -> listOf(choices(context, listOf(option("Plain", "Look Plain", plain) { change(null, "Text look") }) +
                 TitleDesign.looks.map { look ->
@@ -55,20 +70,65 @@ object TitleDesignControls {
                     choices(context, TitleAlignment.values().map { a ->
                         val name = a.raw.replaceFirstChar { it.uppercase() }
                         option(name, "Align " + name, a == design.alignment) { designed(design.copy(alignment = a), "Text alignment") }
-                    }))
+                    }),
+                    slider("Letter spacing", design.tracking, -0.05..0.25, 0.01, "Text spacing") { design.copy(tracking = it) },
+                    slider("Line spacing", design.lineSpacing, 0.0..0.8, 0.01, "Text spacing") { design.copy(lineSpacing = it) })
+            }
+            Section.Fill -> {
+                val gradient = design.gradient
+                listOf(choices(context, listOf(
+                    option("Solid", "Fill Solid", gradient == null) { if (gradient != null) { lastGradient = gradient; designed(design.copy(gradient = null), "Text fill") } },
+                    option("Gradient", "Fill Gradient", gradient != null) { if (gradient == null) designed(design.copy(gradient = lastGradient), "Text fill") }))) +
+                if (gradient == null) color("Text color", design.fill, "Text colour") { design.copy(fill = it) }
+                else listOf(choices(context, TitleGradient.gallery.map { (name, value) ->
+                    option(name, "Gradient " + name, gradient == value) { lastGradient = value; designed(design.copy(gradient = value), "Text gradient") }.apply {
+                        if (gradient != value) background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(value.first.argb, value.last.argb)).apply { cornerRadius = Design.dp(context, 10f).toFloat() }
+                        if (gradient != value) setTextColor(Design.background)
+                    }
+                })) + color("First color", gradient.first, "Text gradient") { design.copy(gradient = gradient.copy(first = it)) } +
+                    color("Second color", gradient.last, "Text gradient") { design.copy(gradient = gradient.copy(last = it)) } +
+                    slider("Angle", gradient.angle, 0.0..360.0, 1.0, "Text gradient", degrees = true) { design.copy(gradient = gradient.copy(angle = it)) }
             }
             Section.Border -> listOf(choices(context, listOf(option("Off", "Text border off", !design.outlined) { designed(design.copy(outlined = false), "Text border") }) +
                 listOf(0.025 to "Thin", 0.045 to "Medium", 0.09 to "Bold").map { (width, name) ->
                     option(name, "Text border " + name, design.outlined && Math.abs(design.borderWidth - width) < 1e-6) { designed(design.copy(outlined = true, borderWidth = width), "Text border") }
-                }))
+                })) + if (!design.outlined) emptyList() else
+                    listOf(slider("Border width", design.borderWidth, 0.01..0.20, 0.005, "Text border") { design.copy(borderWidth = it) }) +
+                    color("Border color", design.border, "Text border") { design.copy(border = it) }
             Section.Shadow -> listOf(choices(context, listOf(
                 option("Off", "Drop shadow off", !design.shadow) { designed(design.copy(shadow = false), "Text shadow") },
-                option("On", "Drop shadow on", design.shadow) { designed(design.copy(shadow = true), "Text shadow") })))
+                option("On", "Drop shadow on", design.shadow) { designed(design.copy(shadow = true), "Text shadow") }))) +
+                if (!design.shadow) emptyList() else color("Shadow color", design.shade, "Text shadow") { design.copy(shade = it) } +
+                    slider("Blur", design.shadowBlur, 0.0..0.6, 0.01, "Text shadow") { design.copy(shadowBlur = it) } +
+                    slider("Offset", design.shadowOffset, -0.5..0.5, 0.01, "Text shadow") { design.copy(shadowOffset = it) }
             Section.Background -> listOf(choices(context, listOf(TitlePlate.Off to "None", TitlePlate.Block to "One box", TitlePlate.Lines to "Each line").map { (plate, name) ->
                 option(name, "Background " + name, design.plate == plate) { designed(design.copy(plate = plate), "Text background") }
-            }))
+            })) + if (design.plate == TitlePlate.Off) emptyList() else
+                color("Box color", design.backing, "Text background", editsOpacity = false) { design.copy(backing = it) } +
+                slider("Background opacity", design.backing.alpha, 0.0..1.0, 0.01, "Text background") { design.copy(backing = TitleInk(design.backing.rgb, Math.round(it * 255).toInt())) } +
+                slider("Padding", design.padding, 0.0..0.8, 0.01, "Text background") { design.copy(padding = it) } +
+                slider("Corner radius", design.radius, 0.0..0.8, 0.01, "Text background") { design.copy(radius = it) }
         }
         return listOf(tabs) + body
+    }
+
+    /// A named slider showing its value as a percentage (or in degrees). `preview` follows the drag; `commit` is the release.
+    fun slider(context: Context, name: String, description: String, value: Double, range: ClosedFloatingPointRange<Double>, step: Double,
+               preview: ((Double) -> Unit)?, degrees: Boolean = false, commit: (Double) -> Unit): View {
+        val steps = Math.round((range.endInclusive - range.start) / step).toInt()
+        fun at(progress: Int) = (range.start + progress * step).coerceIn(range.start, range.endInclusive)
+        fun shown(v: Double) = if (degrees) "${Math.round(v)}°" else "${Math.round(v * 100)}%"
+        val label = Design.label(context, shown(value), 13f, Design.secondary, mono = true)
+        val bar = SeekBar(context).apply {
+            max = steps; progress = Math.round((value - range.start) / step).toInt().coerceIn(0, steps); contentDescription = description
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(b: SeekBar, p: Int, user: Boolean) { if (user) { label.text = shown(at(p)); preview?.invoke(at(p)) } }
+                override fun onStartTrackingTouch(b: SeekBar) { }
+                override fun onStopTrackingTouch(b: SeekBar) { commit(at(b.progress)) }
+            })
+        }
+        return Design.row(context, Design.label(context, name, 13f).apply { layoutParams = LinearLayout.LayoutParams(Design.dp(context, 104f), ViewGroup.LayoutParams.WRAP_CONTENT) },
+            bar.apply { layoutParams = Design.weighted(1f, Design.dp(context, 44f)) }, label.apply { layoutParams = LinearLayout.LayoutParams(Design.dp(context, 48f), ViewGroup.LayoutParams.WRAP_CONTENT) })
     }
 
     /// Entrance or exit animation: the move, its direction and its length. `exitSide` picks which one is shown.

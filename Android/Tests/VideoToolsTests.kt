@@ -338,8 +338,17 @@ private fun titleDesignTests(titled: EditState) {
     val designed = withAppearance(ProjectCoding.encode(design))
     require(designed.clips[0].texts!!.single().appearance == design, "A designed title opens in its project")
     require(ProjectCoding.encode(designed) == ProjectCoding.encode(withAppearance(ProjectCoding.encode(design))), "A designed title survives a save and a reopen")
-    try { withAppearance(ProjectCoding.encode(design.copy(face = "Avenir-Heavy"))); require(false, "Avenir-Heavy must be refused") }
-    catch (e: ProjectError.UnsupportedTools) { require(e.message!!.contains("Avenir-Heavy"), "An iPhone system font this build cannot draw is refused by name") }
+    // An iPhone system font is kept as written and drawn with a fallback, as on iPhone.
+    require(ProjectCoding.encode(withAppearance(ProjectCoding.encode(design.copy(face = "Avenir-Heavy")))) == ProjectCoding.encode(withAppearance(ProjectCoding.encode(design.copy(face = "Avenir-Heavy"))))
+        && withAppearance(ProjectCoding.encode(design.copy(face = "Avenir-Heavy"))).clips[0].texts!!.single().appearance?.face == "Avenir-Heavy", "An iPhone system font opens and is kept as written")
+    require(TitleTypeface.missing("Avenir-Heavy", null) == "Avenir-Heavy" && TitleTypeface.missing("fraunces", null) == null && TitleTypeface.missing("system", null) == null,
+        "Only a face this phone lacks is named as drawn with a fallback")
+    // iPhone subtitle fonts: the plain subtitle style in the iPhone font, as the iPhone's legacy design.
+    val classic = SubtitleSettings(style = TextStyle.Box, font = SubtitleFont.Classic)
+    require(classic.design.face == "Georgia-Bold" && classic.design.plate == TitlePlate.Block, "A Classic subtitle is the Box style in Georgia Bold")
+    require(SubtitleSettings(style = TextStyle.Clean, font = SubtitleFont.Mono).design.let { it.face == "Menlo-Regular" && it.weight == 400 }, "A Clean Mono subtitle is Menlo Regular")
+    require(SubtitleCue("c", java.util.UUID.randomUUID(), emptyList(), "Hi", 0.0, 1.0).overlay(classic).appearance == classic.design
+        && SubtitleCue("c", java.util.UUID.randomUUID(), emptyList(), "Hi", 0.0, 1.0).overlay(SubtitleSettings()).appearance == null, "Only a subtitle font other than System is drawn as a design")
     for (face in listOf("import:${"0".repeat(64)}:0:MyFont-Bold", "import:ABCDEF.ttf#MyFont"))
         require(withAppearance(ProjectCoding.encode(design.copy(face = face))).clips[0].texts!!.single().appearance?.face == face,
             "An imported font opens and is kept as written, even when its file is missing ($face)")

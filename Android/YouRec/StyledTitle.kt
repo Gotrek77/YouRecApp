@@ -28,7 +28,7 @@ object TitleFonts {
         val italic = design.italic && family?.slanted != null
         val key = "${design.face}/${design.weight}/$italic"
         cache[key]?.let { return it }
-        val made = if (family == null || family.id == "system") Typeface.create(Typeface.DEFAULT, design.weight.coerceIn(1, 1000), design.italic)
+        val made = if (family == null || family.id == "system") Typeface.create(fallback(design.face), design.weight.coerceIn(1, 1000), design.italic)
             else load(family.id, design.weight, italic)
         cache[key] = made
         made
@@ -46,6 +46,17 @@ object TitleFonts {
         } catch (e: Exception) { android.util.Log.w("YouRec", "imported font ${file.name} cannot be read", e); null } ?: return Typeface.DEFAULT
         cache[key] = made
         return made
+    }
+
+    // ponytail: a few iPhone font names mapped to Android's generic families; any other face is the system font.
+    private fun fallback(face: String): Typeface {
+        val name = face.lowercase()
+        return when {
+            listOf("menlo", "courier", "mono").any { it in name } -> Typeface.MONOSPACE
+            listOf("georgia", "times", "serif", "baskerville", "palatino", "didot", "bodoni", "garamond").any { it in name } && "sans" !in name -> Typeface.SERIF
+            listOf("condensed", "narrow", "compressed").any { it in name } -> Typeface.create("sans-serif-condensed", Typeface.NORMAL)
+            else -> Typeface.DEFAULT
+        }
     }
 
     private fun load(id: String, weight: Int, italic: Boolean): Typeface {

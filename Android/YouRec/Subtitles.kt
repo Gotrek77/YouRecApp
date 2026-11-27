@@ -15,7 +15,15 @@ class SubtitleError(message: String) : Exception(message)
 data class SubtitleWord(val id: UUID = UUID.randomUUID(), val phraseID: UUID = UUID.randomUUID(), val text: String, val start: Double, val end: Double)
 
 enum class SubtitleFont(val raw: String, val title: String) {
-    System("system", "System"), Modern("modern", "Modern"), Classic("classic", "Classic"), Mono("mono", "Mono"), Condensed("condensed", "Narrow")
+    System("system", "System"), Modern("modern", "Modern"), Classic("classic", "Classic"), Mono("mono", "Mono"), Condensed("condensed", "Narrow");
+    /// The iPhone font for these subtitles; null is the system font.
+    fun postScriptName(bold: Boolean): String? = when (this) {
+        System -> null
+        Modern -> if (bold) "AvenirNext-DemiBold" else "AvenirNext-Regular"
+        Classic -> if (bold) "Georgia-Bold" else "Georgia"
+        Mono -> if (bold) "Menlo-Bold" else "Menlo-Regular"
+        Condensed -> "DINCondensed-Bold"
+    }
 }
 
 /// How subtitles look and how many words make a caption. `appearance` and
@@ -26,7 +34,7 @@ data class SubtitleSettings(val id: UUID = UUID.randomUUID(), val maxWords: Int 
                             val appearance: TitleDesign? = null, val motion: TitleMotion? = null) {
     val centerX: Double get() = x ?: 0.5
     val resolvedFont: SubtitleFont get() = font ?: SubtitleFont.System
-    val design: TitleDesign get() = appearance ?: TitleDesign.legacy(style, color)
+    val design: TitleDesign get() = appearance ?: TitleDesign.legacy(style, color, resolvedFont)
     val valid: Boolean get() = appearance?.valid != false && motion?.valid != false && maxWords in 1..16 && size.isFinite() && size in 0.0001..0.30 && y.isFinite() && y in 0.0..1.0 && centerX.isFinite() && centerX in 0.0..1.0
 }
 
@@ -35,7 +43,8 @@ data class SubtitleCue(val id: String, val audioID: UUID, val wordIDs: List<UUID
     /// The caption's id follows the cue, so its drawing is reused frame after frame.
     fun overlay(settings: SubtitleSettings) = TextOverlay(id = UUID.nameUUIDFromBytes(id.toByteArray()), text = text, start = start, end = end, x = settings.centerX, y = settings.y,
         size = settings.size.coerceAtLeast(0.02), style = settings.style, color = settings.color,
-        appearance = settings.appearance, motion = settings.motion)
+        // A subtitle font other than the system one is drawn as the design it stands for, as on iPhone.
+        appearance = settings.appearance ?: settings.design.takeIf { settings.resolvedFont != SubtitleFont.System }, motion = settings.motion)
     companion object {
         /// A caption's animation runs over its own cue, as on iPhone; null when it does not move.
         fun pose(caption: TextOverlay, time: EditTime) = caption.motion?.takeIf { it.active }?.pose(time.seconds - caption.start, caption.end - caption.start)

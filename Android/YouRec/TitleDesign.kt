@@ -60,9 +60,10 @@ data class TitleDesign(
     data class Look(val collection: LookCollection, val name: String, val design: TitleDesign)
 
     companion object {
-        fun legacy(style: TextStyle, color: TextColor): TitleDesign {
+        /// `font` is a subtitle font: its iPhone face, drawn here with a fallback of the same kind.
+        fun legacy(style: TextStyle, color: TextColor, font: SubtitleFont? = null): TitleDesign {
             val plated = style == TextStyle.Box || style == TextStyle.Highlight
-            return TitleDesign(weight = if (style == TextStyle.Clean) 400 else 700,
+            return TitleDesign(face = font?.postScriptName(style != TextStyle.Clean) ?: "system", weight = if (style == TextStyle.Clean) 400 else 700,
                 fill = if (style == TextStyle.Highlight) TitleInk.black else TitleInk.of(color),
                 shadow = !plated, plate = if (plated) TitlePlate.Block else TitlePlate.Off,
                 backing = if (style == TextStyle.Highlight) TitleInk.of(color) else if (plated) TitleInk(0x050505, 209) else TitleInk(0x111218, 205))
@@ -142,6 +143,13 @@ data class TitleTypeface(val id: String, val name: String, val upright: String, 
             TitleTypeface("unbounded", "Unbounded", "Unbounded-Regular"),
             TitleTypeface("caveat", "Caveat", "Caveat-Regular", weights = listOf(400, 500, 600, 700)))
         fun of(id: String) = families.firstOrNull { it.id == id }
+        /// The name of a face this phone draws with a fallback, else null: an imported font whose
+        /// file is not in the project, or an iPhone system font (a PostScript name such as Georgia-Bold).
+        fun missing(id: String, folder: java.io.File?): String? = when {
+            id.startsWith("import:") -> if (ImportedFonts.resolve(id, folder) == null) ImportedFonts.label(id, folder) ?: id else null
+            of(id) == null -> id
+            else -> null
+        }
         /// Barlow Condensed and IBM Plex Mono are static files chosen by weight, as on iPhone.
         fun staticStyle(family: String, weight: Int, italic: Boolean): String {
             val suffix = if (weight >= 600) "Bold" else if (family == "ibmplexmono" && weight >= 500) "Medium" else ""

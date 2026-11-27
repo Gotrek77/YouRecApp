@@ -716,7 +716,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
             fun restyle(message: String, apply: (SubtitleSettings) -> SubtitleSettings) = change(message.replace("Text", "Subtitle")) { it.subtitles = it.subtitles?.let(apply) }
             val design = settings.design
             val folder = store.folder(project)
-            val missing = design.face.takeIf { it.startsWith("import:") && ImportedFonts.resolve(it, folder) == null }?.let { ImportedFonts.label(it, folder) ?: it }
+            val missing = TitleTypeface.missing(design.face, folder)
             val importFont = {
                 navigation.pickMedia("*/*") { uri ->
                     if (uri != null) store.importFont(uri, project.id) { faces, failure ->
@@ -729,7 +729,8 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                 }
             }
             for (view in TitleDesignControls.views(context, design, settings.appearance == null, subtitleSection, true, { subtitleSection = it; openSubtitles() },
-                ImportedFonts.faces(folder), missing, importFont) { next, message -> restyle(message) { it.copy(appearance = next) } }) add(view)
+                ImportedFonts.faces(folder), missing, importFont, { next -> this.project?.let { now ->
+                    editor.show(now.edit.copy().also { it.timeline.subtitles = it.timeline.subtitles?.copy(appearance = next) }) } }) { next, message -> restyle(message) { it.copy(appearance = next) } }) add(view)
             for (view in TitleDesignControls.motionViews(context, settings.motion ?: TitleMotion(), subtitleMotionExit, { subtitleMotionExit = it; openSubtitles() }) { next, message ->
                 restyle(message) { it.copy(motion = next) }
             }) add(view)
@@ -1766,17 +1767,15 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
         if (part != LabelHeadline.Part.Card) {
             val isLabel = part == LabelHeadline.Part.Label
             val design = when (part) { null -> title.design; LabelHeadline.Part.Label -> group!!.labelStyle; else -> group!!.headlineStyle }
-            fun restyle(changed: TitleDesign?, message: String) {
-                title = when {
-                    part == null -> title.copy(appearance = changed)
-                    isLabel -> title.copy(labelHeadline = group!!.copy(labelStyle = changed ?: group.labelStyle))
-                    else -> title.copy(labelHeadline = group!!.copy(headlineStyle = changed ?: group.headlineStyle))
-                }
-                save(message, reopen = true)
+            fun styled(changed: TitleDesign?) = when {
+                part == null -> title.copy(appearance = changed)
+                isLabel -> title.copy(labelHeadline = group!!.copy(labelStyle = changed ?: group.labelStyle))
+                else -> title.copy(labelHeadline = group!!.copy(headlineStyle = changed ?: group.headlineStyle))
             }
+            fun restyle(changed: TitleDesign?, message: String) { title = styled(changed); save(message, reopen = true) }
             // Fonts imported into this project; a face whose file is missing is drawn in the system font, as on iPhone.
             val folder = store.folder(project)
-            val missing = design.face.takeIf { it.startsWith("import:") && ImportedFonts.resolve(it, folder) == null }?.let { ImportedFonts.label(it, folder) ?: it }
+            val missing = TitleTypeface.missing(design.face, folder)
             val importFont = {
                 navigation.pickMedia("*/*") { uri ->
                     if (uri != null) store.importFont(uri, project.id) { faces, failure ->
@@ -1789,7 +1788,7 @@ class EditorView(context: Context, private val store: ProjectStore, private val 
                 }
             }
             for (view in TitleDesignControls.views(context, design, part == null && title.appearance == null, titleSection, part == null, { titleSection = it; save("Text changed", reopen = true) },
-                ImportedFonts.faces(folder), missing, importFont, ::restyle)) add(view)
+                ImportedFonts.faces(folder), missing, importFont, { title = styled(it); preview() }, ::restyle)) add(view)
         }
         // Entrance and exit animation, for the whole title (both lines of a card move together).
         for (view in TitleDesignControls.motionViews(context, title.motion ?: TitleMotion(), titleMotionExit, { titleMotionExit = it; save("Text changed", reopen = true) }) { next, message ->
