@@ -130,8 +130,10 @@ capture, recording controls, the cut editor, export.
   Captions take the Text panel's designs and entrance/exit animations, each
   caption animating over its own time; an iPhone subtitle font (Classic, Mono…)
   is kept and drawn with an Android font of the same kind.
-  Not ported yet: dragging captions in the preview and the iPhone's size
-  limits from the largest caption, resuming an interrupted transcription.
+  As on iPhone, an outline over the preview fits the largest caption: drag
+  it to move all subtitles, pinch to resize them; sliders do the same, and
+  the largest caption always stays inside the frame.
+  Not ported yet: resuming an interrupted transcription.
   **Pauses** finds silence in the selected clips, at a measured or chosen
   level; as on iPhone, RNNoise tells a quiet syllable from silence in spoken
   takes. Each pause can be kept or cut; picture and sound shorten together;
